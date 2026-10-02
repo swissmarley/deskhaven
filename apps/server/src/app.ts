@@ -248,7 +248,15 @@ export async function buildApp(
   if (config.webDist) {
     await app.register(fastifyStatic, { root: path.resolve(config.webDist), wildcard: false });
     app.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith('/api') || req.url.startsWith('/ws'))
+      const pathname = req.url.split('?')[0] ?? req.url;
+      // API, WS and file-like paths (anything with an extension, e.g. a missing /models/x.glb)
+      // must not fall back to the SPA shell: a 200 index.html would reach a model loader as a
+      // confusing parse error instead of a clean 404.
+      if (
+        pathname.startsWith('/api') ||
+        pathname.startsWith('/ws') ||
+        /\.[a-z0-9]+$/i.test(pathname)
+      )
         return reply.code(404).send({ error: 'not_found' });
       return reply.sendFile('index.html');
     });

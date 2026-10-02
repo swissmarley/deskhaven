@@ -1,4 +1,3 @@
-import type { Container } from 'pixi.js';
 import type { Bounds } from './iso.js';
 
 export const ZOOM_MIN = 0.5;
@@ -7,14 +6,26 @@ export const ZOOM_STEP = 0.25;
 const FIT_MARGIN = 48;
 
 /**
- * Pan/zoom for the world container. The room's bounding box is centred in the canvas; `pan` is an
+ * What the camera drives: a renderer-specific view that maps world-screen pixels (the `iso.ts`
+ * space, where `tileToScreen` lives) to canvas pixels as `canvas = world · zoom + (x, y)`.
+ * `x`/`y` are already rounded to whole pixels.
+ */
+export interface CameraView {
+  setTransform(zoom: number, x: number, y: number): void;
+}
+
+/**
+ * Pan/zoom for the world view. The room's bounding box is centred in the canvas; `pan` is an
  * offset from that centre in screen pixels. Wheel zooms in 0.25 steps around the cursor; middle
- * button or space + left drag pans.
+ * button or space + left drag pans. Renderer-agnostic: it only talks to a `CameraView`.
  */
 export class Camera {
   zoom = 1;
   panX = 0;
   panY = 0;
+  /** Canvas-pixel offset of the world-screen origin, as last pushed to the view. */
+  private offsetX = 0;
+  private offsetY = 0;
   private bounds: Bounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   private screenW = 1;
   private screenH = 1;
@@ -23,7 +34,7 @@ export class Camera {
   private drag: { pointerId: number; lastX: number; lastY: number } | null = null;
   private cleanup: (() => void)[] = [];
 
-  constructor(private readonly view: Container) {}
+  constructor(private readonly view: CameraView) {}
 
   /** True while a pan drag is in progress (the world suppresses clicks). */
   get dragging(): boolean {
@@ -67,15 +78,14 @@ export class Camera {
   apply(): void {
     const cx = (this.bounds.minX + this.bounds.maxX) / 2;
     const cy = (this.bounds.minY + this.bounds.maxY) / 2;
-    this.view.scale.set(this.zoom);
-    this.view.position.set(
-      Math.round(this.screenW / 2 - cx * this.zoom + this.panX),
-      Math.round(this.screenH / 2 - cy * this.zoom + this.panY),
-    );
+    this.offsetX = Math.round(this.screenW / 2 - cx * this.zoom + this.panX);
+    this.offsetY = Math.round(this.screenH / 2 - cy * this.zoom + this.panY);
+    this.view.setTransform(this.zoom, this.offsetX, this.offsetY);
   }
 
+  /** Canvas pixel → world-screen pixel (the inverse of the transform pushed to the view). */
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
-    return { x: (sx - this.view.x) / this.zoom, y: (sy - this.view.y) / this.zoom };
+    return { x: (sx - this.offsetX) / this.zoom, y: (sy - this.offsetY) / this.zoom };
   }
 
   /** Zoom by whole steps keeping the world point under (sx, sy) fixed. */

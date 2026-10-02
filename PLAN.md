@@ -132,3 +132,68 @@ Rule: schema changes in `packages/shared` go through the lead first; consumers a
 3. **Auth mode** — API_KEY stays the documented product default, but subscription mode must **always** be available to the user: the feature flag defaults on, Settings always lists both modes, and the first-run wizard preselects subscription when the probe says "logged in" and no API key exists (the only mode that works on such a machine). The policy notice and check date are shown next to the switch.
 4. **Permission ceiling** — `bypassPermissions` is never exposed; the maximum is `acceptEdits` plus per-role `allowedTools`. Engineer preset auto-allows Edit/Write and asks for Bash.
 5. **Development spending** — approved: verification runs from M2 on use **Sonnet** sessions in subscription mode against the user's Max plan (short prompts, concurrency 1–2). No API key will be provided for dev.
+
+---
+
+# Phase 2 — graphics overhaul (G0–G4), planned 2026-10-03
+
+Design: [ARCHITECTURE.md §11](ARCHITECTURE.md). Rules unchanged: vertical slices, run + test +
+commit (`feat(gN): …`) + 3-line STATUS note per milestone, never move on with a broken build.
+Graphics work uses the Replay tab (≈290 logged events) instead of live agents.
+
+## G0 — plan, assets, renderer switch (½ day)
+- Docs: ARCHITECTURE §11, this plan, STATUS, CLAUDE.md gotchas, ASSETS.md licence table.
+- Deps: `three@0.186.1` + `@types/three@0.186.0` (pinned minor), `three/addons/*` verified.
+- `createWorld()` → `LazyWorld`: queues calls until the backend chosen by `VITE_RENDERER`
+  (or the `agenthotel.renderer` localStorage override) is dynamically imported in `mount()`.
+- Assets downloaded from official CC0 sources, inspected with `scripts/inspect-gltf.mjs`, the used
+  files committed under `apps/web/public/models/` (see ASSETS.md); server returns 404 for missing
+  files instead of the SPA shell.
+- Exit: `VITE_RENDERER=three pnpm dev` shows the empty 3D room (floor + walls, lit, shadows); Pixi
+  unchanged; gates green.
+
+## G1 — room, furniture, camera, picking, editor parity (1½ days)
+- Refactor `world.ts` → `core/world-core.ts` + `scene.ts` port + `pixi/*`; `FakeScene` tests.
+- `ThreeScene`: iso camera parity (projection test vs `iso.ts`), instanced floor/walls, grid,
+  lighting/shadows, glTF furniture (procedural fallback per kind), hover/ghost/highlight/drag
+  preview, `pick()`; avatars as capsules so board drag-and-drop works.
+- Exit: editor and board work end to end in both renderers; gates green.
+
+## G2 — characters and animations (2 days)
+- Rig clone + mixer, outfit material slots from the `Avatar` DTO, procedural hair/accessories on
+  bones, props, `anim.ts` state machine for every pose, 8 facings, seat offsets, interns, door.
+- Exit: replay at 4× shows every behaviour in 3D; gates green.
+
+## G3 — bubbles, emotes, parity, performance (1 day)
+- DOM overlay labels/bubbles (same texts and durations), in-scene emotes, monitor glow, Settings
+  renderer toggle, `?stats=1` overlay, ≥ 60 fps with 6 agents + 2 interns, `three` becomes default.
+- Exit: parity checklist passes in both renderers; gates green.
+
+## G4 — polish, GIF, docs (1 day)
+- Camera easing, idle variety, door animation, 3D avatar previews (pixel fallback), new
+  `docs/demo.gif`, README/ASSETS/ARCHITECTURE/CLAUDE.md, bundle sizes recorded.
+
+## Ownership (phase 2)
+
+| Owner | Paths |
+|---|---|
+| lead | `packages/shared/**`, `apps/web/src/game/types.ts`, `apps/web/src/ui/**`, `apps/web/src/state/**`, `apps/server/**`, `apps/web/public/models/**`, `scripts/**`, root docs, commits |
+| game subagent | `apps/web/src/game/**` except `types.ts`, `apps/web/test/**` |
+
+## Resolved questions (graphics, answered 2026-10-03)
+
+1. **Asset downloads** — approved for all six CC0 packs; only used files are committed (ASSETS.md).
+2. **Art direction** — stylised low-poly / soft-toon.
+3. **Characters** — hybrid approved: CC0 base body + rig + clips, outfit colours via material slots,
+   hair and accessories as procedural meshes on bones, office poses composed from base clips plus
+   procedural overlays and props.
+4. **Default renderer** — `three` becomes the default at the G3 parity commit; Pixi stays selectable.
+
+## Decisions taken without asking (phase 2)
+
+Three.js WebGL (not WebGPU/Babylon); fixed camera (yaw 45°, elevation 30°, no rotation); one
+simulation core with two scene backends; DOM overlay for bubbles; procedural meshes for hair,
+accessories, server rack and whiteboard; furniture cloned, not instanced (< 40 pieces); no SSAO;
+models committed to git (≤ 12 MB budget); Kenney furniture converted OBJ → GLB; KayKit Adventurers
+`Rogue` as the single base body (flat colour materials replace its atlas); Quaternius Modular Men
+not downloaded (no scriptable link, not needed).

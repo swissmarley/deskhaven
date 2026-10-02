@@ -7,9 +7,9 @@ import {
 } from '@agenthotel/shared';
 import { Application, Container, type FederatedPointerEvent, type Ticker } from 'pixi.js';
 import { loadPainters, type Painters } from './assets/index.js';
-import { AvatarSprite, type Pose } from './avatar.js';
+import { AvatarSprite } from './avatar.js';
 import { Bubble } from './bubble.js';
-import { Camera, isTypingTarget } from './camera.js';
+import { Camera, type CameraView, isTypingTarget } from './camera.js';
 import {
   beginFurnitureDrag,
   beginPaint,
@@ -33,6 +33,7 @@ import {
 import { depthKey, facingFromDelta, roomBounds, screenToTile, tileToScreen } from './iso.js';
 import { advanceMotion, buildMotion, type Motion } from './motion.js';
 import { findPath } from './pathfinding.js';
+import { poseFor } from './pose.js';
 import { hashString, mulberry32, range } from './rng.js';
 import { FurnitureSprite, RoomView } from './room.js';
 import { resolveStation, type StationTarget } from './stations.js';
@@ -44,6 +45,7 @@ import type {
   WorldAvatarInput,
   WorldEvents,
 } from './types.js';
+import type { WorldExtras } from './world-extras.js';
 
 /** Avatars sort above furniture sharing their tile row (see `depthKey`). */
 const AVATAR_DEPTH_EXTRA = 500;
@@ -85,13 +87,9 @@ interface FurnitureDrag {
   moved: boolean;
 }
 
-/** Extras beyond the lead-owned `World` contract (the grid overlay toggle). */
-export interface WorldExtras {
-  setGridVisible(visible: boolean): void;
-  readonly gridVisible: boolean;
-}
+export type { WorldExtras } from './world-extras.js';
 
-export function createWorld(): World & WorldExtras {
+export function createPixiWorld(): World & WorldExtras {
   return new PixiWorld();
 }
 
@@ -107,7 +105,7 @@ class PixiWorld implements World, WorldExtras {
     bubbles: new Container(),
     ui: new Container(),
   };
-  private readonly camera = new Camera(this.viewport);
+  private readonly camera = new Camera(pixiCameraView(this.viewport));
   private room: Room = defaultRoom();
   private grid: Grid = buildGrid(this.room);
   private readonly avatars = new Map<string, AvatarState>();
@@ -862,6 +860,16 @@ class PixiWorld implements World, WorldExtras {
 
 // ---- pure helpers ---------------------------------------------------------------------------------
 
+/** Adapts the Pixi viewport container to the renderer-agnostic camera contract. */
+function pixiCameraView(view: Container): CameraView {
+  return {
+    setTransform(zoom, x, y) {
+      view.scale.set(zoom);
+      view.position.set(x, y);
+    },
+  };
+}
+
 const RAISE_HAND_TEXT: Record<Extract<Behavior, { kind: 'raise_hand' }>['reason'], string> = {
   permission: 'needs permission',
   question: 'has a question',
@@ -876,40 +884,6 @@ const SWEAT_TEXT: Record<Extract<Behavior, { kind: 'sweat' }>['reason'], string>
   rate_limit: 'rate limited',
   billing: 'billing problem',
 };
-
-function poseFor(b: Behavior): Pose {
-  switch (b.kind) {
-    case 'idle':
-      return b.variant === 'coffee' ? 'coffee' : 'idle';
-    case 'thinking':
-      return 'thinking';
-    case 'reading':
-      return 'reading';
-    case 'typing':
-      return 'typing';
-    case 'terminal':
-      return 'terminal';
-    case 'browsing':
-      return 'browsing';
-    case 'delegating':
-    case 'working':
-      return 'working';
-    case 'raise_hand':
-      return 'raise_hand';
-    case 'sweat':
-      return 'sweat';
-    case 'cooldown':
-      return 'cooldown';
-    case 'celebrate':
-      return 'celebrate';
-    case 'nap':
-      return 'nap';
-    case 'wait':
-      return 'wait';
-    case 'leave':
-      return 'leave';
-  }
-}
 
 function formatTime(ts: number): string {
   const d = new Date(ts);

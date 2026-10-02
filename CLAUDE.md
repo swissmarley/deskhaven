@@ -84,3 +84,28 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
 - Browser pane clicks: use `find` + `ref` (coordinate clicks were off by the screenshot scale factor).
 - Dev verification runs use Sonnet in subscription mode against the owner's Max plan (approved
   2026-10-02): keep prompts short, concurrency ≤ 2.
+
+## Graphics phase (G0–G4) notes
+
+- Two renderers behind the same `World` contract: `VITE_RENDERER=pixi|three` at build/dev time,
+  `localStorage['agenthotel.renderer']` overrides it at runtime. `createWorld()` returns a `LazyWorld`
+  that queues calls until the backend is dynamically imported in `mount()`; Pixi stays the default
+  until the G3 parity commit. See ARCHITECTURE.md §11.
+- 3D models live in `apps/web/public/models/` (CC0, licences in `models/licenses/`, one ASSETS.md row
+  per file). Inspect any glb/gltf with `node scripts/inspect-gltf.mjs file.glb` (nodes, meshes,
+  materials, skins, clip names). Kenney furniture was converted with `npx obj2gltf -i x.obj -o x.glb`.
+- The production SPA fallback returns 404 for file-like paths (`/models/x.glb`), so a missing model
+  fails cleanly instead of being parsed as `index.html`.
+- Three core classes (`OrthographicCamera`, `Vector3`) work in vitest under Node; `three/addons/*`
+  may touch the DOM, so keep them out of modules imported by tests.
+- zsh: never `echo =====` unquoted (zsh expands `=word` as a command path); quote separators.
+- Graphics work uses the Replay tab (≈290 logged events); no live agent runs are needed.
+- `three/world.ts` must only be reached through the dynamic import in `game/renderer.ts`; a static
+  import anywhere under `game/index.ts` would pull the ~546 kB Three chunk into the entry bundle.
+- Three 0.186 removed `PCFSoftShadowMap` (logs a warning and falls back); use `PCFShadowMap` (or VSM).
+- In the Three renderer, pan is a frustum shift (`left/right/top/bottom`), not a camera move: the camera
+  stays at `VIEW_DIR × 100` looking at the origin, so shadow-camera fitting is independent of pan/zoom.
+- `LazyWorld` queues calls only while a mount is pending; calls made after `destroy()` and before the
+  next `mount()` are dropped on purpose (a never-remounted world cannot leak).
+- Browser pane: if the app looks collapsed (canvas 1 px wide), the pane's responsive width shrank;
+  `resize_window` to 1280×800 before screenshots and reset to `desktop` afterwards.

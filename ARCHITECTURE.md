@@ -318,3 +318,115 @@ Rendering runs on the Pixi ticker, not React state; React re-renders only panels
 - No `@pixi/react`, no Redux, no tRPC, no GraphQL, no ORM beyond Drizzle's query builder.
 - No cloud, telemetry, or remote dependencies at runtime.
 - No reading, copying, or proxying of Claude Code OAuth tokens — ever.
+
+---
+
+## 11. Graphics overhaul: 3D renderer behind the `World` contract (planned 2026-10-03)
+
+### 11.1 Decision and shape
+
+Real-time 3D with **Three.js** (`three@0.186.1`, `@types/three@0.186.0`, WebGL 2 `WebGLRenderer`;
+not WebGPU, not Babylon): glTF + skeletal animation + instancing + PCF soft shadows are built in and
+well typed. Pre-rendering 3D to HD sprite sheets (the reserved `sheet` manifest kind) was rejected
+for v1: it needs an offline Blender pipeline per outfit combination and bakes lighting, so neither
+the editor's style changes nor the `Avatar` DTO customisation would reach the art. It remains the
+fallback if the frame budget fails.
+
+The renderer is selected at build time with `VITE_RENDERER=pixi|three` and overridden at runtime by
+`localStorage['agenthotel.renderer']` (Settings toggle, G3). `createWorld()` returns a `LazyWorld`
+that queues every call until the chosen backend module is dynamically imported in `mount()`, so the
+Pixi bundle never contains Three and vice versa. The default is `pixi` until the G3 parity commit.
+
+**One simulation, two scene backends** (G1): `world.ts` is split into a renderer-agnostic
+`WorldCore` (tiles, A\*, motions, stations, behaviour → pose, editor pointer state machine, pre-mount
+queue, events, camera over a `CameraView`) that drives a small `Scene` port; `PixiScene` wraps the
+existing `avatar.ts`/`room.ts`/`bubble.ts`; `ThreeScene` is new. Pointer and keyboard input move from
+Pixi's federated events to DOM listeners in the core (`window` pointerup classified by canvas-rect
+containment reproduces `pointerupoutside`), and a backend `pick(sx, sy)` called once at pointerdown
+replaces `e.target instanceof AvatarSprite`. Parity of editor, board drag-and-drop, replay and bubble
+timings therefore comes by construction, and the core is testable in Node with a `FakeScene`.
+
+```
+apps/web/src/game/
+  types.ts             World contract (unchanged)
+  renderer.ts          rendererKind(), createWorld() → LazyWorld
+  lazy-world.ts        queue-until-mount proxy, StrictMode-safe
+  pose.ts              Pose union + poseFor (pure)
+  camera.ts            zoom/pan/fit over CameraView (pure except attach)
+  scene.ts             Scene port (G1)        core/world-core.ts  simulation (G1)
+  pixi/*               PixiScene (G1)         three/*             ThreeScene
+  three/camera.ts      iso ortho camera       three/textures.ts   floor/wall canvas textures
+  three/room.ts        floor/walls/grid       three/furniture.ts  glTF cache + procedural fallback
+  three/character.ts   rig, outfit, props     three/anim.ts       pure pose → clip/overlay machine
+  three/emotes.ts      sweat/zzz/!/hourglass/confetti             three/overlay.ts DOM labels + bubbles
+```
+
+### 11.2 Coordinate system
+
+Tile `(x, y)` → world `(x, 0, y)`, 1 unit = 1 tile, up = +Y. A 64×32 diamond is an orthographic
+view at yaw 45° and elevation 30° (`sin 30° = 0.5` gives the 2:1 ratio). With `64/√2 ≈ 45.255` px
+per unit at zoom 1 the camera projects tile `(x, y)` to exactly `tileToScreen(x, y)` from `iso.ts`;
+heights project at `cos 30° × 45.255 ≈ 39.2` px per unit (the 96 px placeholder wall ≈ 2.5 units). A
+unit test projects tile centres through the real `OrthographicCamera` and asserts equality with
+`tileToScreen` within 0.01 px, so `screenToTile`, `roomBounds` and the camera fit maths are reused
+unchanged; only avatar/furniture picking needs a raycast. The camera never rotates: 8 facings keep
+their meaning and `screenToTile` stays exact.
+
+### 11.3 Lighting and materials
+
+`HemisphereLight` + one shadow-casting `DirectionalLight` (2048² map, orthographic shadow camera
+fitted to the room, `PCFSoftShadowMap`), ACES tone mapping, sRGB output, pixel ratio ≤ 2,
+`antialias: true`. `MeshStandardMaterial` everywhere; floor and wall style ids map 1:1 to today's
+styles with textures painted once per style on a canvas. No SSAO; bloom only for monitor glow if
+the G3 measurements leave budget.
+
+### 11.4 Characters (G2)
+
+Base body: KayKit Adventurers `Rogue.glb` (CC0, see ASSETS.md): 41-joint rig, separate skinned
+meshes per body part, `handslot.l/.r` bones for props, 76 embedded clips. Each avatar is a
+`SkeletonUtils.clone` with its own `AnimationMixer` (0.2 s cross-fades). Outfit: the `Avatar` DTO's
+skin/hair/shirt/pants colours become flat materials on the body-part meshes (the pack's gradient
+atlas is not used); hair styles and accessories are procedural meshes attached to the `head`, `neck`
+and `chest` bones; interns are scaled 0.8 and desaturated. Facing: 8 yaws with turn smoothing; the
+station targets keep the 4-way `Facing`. Poses: a pure state machine (`three/anim.ts`) maps the
+existing `Pose` union to a base clip plus overlays and props, e.g. `typing` = `Sit_Chair_Idle` + arm
+oscillation + laptop prop + monitor glow; `reading` = idle/sit + book prop + head tilt; `raise_hand`
+= idle + additive arm raise (or `Spellcast_Raise`); `thinking` = idle + head-scratch overlay; `nap` =
+`Lie_Idle` or seated head droop + zzz; `celebrate` = `Cheer` + confetti; `sweat`/`cooldown` = idle +
+emote. No CC0 pack ships office clips, so this hybrid is the approved deliverable.
+
+### 11.5 Furniture, picking, editor, DnD
+
+Furniture is glTF per kind (Kenney Furniture Kit converted OBJ → GLB, flat colour materials) with a
+procedural low-poly fallback per kind (server rack, whiteboard, and any model that fails to load);
+pieces are cloned, not instanced (< 40 per room keeps draw calls < 150); instancing is used for
+floor tiles, wall segments and the grid. `pick()` raycasts avatar hit volumes first, then furniture,
+then the ground plane → tile; `getAvatarAt` stays tile-based in the core, so the board's
+`screenToTile → getAvatarAt` chain is unchanged. Editor: grid as line segments, hover tile as a
+translucent quad, ghost as a tinted translucent clone (green/red by `valid`), highlight as an
+emissive pulse, drag preview moves the clone. Bubbles and name labels are a DOM overlay positioned
+from the projected head anchor each frame (same texts and durations as the Pixi path); emotes are
+in-scene sprites/points so they are lit and occluded correctly.
+
+### 11.6 Performance budget and out of scope
+
+≤ 150 draw calls, one shadow map, ≤ 2× pixel ratio, continuous `requestAnimationFrame` with the
+100 ms dt clamp, rendering paused while the tab is hidden, `?stats=1` overlay (fps, draw calls,
+triangles). Acceptance: ≥ 60 fps for 10 s with 6 agents + 2 interns on the MacBook Air; degrade
+switches (1024² shadow map, pixel ratio 1) are one constant each. Out of scope: rotating camera,
+multiple rooms in the UI, WebGPU, SSAO, Mixamo or any non-CC0 source.
+
+### 11.7 Risks (phase 2)
+
+| # | Risk | L / I | Mitigation |
+|---|---|---|---|
+| 1 | Base body's material layout or bone names unusable | resolved in G0 | Inspected: per-part skinned meshes, named bones, `handslot` props; flat materials replace the atlas |
+| 2 | Animation gaps (no typing/reading/nap clips) look stiff | high / medium | Hybrid clips + procedural overlays + props, iterated against replay |
+| 3 | Refactoring `world.ts` regresses the Pixi path | medium / high | `FakeScene` core tests, replay + screenshots before/after, parity checklist, Pixi stays default until G3 |
+| 4 | Frame rate on the Air with shadows + 8 skinned meshes | medium / high | §11.6 budget, stats overlay, degrade switches, sprite-sheet fallback documented |
+| 5 | Bundle and repo growth (Three ≈ 170 KB gzip, 3.6 MB character GLB) | certain / low | Dynamic import per renderer; unused clips/meshes stripped in G2; sizes recorded in STATUS |
+| 6 | Missing model served as `index.html` by the SPA fallback | fixed in G0 | Server returns 404 for file-like paths; loader falls back to the procedural mesh |
+| 7 | DOM overlay drifts from the canvas on resize/zoom | medium / low | Positions recomputed every frame from the camera |
+| 8 | StrictMode double mount leaks WebGL contexts | medium / medium | `destroy()` disposes everything and forces context loss; `mountGen` guard reused |
+| 9 | Hot reload of the Three world leaves a stale context | certain / low | Reload the page (same rule as today) |
+| 10 | Licence mistakes | low / high | CC0 only, licence texts committed, one ASSETS.md row per file |

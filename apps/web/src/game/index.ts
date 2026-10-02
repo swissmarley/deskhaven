@@ -6,8 +6,8 @@ export type {
   SheetFrames,
 } from './assets/index.js';
 export { ASSET_MANIFEST, assetEntry, furnitureAssetKey } from './assets/index.js';
-export type { Pose } from './avatar.js';
 export { sheetFrameFor } from './avatar.js';
+export type { CameraView } from './camera.js';
 export { ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from './camera.js';
 export type { DragGrab, EditorKey, PaintStroke, PlacedPiece } from './editor.js';
 export {
@@ -45,6 +45,15 @@ export {
 export type { Motion, MotionSample } from './motion.js';
 export { advanceMotion, buildMotion, easeTrapezoid, SPEED_TILES_PER_S } from './motion.js';
 export { findPath } from './pathfinding.js';
+export type { Pose } from './pose.js';
+export { poseFor } from './pose.js';
+export type { RendererKind } from './renderer.js';
+export {
+  createWorld,
+  RENDERER_STORAGE_KEY,
+  rendererKind,
+  resolveRendererKind,
+} from './renderer.js';
 export { hashString, mulberry32 } from './rng.js';
 export type { SoundKind, SoundPrefs, ThrottleState } from './sound.js';
 export {
@@ -112,5 +121,4 @@ export type {
   WorldAvatarInput,
   WorldEvents,
 } from './types.js';
-export type { WorldExtras } from './world.js';
-export { createWorld } from './world.js';
+export type { WorldExtras } from './world-extras.js';

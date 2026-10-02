@@ -3,26 +3,10 @@ import { Container, Graphics, Rectangle, Sprite, Text, TextStyle, Texture } from
 import type { AvatarPalette, AvatarSheetTextures, Painters } from './assets/index.js';
 import { parseHex } from './color.js';
 import { FACING_DIR, tileDiamond } from './iso.js';
+import type { Pose } from './pose.js';
 import { frameKey, type SheetPose } from './sprites.js';
 
-/** Visual poses. Behaviours map onto these in `world.ts`; `coffee` is the idle coffee-sip variant. */
-export type Pose =
-  | 'idle'
-  | 'walk'
-  | 'typing'
-  | 'working'
-  | 'reading'
-  | 'terminal'
-  | 'browsing'
-  | 'thinking'
-  | 'raise_hand'
-  | 'sweat'
-  | 'cooldown'
-  | 'celebrate'
-  | 'nap'
-  | 'wait'
-  | 'leave'
-  | 'coffee';
+export type { Pose };
 
 export interface AvatarSpriteOptions {
   id: string;

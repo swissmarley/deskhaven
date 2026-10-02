@@ -2,6 +2,12 @@
 
 One 3-line note per milestone, newest first.
 
+## G0 — graphics phase: plan, assets, renderer switch (2026-10-03)
+
+1. Plan approved (ARCHITECTURE §11, PLAN.md phase 2, 4 questions answered): Three.js 0.186.1 behind the existing `World` contract with one simulation core and two scene backends (G1). `createWorld()` now returns a `LazyWorld` that dynamically imports the backend chosen by `VITE_RENDERER` or `localStorage['agenthotel.renderer']` (Pixi default; entry bundle 334 kB, Pixi world chunk 27 kB, Three world chunk 546 kB / 137 kB gzip, both lazy). New pure modules + tests: `pose.ts`, `camera.ts` over `CameraView`, `renderer.ts`, `lazy-world.ts` (StrictMode races), `three/camera.ts` (projection proven equal to `iso.tileToScreen` within 0.01 px).
+2. Assets (all CC0, ASSETS.md): KayKit Adventurers `Rogue.glb` (41-joint rig, per-part skinned meshes, hand-slot bones, 76 embedded clips incl. Idle/Walking/Sit_Chair/Lie/Cheer/Interact/Spellcast_Raise) and 14 Kenney Furniture Kit models converted OBJ → GLB (4–36 kB each) committed under `apps/web/public/models/` with licence texts; KayKit Character Animations, Quaternius UAL and KayKit Furniture Bits inspected and not used; `scripts/inspect-gltf.mjs` prints rigs/clips. Server SPA fallback now 404s file-like paths (test added). Verified in the browser: with the override set, the empty 3D room renders (instanced floor styles incl. the rug, north/west walls with skirting, hemisphere + shadow-casting sun) and the Pixi path is unchanged. Gates green: 177 tests (30 shared, 94 web + 2 skipped, 53 server).
+3. Next: G1 — split `world.ts` into `WorldCore` + `Scene` port + `PixiScene` (FakeScene tests), then `ThreeScene` with glTF furniture, picking, editor parity and capsule avatars.
+
 ## M0 — scaffold (2026-10-02)
 
 1. Monorepo (pnpm 10.34.5 pinned, TS 5.9, Biome 2, Vitest 5) with shared schemas, `mapEventToBehavior` + 23 tests, Fastify/WS server skeleton, Vite/React web skeleton; `pnpm dev` starts both and the Vite proxy reaches `/api/health`.
