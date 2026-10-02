@@ -31,9 +31,23 @@ export class AgentManager {
     return this.runtimes.get(agentId);
   }
 
+  /** Live Claude Code processes (idle ones included). */
   runningCount(): number {
     let n = 0;
     for (const r of this.runtimes.values()) if (r.isRunning()) n++;
+    return n;
+  }
+
+  /**
+   * Agents currently in a turn or waiting on a permission. The concurrency cap applies to these, not to
+   * idle processes: an idle session costs memory but no plan usage, and it must stay alive for resume.
+   */
+  busyCount(): number {
+    let n = 0;
+    for (const r of this.runtimes.values()) {
+      const s = r.getStatus();
+      if (r.isRunning() && (s === 'working' || s === 'needs_input')) n++;
+    }
     return n;
   }
 
@@ -63,6 +77,10 @@ export class AgentManager {
       lastError: lastError ?? (status === 'error' ? a.lastError : null),
       currentTaskId: rt?.getCurrentTaskId() ?? null,
     }));
+    // A desk frees up whenever an agent leaves the busy states.
+    if (status === 'idle' || status === 'stopped' || status === 'error' || status === 'paused') {
+      queueMicrotask(() => this.startWaiting());
+    }
   }
 
   private onStopped(agentId: string): void {
@@ -71,7 +89,7 @@ export class AgentManager {
   }
 
   private canStart(): boolean {
-    return !this.killSwitch && this.runningCount() < this.deps.concurrencyCap();
+    return !this.killSwitch && this.busyCount() < this.deps.concurrencyCap();
   }
 
   private startWaiting(): void {
@@ -80,7 +98,9 @@ export class AgentManager {
       if (!id) break;
       const agent = this.deps.agents.get(id);
       const rt = agent ? this.ensure(agent) : undefined;
-      if (rt && !rt.isRunning()) rt.start();
+      if (!rt) continue;
+      if (!rt.isRunning()) rt.start();
+      else rt.resumeWaiting();
     }
   }
 
@@ -103,7 +123,9 @@ export class AgentManager {
     if (this.killSwitch) throw new Error('Kill switch is active');
     const agent = this.mustGet(agentId);
     const rt = this.ensure(agent);
-    if (rt.isRunning() || rt.getStatus() === 'paused') {
+    const busy = rt.getStatus() === 'working' || rt.getStatus() === 'needs_input';
+    if (rt.getStatus() === 'paused' || busy) {
+      // paused: queued until resume; busy: queued behind the current turn (same desk)
       rt.sendPrompt(text, taskId);
       return;
     }

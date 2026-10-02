@@ -66,5 +66,13 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   normaliser test replays every `apps/server/test/fixtures/*.jsonl` file.
 - The sample repo (`examples/sample-repo`) is copied to `~/.agenthotel/sample-repo` by `POST /api/sample/init`;
   its tests run with Node's `--experimental-strip-types` and a quoted glob (`--test 'test/*.test.ts'`).
+- `pnpm dev` runs the server under `tsx watch`: **editing any server file restarts it and kills every live
+  agent process** (sessions stay resumable; queued tasks re-dispatch, mid-turn tasks go to Needs input).
+  Don't edit `apps/server` while a live verification run is in progress.
+- The concurrency cap counts *busy* agents (in a turn or waiting on a permission). Idle processes stay alive
+  for resume and do not occupy a desk.
+- `allowedTools` rules such as `Bash(npm test:*)` only match simple commands; a compound command
+  (`npm test 2>&1; echo ...`) falls through to the permission modal. That is intended.
+- Browser pane clicks: use `find` + `ref` (coordinate clicks were off by the screenshot scale factor).
 - Dev verification runs use Sonnet in subscription mode against the owner's Max plan (approved
   2026-10-02): keep prompts short, concurrency ≤ 2.

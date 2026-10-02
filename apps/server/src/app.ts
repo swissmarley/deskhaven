@@ -31,6 +31,7 @@ import { registerSampleRoutes } from './http/sample.js';
 import { loggerOptions } from './logger.js';
 import { PresetService } from './presets/service.js';
 import { SettingsService, SUBSCRIPTION_MODE_FEATURE_FLAG } from './settings/service.js';
+import { TaskService } from './tasks/service.js';
 import { UsageService } from './usage/service.js';
 import { WorktreeService } from './worktree/service.js';
 import { WsHub } from './ws/hub.js';
@@ -52,6 +53,7 @@ export interface AppContext {
   presets: () => RolePreset[];
   presetService: PresetService;
   worktrees: WorktreeService;
+  tasks: TaskService;
   models: () => { id: string; label: string }[];
   log: FastifyBaseLogger;
 }
@@ -139,10 +141,15 @@ export async function buildApp(
   let manager: AgentManager;
   const usage = new UsageService(agents, () => ({
     killSwitch: manager.killSwitch,
-    running: manager.runningCount(),
+    running: manager.busyCount(),
     concurrencyCap: settings.get().concurrencyCap,
   }));
   events.onEvent((e) => usage.observe(e));
+  // Seed the HUD's "auth mode in use" and plan windows from the last persisted events.
+  for (const type of ['session_started', 'rate_limit'] as const) {
+    const last = events.list({ types: [type], limit: 1 })[0];
+    if (last) usage.observe(last);
+  }
 
   manager = new AgentManager({
     agents,
@@ -163,6 +170,10 @@ export async function buildApp(
     },
   });
 
+  const tasks = new TaskService(db, hub, { manager, agents, events, worktrees, log: app.log });
+  events.onEvent((e) => tasks.onEvent(e));
+  tasks.reconcileOnBoot();
+
   const ctx: AppContext = {
     config,
     db,
@@ -180,6 +191,7 @@ export async function buildApp(
     presets: () => presetService.list(),
     presetService,
     worktrees,
+    tasks,
     models: () => KNOWN_MODELS,
     log: app.log,
   };
@@ -206,7 +218,7 @@ export async function buildApp(
           serverTime: Date.now(),
           version: APP_VERSION,
           agents: agents.list(),
-          tasks: [],
+          tasks: tasks.list(),
           rooms: [room()],
           settings: settings.get(),
           pendingPermissions: broker.listPending(),

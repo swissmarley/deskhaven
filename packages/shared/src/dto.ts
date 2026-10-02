@@ -97,7 +97,9 @@ export const CreateAgentSchema = AgentSchema.pick({
   .extend({ useWorktree: z.boolean().default(false), roomId: z.string().optional() });
 export type CreateAgent = z.infer<typeof CreateAgentSchema>;
 
-export const UpdateAgentSchema = CreateAgentSchema.omit({ useWorktree: true }).partial();
+export const UpdateAgentSchema = CreateAgentSchema.omit({ useWorktree: true })
+  .partial()
+  .extend({ deskId: z.string().nullable().optional() });
 export type UpdateAgent = z.infer<typeof UpdateAgentSchema>;
 
 export const TaskStatusSchema = z.enum([

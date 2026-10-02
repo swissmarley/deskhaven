@@ -172,6 +172,13 @@ export class AgentRuntime {
     if (!this.inTurn) this.dispatchNext();
   }
 
+  /** Called by the manager when a desk frees up for an agent that was waiting with a live process. */
+  resumeWaiting(): void {
+    if (this.status !== 'waiting') return;
+    if (this.queue.length && !this.inTurn) this.dispatchNext();
+    else this.setStatus('idle');
+  }
+
   /** Queue without starting (the manager uses this when the concurrency cap is reached). */
   enqueueOnly(text: string, taskId: string | null): void {
     this.emit({ ...this.baseEvent(), type: 'message_sent', text, ...(taskId ? { taskId } : {}) });
@@ -241,6 +248,10 @@ export class AgentRuntime {
   }
 
   private finishLoop(err: unknown): void {
+    this.deps.log.info(
+      { agentId: this.agent.id, stopping: this.stopping, error: err ? String(err) : null },
+      'agent session loop ended',
+    );
     this.session = null;
     this.inTurn = false;
     if (err && !this.stopping) {

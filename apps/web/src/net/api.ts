@@ -3,10 +3,13 @@ import type {
   AgentEvent,
   AuthStatus,
   CreateAgent,
+  CreateTask,
   PermissionRequest,
   RolePreset,
   Settings,
+  Task,
   UpdateAgent,
+  UpdateTask,
   UsageSnapshot,
 } from '@agenthotel/shared';
 
@@ -43,7 +46,20 @@ export const api = {
   agents: () => call<Agent[]>('GET', '/api/agents'),
   createAgent: (input: CreateAgent) => call<Agent>('POST', '/api/agents', input),
   updateAgent: (id: string, patch: UpdateAgent) => call<Agent>('PATCH', `/api/agents/${id}`, patch),
-  deleteAgent: (id: string) => call<{ ok: true }>('DELETE', `/api/agents/${id}`),
+  deleteAgent: (id: string, force = false) =>
+    call<{ ok: true }>('DELETE', `/api/agents/${id}${force ? '?force=true' : ''}`),
+  savePreset: (id: string, preset: unknown) =>
+    call<RolePreset>('PUT', `/api/presets/${id}`, preset),
+  resetPreset: (id: string) => call<{ preset: RolePreset | null }>('DELETE', `/api/presets/${id}`),
+  tasks: () => call<Task[]>('GET', '/api/tasks'),
+  createTask: (input: CreateTask) => call<Task>('POST', '/api/tasks', input),
+  updateTask: (id: string, patch: UpdateTask) => call<Task>('PATCH', `/api/tasks/${id}`, patch),
+  deleteTask: (id: string) => call<{ ok: true }>('DELETE', `/api/tasks/${id}`),
+  assignTask: (id: string, agentId: string) =>
+    call<Task>('POST', `/api/tasks/${id}/assign`, { agentId }),
+  nudgeTask: (id: string, text: string) =>
+    call<{ ok: true }>('POST', `/api/tasks/${id}/nudge`, { text }),
+  sampleInit: () => call<{ path: string }>('POST', '/api/sample/init'),
   agentAction: (id: string, action: 'start' | 'stop' | 'pause' | 'resume' | 'interrupt') =>
     call<{ status?: string }>('POST', `/api/agents/${id}/${action}`),
   message: (id: string, text: string) =>

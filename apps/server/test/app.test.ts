@@ -106,6 +106,17 @@ describe('server', () => {
     expect(bad.statusCode).toBe(400);
   });
 
+  it('parses boolean query flags strictly', async () => {
+    const bad = await app.inject({ method: 'GET', url: '/api/events?asc=maybe' });
+    expect(bad.statusCode).toBe(400);
+    expect(
+      (await app.inject({ method: 'GET', url: '/api/events?asc=false&limit=5' })).statusCode,
+    ).toBe(200);
+    expect(
+      (await app.inject({ method: 'GET', url: '/api/events?asc=true&limit=5' })).statusCode,
+    ).toBe(200);
+  });
+
   it('scrubs key-like strings', () => {
     expect(scrubSecrets('key sk-ant-abcdefghijklmnop rest')).toBe('key sk-ant-[redacted] rest');
   });

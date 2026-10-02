@@ -1,9 +1,11 @@
 import {
   APP_VERSION,
   CreateAgentSchema,
+  CreateTaskSchema,
   ResolvePermissionSchema,
   UpdateAgentSchema,
   UpdateSettingsSchema,
+  UpdateTaskSchema,
 } from '@agenthotel/shared';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
@@ -16,7 +18,7 @@ const eventsQuery = z.object({
   agentId: z.string().optional(),
   sinceSeq: z.coerce.number().int().nonnegative().optional(),
   limit: z.coerce.number().int().positive().max(5000).optional(),
-  asc: z.coerce.boolean().optional(),
+  asc: z.stringbool().optional(),
 });
 
 function parse<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T | null {
@@ -104,7 +106,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
 
   app.delete('/api/agents/:id', async (req, reply) => {
     const p = parse(idParams, req.params, reply);
-    const q = p && parse(z.object({ force: z.coerce.boolean().optional() }), req.query, reply);
+    const q = p && parse(z.object({ force: z.stringbool().optional() }), req.query, reply);
     if (!p || !q) return;
     const agent = ctx.agents.get(p.id);
     if (!agent) return reply.code(404).send({ error: 'not_found' });
@@ -156,6 +158,60 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     if (!p || !body) return;
     try {
       ctx.manager.sendPrompt(p.id, body.text, null);
+      return { ok: true };
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  // ---- tasks ------------------------------------------------------------------------------------
+  app.get('/api/tasks', async () => ctx.tasks.list());
+
+  app.post('/api/tasks', async (req, reply) => {
+    const body = parse(CreateTaskSchema, req.body, reply);
+    if (!body) return;
+    try {
+      return reply.code(201).send(ctx.tasks.create(body));
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  app.patch('/api/tasks/:id', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    const body = p && parse(UpdateTaskSchema, req.body, reply);
+    if (!p || !body) return;
+    try {
+      return ctx.tasks.update(p.id, body);
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  app.delete('/api/tasks/:id', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    if (!p) return;
+    ctx.tasks.remove(p.id);
+    return { ok: true };
+  });
+
+  app.post('/api/tasks/:id/assign', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    const body = p && parse(z.object({ agentId: z.string().min(1) }), req.body, reply);
+    if (!p || !body) return;
+    try {
+      return ctx.tasks.assign(p.id, body.agentId);
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  app.post('/api/tasks/:id/nudge', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    const body = p && parse(messageBody, req.body, reply);
+    if (!p || !body) return;
+    try {
+      ctx.tasks.nudge(p.id, body.text);
       return { ok: true };
     } catch (err) {
       fail(reply, err);

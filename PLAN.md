@@ -1,6 +1,6 @@
 # AgentHotel — Milestone plan
 
-Written 2026-10-02. Companion to [ARCHITECTURE.md](ARCHITECTURE.md). Status: **questions answered, waiting for "go" to start M0**.
+Written 2026-10-02. Companion to [ARCHITECTURE.md](ARCHITECTURE.md). Status: **building — M0–M4 done, M5 next** (see STATUS.md).
 
 ## Working agreement (from the brief)
 

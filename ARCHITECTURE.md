@@ -22,7 +22,7 @@ risk list. The milestone plan and open questions live in [PLAN.md](PLAN.md).
 | Agent engine | `@anthropic-ai/claude-agent-sdk` **pinned exact** (0.3.287 today); one `query()` in streaming-input mode per agent | Verified against installed `sdk.d.ts`, see §3 |
 | Keychain | **`@napi-rs/keyring`** instead of `keytar` | `keytar` is archived/unmaintained (last release 2022) with no prebuilds for current Node; `@napi-rs/keyring` ships prebuilt darwin-arm64/x64, linux, win32 binaries |
 | Sounds | Synthesised with WebAudio (oscillators/noise), no audio files | Zero licensing surface, zero asset weight; toggleable |
-| Art | Placeholder (coloured iso boxes + labels) first; then procedurally generated pixel sprite sheets from palette/outfit params; single `assets/manifest.json` | Brief requirement; lets the game loop ship in M1 |
+| Art | Placeholder (coloured iso boxes + labels) first; then procedurally generated 16×28 pixel sprite sheets (4 facings × 7 poses) from the `Avatar` DTO; single `assets/manifest.ts` with `placeholder` / `generated` / `sheet` kinds | Brief requirement; lets the game loop ship in M1 |
 | Pathfinding | Own A\* on the tile grid (8-dir, no corner cutting), ~80 lines, unit-tested | Grid is ≤ 30×30; a dependency would be heavier than the code |
 | Delegation | Manager agent gets an **in-process MCP server** (`createSdkMcpServer` + `tool()`) with `create_task`/`assign_task`/`list_agents`/`task_status`; employees never get these tools | Structured, flat, one level — no text parsing, and the SDK can't nest subagents beyond its own limits anyway |
 | Data dir | `~/.agenthotel/` (SQLite db, git worktrees, logs); override with `AGENTHOTEL_DATA_DIR` | Keeps the repo clean and makes "delete everything" one command |
@@ -240,7 +240,7 @@ Primary sources:
 - **Sandboxing.** Each agent's `cwd` is its working directory or a dedicated git worktree (`~/.agenthotel/worktrees/<agentId>`, branch `agenthotel/<agent-slug>`). Worktrees are removed only through an explicit UI action that first checks for uncommitted changes.
 - **Budgets.** Per agent: `maxTurns`, `maxBudgetUsd` (SDK-enforced, yields `error_max_turns` / `error_max_budget_usd`), and a per-day cost cap enforced by `BudgetGuard` before each prompt is sent (sums today's `turn_completed.costUsd`). Global per-day cap as well.
 - **Kill switch.** One button/endpoint: aborts every `AbortController`, calls `interrupt()` first for a graceful stop, sets a `killed` flag that refuses new spawns until cleared, and emits a global event.
-- **Concurrency cap.** `AgentManager` keeps a semaphore; agents beyond the cap are *Assigned* but wait in a queue (visible as "waiting for a desk").
+- **Concurrency cap.** `AgentManager` counts *busy* agents (in a turn or waiting on a permission); an agent whose prompt would exceed the cap keeps the prompt queued with status `waiting` ("waiting for a desk") and starts as soon as another agent goes idle. Idle processes stay alive so sessions resume instantly; they do not count against the cap (memory is bounded by the idle-timeout in M6).
 
 ---
 
@@ -263,6 +263,10 @@ Migrations are hand-written, idempotent `CREATE TABLE IF NOT EXISTS` statements 
 Session transcripts stay where the SDK writes them (`~/.claude/projects/`); we store only `session_id`.
 
 ---
+
+## 7.1 Tasks and the board
+
+`TaskService` (server) owns the Kanban state machine. Assigning sends `# Task: <title>\n\n<prompt>` into the agent's session tagged with the task id; every `AgentEvent` carrying that id moves the card: `status working` → In progress, `permission_requested` / AskUserQuestion / ExitPlanMode → Needs input, `turn_completed ok` → Review (result summary = the SDK result or the last assistant text, cost added, files from `git diff --numstat` + untracked), failed turn → Needs input. On boot, queued (`assigned`) tasks are re-dispatched because their prompt never reached a model turn, while mid-turn tasks are flagged for a human nudge (the resumed session already has their context). Drag-and-drop onto an avatar resolves the drop target through the Pixi world (`screenToTile` → `getAvatarAt`).
 
 ## 8. Front-end structure
 

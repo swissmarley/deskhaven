@@ -3,6 +3,8 @@ import { type JSX, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { api } from '../net/api.js';
 import { selectPendingPermissions, useAppStore } from '../state/store.js';
+import { AgentForm } from './AgentForm.js';
+import { AvatarPreview } from './AvatarPicker.js';
 import { describeEvent, fmtTime, fmtTokens, fmtUsd } from './eventText.js';
 import { PermissionCard } from './PermissionModal.js';
 
@@ -23,6 +25,7 @@ export function InspectorPanel(): JSX.Element {
   const pushNotice = useAppStore((s) => s.pushNotice);
   const selectAgent = useAppStore((s) => s.selectAgent);
   const [text, setText] = useState('');
+  const [editing, setEditing] = useState(false);
 
   if (!agent || !id)
     return <p className="muted">Click an avatar or pick an agent from the HR desk.</p>;
@@ -49,7 +52,21 @@ export function InspectorPanel(): JSX.Element {
       await api.deleteAgent(id);
       selectAgent(null);
     } catch (err) {
-      pushNotice('error', String(err instanceof Error ? err.message : err), id);
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        /uncommitted/.test(message) &&
+        confirm(`${message}\n\nRemove the worktree anyway and lose those changes?`)
+      ) {
+        try {
+          await api.deleteAgent(id, true);
+          selectAgent(null);
+          return;
+        } catch (err2) {
+          pushNotice('error', String(err2 instanceof Error ? err2.message : err2), id);
+          return;
+        }
+      }
+      pushNotice('error', message, id);
     }
   };
 
@@ -57,10 +74,16 @@ export function InspectorPanel(): JSX.Element {
     <div className="panel inspector">
       <div className="panel-head">
         <h3>
-          <span className="swatch" style={{ background: agent.avatar.shirt }} /> {agent.name}
+          <AvatarPreview avatar={agent.avatar} size={32} /> {agent.name}
         </h3>
-        <span className={`pill status-${agent.status}`}>{agent.status.replace('_', ' ')}</span>
+        <span>
+          <span className={`pill status-${agent.status}`}>{agent.status.replace('_', ' ')}</span>
+          <button type="button" className="link" onClick={() => setEditing((v) => !v)}>
+            {editing ? 'close' : 'edit'}
+          </button>
+        </span>
       </div>
+      {editing ? <AgentForm agent={agent} onDone={() => setEditing(false)} /> : null}
       <dl className="kv">
         <dt>Role</dt>
         <dd>{agent.rolePresetId}</dd>

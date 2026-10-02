@@ -2,9 +2,9 @@ import type { FurnitureKind } from '@agenthotel/shared';
 
 /**
  * Asset manifest. Every drawable thing has an entry; `placeholder` means "draw coloured iso boxes",
- * `sheet` means "load this sprite sheet and play its frames". M1 ships placeholders only; the
- * painters in `./index.ts` are the seam where sheet-backed implementations plug in later without
- * touching `world.ts`.
+ * `generated` means "paint a procedural pixel-art sheet at runtime" (avatars, see `../sprites.ts`),
+ * `sheet` means "load this sprite sheet and play its frames". The painters in `./index.ts` are the
+ * seam where each implementation plugs in without touching `world.ts`.
  */
 export interface SheetFrames {
   frameWidth: number;
@@ -17,12 +17,13 @@ export interface SheetFrames {
 
 export type AssetEntry =
   | { kind: 'placeholder'; url?: undefined; frames?: undefined }
+  | { kind: 'generated'; url?: undefined; frames?: undefined }
   | { kind: 'sheet'; url: string; frames: SheetFrames };
 
 export type AssetKey = 'avatar' | 'floor' | 'wall' | `furniture:${FurnitureKind}`;
 
 export const ASSET_MANIFEST: Record<AssetKey, AssetEntry> = {
-  avatar: { kind: 'placeholder' },
+  avatar: { kind: 'generated' },
   floor: { kind: 'placeholder' },
   wall: { kind: 'placeholder' },
   'furniture:desk': { kind: 'placeholder' },
