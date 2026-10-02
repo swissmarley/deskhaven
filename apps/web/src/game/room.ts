@@ -7,8 +7,9 @@ import {
 } from '@agenthotel/shared';
 import { Container, Graphics, Polygon, Text, TextStyle } from 'pixi.js';
 import type { Painters } from './assets/index.js';
-import { depthKey, FACING_DIR, tileDiamond, tileToScreen } from './iso.js';
-import type { TilePoint } from './types.js';
+import { GHOST_ALPHA, ghostTint } from './editor.js';
+import { depthKey, FACING_DIR, isoRectPoints, tileDiamond, tileToScreen } from './iso.js';
+import type { Ghost, TilePoint } from './types.js';
 
 export interface RoomLayers {
   floor: Container;
@@ -24,6 +25,11 @@ const LABEL_STYLE = new TextStyle({
   stroke: { color: 0xffffff, width: 2 },
 });
 
+const HIGHLIGHT_COLOR = 0xffd166;
+/** The ghost sorts above furniture sharing its row but below avatars (which use 500). */
+const GHOST_DEPTH_EXTRA = 400;
+const DRAG_ALPHA = 0.5;
+
 /** Flat non-blocking pieces (rug) are floor decals, drawn beneath avatars rather than depth-sorted. */
 export function isDecal(kind: Furniture['kind']): boolean {
   const spec = FURNITURE_CATALOG[kind];
@@ -34,13 +40,20 @@ export function isDecal(kind: Furniture['kind']): boolean {
 export class FurnitureSprite extends Container {
   readonly furnitureId: string;
   readonly kind: Furniture['kind'];
+  private placed: Furniture;
+  private readonly ring = new Graphics();
+  private readonly outline: number[];
+  private readonly size: { w: number; h: number };
 
   constructor(piece: Furniture, painters: Painters) {
     super();
     this.furnitureId = piece.id;
     this.kind = piece.kind;
+    this.placed = piece;
+    this.size = rotatedSize(piece.kind, piece.rotation);
     const g = new Graphics();
     const shape = painters.furniture(g, piece.kind, piece.rotation);
+    this.outline = shape.outline;
     const label = new Text({
       text: FURNITURE_CATALOG[piece.kind].label,
       style: LABEL_STYLE,
@@ -48,23 +61,56 @@ export class FurnitureSprite extends Container {
       resolution: 2,
     });
     label.position.set(shape.labelX, shape.labelY);
-    this.addChild(g, label);
-    const { sx, sy } = tileToScreen(piece.x, piece.y);
-    this.position.set(sx, sy);
-    // Sort by the piece's front-most tile so avatars in front of it draw over it.
-    const { w, h } = rotatedSize(piece.kind, piece.rotation);
-    this.zIndex = depthKey(piece.x + w - 1, piece.y + h - 1);
+    this.ring.eventMode = 'none';
+    this.addChild(g, this.ring, label);
+    this.moveTo(piece.x, piece.y);
     this.eventMode = 'static';
     this.interactiveChildren = false;
     this.cursor = 'pointer';
     this.hitArea = new Polygon(shape.outline);
   }
+
+  /** The piece as last applied through `setRoom` (origin tile and rotation). */
+  get piece(): Furniture {
+    return this.placed;
+  }
+
+  /** Adopt a new placement of the same kind and rotation (moved, or unchanged). */
+  setPlacement(piece: Furniture): void {
+    this.placed = piece;
+    this.moveTo(piece.x, piece.y);
+  }
+
+  /** Position the sprite as if its origin tile were (x, y); used for the drag preview. */
+  moveTo(x: number, y: number): void {
+    const { sx, sy } = tileToScreen(x, y);
+    this.position.set(sx, sy);
+    // Sort by the piece's front-most tile so avatars in front of it draw over it.
+    this.zIndex = depthKey(x + this.size.w - 1, y + this.size.h - 1);
+  }
+
+  /** Selection outline around the prism. */
+  setHighlighted(on: boolean): void {
+    this.ring.clear();
+    if (!on) return;
+    this.ring
+      .poly(this.outline)
+      .fill({ color: HIGHLIGHT_COLOR, alpha: 0.15 })
+      .stroke({ width: 2, color: HIGHLIGHT_COLOR });
+  }
+
+  /** Semi-transparent while dragged; turning it off snaps the sprite back to its real origin. */
+  setDragging(on: boolean): void {
+    this.alpha = on ? DRAG_ALPHA : 1;
+    if (!on) this.moveTo(this.placed.x, this.placed.y);
+  }
 }
 
 /**
- * Draws the static room: walls, floor, decals and interaction markers into the floor layer, the
- * tile grid into the grid layer, furniture prisms into the objects layer, and hover / highlight
- * diamonds into the ui layer.
+ * Draws the room: walls, floor, decals and interaction markers into the floor layer, the tile grid
+ * into the grid layer, furniture prisms (and the placement ghost) into the objects layer, and
+ * hover / highlight diamonds into the ui layer. Furniture sprites are keyed by id so repeated
+ * `setRoom` calls (every editor stroke) only touch what changed.
  */
 export class RoomView {
   private readonly wallG = new Graphics();
@@ -73,43 +119,54 @@ export class RoomView {
   private readonly gridG = new Graphics();
   private readonly hoverG = new Graphics();
   private readonly highlightG = new Graphics();
-  private furniture: FurnitureSprite[] = [];
+  private readonly ghostG = new Graphics();
+  private readonly furniture = new Map<string, FurnitureSprite>();
   private readonly diamond: number[] = [];
+  private highlightedFurniture: string | null = null;
+  private editor = false;
 
   constructor(
     private readonly layers: RoomLayers,
     private readonly painters: Painters,
   ) {
-    for (const g of [
-      this.wallG,
-      this.floorG,
-      this.markerG,
-      this.gridG,
-      this.hoverG,
-      this.highlightG,
-    ])
-      g.eventMode = 'none';
+    for (const g of this.graphics()) g.eventMode = 'none';
+    this.ghostG.visible = false;
     layers.floor.addChild(this.wallG, this.floorG, this.markerG);
     layers.grid.addChild(this.gridG);
+    layers.objects.addChild(this.ghostG);
     layers.ui.addChild(this.highlightG, this.hoverG);
   }
 
   setRoom(room: Room): void {
-    for (const f of this.furniture) f.destroy({ children: true });
-    this.furniture = [];
     this.drawWalls(room);
     this.drawFloor(room);
     this.drawGrid(room);
     this.drawMarkers(room);
+    const seen = new Set<string>();
     for (const piece of room.furniture) {
-      const sprite = new FurnitureSprite(piece, this.painters);
-      if (isDecal(piece.kind)) {
-        this.layers.floor.addChild(sprite);
-      } else {
-        this.layers.objects.addChild(sprite);
+      seen.add(piece.id);
+      const existing = this.furniture.get(piece.id);
+      if (existing && existing.kind === piece.kind && existing.piece.rotation === piece.rotation) {
+        existing.setPlacement(piece);
+        continue;
       }
-      this.furniture.push(sprite);
+      existing?.destroy({ children: true });
+      const sprite = new FurnitureSprite(piece, this.painters);
+      sprite.cursor = this.editor ? 'grab' : 'pointer';
+      if (piece.id === this.highlightedFurniture) sprite.setHighlighted(true);
+      (isDecal(piece.kind) ? this.layers.floor : this.layers.objects).addChild(sprite);
+      this.furniture.set(piece.id, sprite);
     }
+    for (const [id, sprite] of this.furniture) {
+      if (seen.has(id)) continue;
+      sprite.destroy({ children: true });
+      this.furniture.delete(id);
+    }
+  }
+
+  /** The live sprite for a piece, or null once it has been removed or replaced. */
+  furnitureById(id: string): FurnitureSprite | null {
+    return this.furniture.get(id) ?? null;
   }
 
   setGridVisible(visible: boolean): void {
@@ -118,6 +175,12 @@ export class RoomView {
 
   get gridVisible(): boolean {
     return this.gridG.visible;
+  }
+
+  /** Editor mode: furniture shows a grab cursor. */
+  setEditorMode(on: boolean): void {
+    this.editor = on;
+    for (const sprite of this.furniture.values()) sprite.cursor = on ? 'grab' : 'pointer';
   }
 
   setHover(tile: TilePoint | null): void {
@@ -134,22 +197,59 @@ export class RoomView {
     if (!tile) return;
     this.highlightG
       .poly(tileDiamond(tile.x, tile.y, this.diamond))
-      .fill({ color: 0xffd166, alpha: 0.35 })
-      .stroke({ width: 2, color: 0xffd166 });
+      .fill({ color: HIGHLIGHT_COLOR, alpha: 0.35 })
+      .stroke({ width: 2, color: HIGHLIGHT_COLOR });
+  }
+
+  setHighlightFurniture(id: string | null): void {
+    if (id === this.highlightedFurniture) return;
+    if (this.highlightedFurniture)
+      this.furniture.get(this.highlightedFurniture)?.setHighlighted(false);
+    this.highlightedFurniture = id;
+    if (id) this.furniture.get(id)?.setHighlighted(true);
+  }
+
+  /**
+   * Translucent placement preview: footprint plate plus the piece's painter, tinted green when the
+   * placement is valid and red otherwise. Depth-sorted with the furniture.
+   */
+  setGhost(ghost: Ghost | null): void {
+    const g = this.ghostG;
+    g.clear();
+    if (!ghost) {
+      g.visible = false;
+      return;
+    }
+    const tint = ghostTint(ghost.valid);
+    const { w, h } = rotatedSize(ghost.kind, ghost.rotation);
+    g.poly(isoRectPoints(-0.5, -0.5, w - 0.5, h - 0.5))
+      .fill({ color: 0xffffff, alpha: 0.35 })
+      .stroke({ width: 2, color: 0xffffff, alpha: 0.9 });
+    this.painters.furniture(g, ghost.kind, ghost.rotation);
+    g.tint = tint;
+    g.alpha = GHOST_ALPHA;
+    const { sx, sy } = tileToScreen(ghost.x, ghost.y);
+    g.position.set(sx, sy);
+    g.zIndex = depthKey(ghost.x + w - 1, ghost.y + h - 1, GHOST_DEPTH_EXTRA);
+    g.visible = true;
   }
 
   destroy(): void {
-    for (const f of this.furniture) f.destroy({ children: true });
-    this.furniture = [];
-    for (const g of [
+    for (const f of this.furniture.values()) f.destroy({ children: true });
+    this.furniture.clear();
+    for (const g of this.graphics()) g.destroy();
+  }
+
+  private graphics(): Graphics[] {
+    return [
       this.wallG,
       this.floorG,
       this.markerG,
       this.gridG,
       this.hoverG,
       this.highlightG,
-    ])
-      g.destroy();
+      this.ghostG,
+    ];
   }
 
   private drawWalls(room: Room): void {

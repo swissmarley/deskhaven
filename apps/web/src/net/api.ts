@@ -6,6 +6,7 @@ import type {
   CreateTask,
   PermissionRequest,
   RolePreset,
+  Room,
   Settings,
   Task,
   UpdateAgent,
@@ -59,6 +60,9 @@ export const api = {
     call<Task>('POST', `/api/tasks/${id}/assign`, { agentId }),
   nudgeTask: (id: string, text: string) =>
     call<{ ok: true }>('POST', `/api/tasks/${id}/nudge`, { text }),
+  rooms: () => call<Room[]>('GET', '/api/rooms'),
+  saveRoom: (room: Room) => call<Room>('PUT', `/api/rooms/${room.id}`, room),
+  resetRoom: (id: string) => call<Room>('POST', `/api/rooms/${id}/reset`),
   sampleInit: () => call<{ path: string }>('POST', '/api/sample/init'),
   agentAction: (id: string, action: 'start' | 'stop' | 'pause' | 'resume' | 'interrupt') =>
     call<{ status?: string }>('POST', `/api/agents/${id}/${action}`),

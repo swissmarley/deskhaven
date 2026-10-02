@@ -691,3 +691,36 @@ textarea.mono {
   border-color: var(--accent-2);
   color: var(--accent-2);
 }
+
+/* ---- room editor (M5) ---- */
+.toolbox {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.toolbox button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+kbd {
+  font-family: var(--font);
+  font-size: 11px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.button-like {
+  display: inline-block;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.button-like:hover {
+  border-color: var(--accent);
+}

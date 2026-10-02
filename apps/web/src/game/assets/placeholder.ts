@@ -15,6 +15,7 @@ import {
   tileToScreen,
   WALL_H,
 } from '../iso.js';
+import { floorStyleColors, wallStyleColor } from '../styles.js';
 import type { AvatarPalette, Painters, PrismShape } from './index.js';
 
 /**
@@ -50,17 +51,9 @@ export function drawShadow(g: Graphics, base: number[], grow = 1.15): void {
   });
 }
 
-const FLOOR_STYLES: Record<number, readonly [number, number]> = {
-  0: [0xcfd8dc, 0xb7c4cb],
-  1: [0xe9a23b, 0xd9922b], // rug
-  2: [0x9ccc9c, 0x86b886],
-};
-const NORTH_WALL: Record<number, number> = { 0: 0x66788a, 1: 0x8a667a };
-const WEST_WALL: Record<number, number> = { 0: 0x50606f, 1: 0x6f5062 };
-
 export const placeholderPainters: Painters = {
   floorTile(g, x, y, style) {
-    const pair = FLOOR_STYLES[style] ?? FLOOR_STYLES[0] ?? [0xcccccc, 0xbbbbbb];
+    const pair = floorStyleColors(style);
     g.poly(tileDiamond(x, y)).fill(pair[(x + y) % 2]);
   },
 
@@ -72,8 +65,7 @@ export const placeholderPainters: Painters = {
     const ay = c.sy - HALF_H;
     const bx = side === 'north' ? c.sx + HALF_W : c.sx - HALF_W;
     const by = c.sy;
-    const color =
-      side === 'north' ? (NORTH_WALL[style] ?? 0x66788a) : (WEST_WALL[style] ?? 0x50606f);
+    const color = wallStyleColor(side, style);
     g.poly([ax, ay, bx, by, bx, by - WALL_H, ax, ay - WALL_H]).fill(color);
     // Skirting board.
     g.poly([ax, ay, bx, by, bx, by - 6, ax, ay - 6]).fill(shade(color, 0.7));

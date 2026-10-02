@@ -253,7 +253,7 @@ describe('mapEventToBehavior', () => {
       kind: 'nap',
     });
     expect(mapEventToBehavior(ev('status', { status: 'stopped' }), ctx())).toEqual<Behavior>({
-      kind: 'leave',
+      kind: 'wait',
     });
     expect(mapEventToBehavior(ev('status', { status: 'waiting' }), ctx())).toEqual<Behavior>({
       kind: 'wait',

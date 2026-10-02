@@ -6,6 +6,7 @@ export * from './furniture.js';
 export * from './ids.js';
 export * from './presets.js';
 export * from './protocol.js';
+export * from './roomEdit.js';
 export * from './tools.js';
 
 export const DEFAULT_MODEL = 'claude-sonnet-5-5';

@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
 import { useAppStore } from '../state/store.js';
 import { AgentsPanel } from './AgentsPanel.js';
+import { EditorPanel } from './EditorPanel.js';
 import { FeedPanel } from './FeedPanel.js';
 import { InspectorPanel } from './InspectorPanel.js';
 import { SettingsPanel } from './SettingsPanel.js';
@@ -9,6 +10,7 @@ const TABS = [
   { id: 'agents', label: 'HR desk' },
   { id: 'inspector', label: 'Inspector' },
   { id: 'feed', label: 'Feed' },
+  { id: 'room', label: 'Room' },
   { id: 'settings', label: 'Settings' },
 ] as const;
 
@@ -35,6 +37,7 @@ export function SidePanel(): JSX.Element {
         {tab === 'agents' ? <AgentsPanel /> : null}
         {tab === 'inspector' ? <InspectorPanel /> : null}
         {tab === 'feed' ? <FeedPanel /> : null}
+        {tab === 'room' ? <EditorPanel /> : null}
         {tab === 'settings' ? <SettingsPanel /> : null}
         {tab === 'board' ? <p className="muted">Task board arrives in M4.</p> : null}
       </div>

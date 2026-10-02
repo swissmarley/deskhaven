@@ -47,7 +47,7 @@ export interface AppState {
   seeds: Record<string, number>;
   lastSeq: number;
   selectedAgentId: string | null;
-  sideTab: 'agents' | 'inspector' | 'feed' | 'settings' | 'board';
+  sideTab: 'agents' | 'inspector' | 'feed' | 'settings' | 'board' | 'room';
   boardOpen: boolean;
   notices: Notice[];
   soundEnabled: boolean;
@@ -190,7 +190,6 @@ function initialBehavior(a: Agent): Behavior {
     case 'paused':
       return { kind: 'nap' };
     case 'stopped':
-      return { kind: 'leave' };
     case 'waiting':
       return { kind: 'wait' };
     default:
@@ -290,3 +289,7 @@ export const selectAgentList = (s: AppState): Agent[] =>
   Object.values(s.agents).sort((a, b) => a.createdAt - b.createdAt);
 export const selectPendingPermissions = (s: AppState): PermissionRequest[] =>
   Object.values(s.permissions).sort((a, b) => a.createdAt - b.createdAt);
+
+// The store is a singleton shared by React and the Pixi bridge: a hot update would create a second copy,
+// so force a full reload instead (dev only; Vite strips this in production builds).
+if (import.meta.hot) import.meta.hot.accept(() => import.meta.hot?.invalidate());

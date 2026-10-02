@@ -107,16 +107,22 @@ export function GameCanvas(): JSX.Element {
           }
         }),
       );
-      world.setEvents({
-        onAvatarClick: (id) => {
-          if (!id.startsWith('intern:')) store.getState().selectAgent(id);
-        },
-        onTileClick: (tile) => {
-          const s = store.getState();
-          const target = s.selectedAgentId ?? Object.keys(s.agents)[0];
-          if (target) world.walkTo(target, tile);
-        },
-      });
+      const installDefaultEvents = () =>
+        world.setEvents({
+          onAvatarClick: (id) => {
+            if (!id.startsWith('intern:')) store.getState().selectAgent(id);
+          },
+          onTileClick: (tile) => {
+            const s = store.getState();
+            const target = s.selectedAgentId ?? Object.keys(s.agents)[0];
+            if (target) world.walkTo(target, tile);
+          },
+        });
+      installDefaultEvents();
+      window.addEventListener('agenthotel:editor-closed', installDefaultEvents);
+      unsubs.push(() =>
+        window.removeEventListener('agenthotel:editor-closed', installDefaultEvents),
+      );
     });
 
     return () => {

@@ -88,7 +88,8 @@ export function mapEventToBehavior(event: AgentEvent, ctx: BehaviorContext): Beh
         case 'paused':
           return { kind: 'nap' };
         case 'stopped':
-          return { kind: 'leave' };
+          // Off duty: the agent stays visible by the door; `leave` is reserved for removal.
+          return { kind: 'wait' };
         case 'waiting':
           return { kind: 'wait' };
         case 'error':

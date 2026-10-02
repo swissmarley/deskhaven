@@ -1,4 +1,4 @@
-import type { Avatar, Behavior, Room } from '@agenthotel/shared';
+import type { Avatar, Behavior, FurnitureKind, Room } from '@agenthotel/shared';
 
 /**
  * Contract between the UI (React, Zustand) and the PixiJS world. The UI never touches Pixi objects;
@@ -26,6 +26,23 @@ export interface WorldEvents {
   onTileClick?: (tile: TilePoint) => void;
   onAvatarClick?: (avatarId: string) => void;
   onFurnitureClick?: (furnitureId: string) => void;
+  /** Editor mode only: pointer moved over a tile (null when leaving the room). */
+  onTileHover?: (tile: TilePoint | null) => void;
+  /** Editor mode only: pointer is held down and dragged across tiles (painting). Fired once per new tile. */
+  onTileDrag?: (tile: TilePoint) => void;
+  /** Editor mode only: a furniture piece was dragged and released over a tile (its new origin). */
+  onFurnitureDragEnd?: (furnitureId: string, tile: TilePoint) => void;
+  /** Editor mode only: a keyboard shortcut pressed while the canvas has focus ('r' rotate, 'Delete'/'Backspace' erase, 'Escape'). */
+  onEditorKey?: (key: string) => void;
+}
+
+/** Translucent preview of a piece about to be placed (or moved). */
+export interface Ghost {
+  kind: FurnitureKind;
+  x: number;
+  y: number;
+  rotation: number;
+  valid: boolean;
 }
 
 export type BubbleKind = 'speech' | 'thought' | 'alert' | 'code';
@@ -53,6 +70,14 @@ export interface World {
   getAvatarAt(tile: TilePoint): string | null;
   /** Convert a pointer position (client coordinates) to a tile; null when outside the room. */
   screenToTile(clientX: number, clientY: number): TilePoint | null;
-  /** Highlight a tile/avatar (hover feedback for drag-and-drop). Pass null to clear. */
-  setHighlight(target: { tile?: TilePoint; avatarId?: string } | null): void;
+  /** Highlight a tile, avatar or furniture piece (hover/selection feedback). Pass null to clear. */
+  setHighlight(target: { tile?: TilePoint; avatarId?: string; furnitureId?: string } | null): void;
+
+  /**
+   * Editor mode: shows the grid, emits hover/drag events, lets furniture be dragged, and disables
+   * click-to-walk. Avatars keep acting; `setRoom` is still the only way layout changes reach the world.
+   */
+  setEditorMode(on: boolean): void;
+  /** Show or clear the placement ghost (editor mode). */
+  setGhost(ghost: Ghost | null): void;
 }

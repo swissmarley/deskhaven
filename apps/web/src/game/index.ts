@@ -9,6 +9,20 @@ export { ASSET_MANIFEST, assetEntry, furnitureAssetKey } from './assets/index.js
 export type { Pose } from './avatar.js';
 export { sheetFrameFor } from './avatar.js';
 export { ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from './camera.js';
+export type { DragGrab, EditorKey, PaintStroke, PlacedPiece } from './editor.js';
+export {
+  beginFurnitureDrag,
+  beginPaint,
+  clampOrigin,
+  dragOriginFor,
+  EDITOR_KEYS,
+  editorKeyFor,
+  GHOST_INVALID,
+  GHOST_VALID,
+  ghostTint,
+  paintStep,
+  samePoint,
+} from './editor.js';
 export type { Grid } from './grid.js';
 export {
   buildGrid,
@@ -56,6 +70,23 @@ export {
 } from './sprites.js';
 export type { StationTarget } from './stations.js';
 export { resolveStation } from './stations.js';
-export type { BubbleKind, TilePoint, World, WorldAvatarInput, WorldEvents } from './types.js';
+export {
+  FLOOR_STYLE_COUNT,
+  FLOOR_STYLE_LABELS,
+  FLOOR_STYLES,
+  floorStyleColors,
+  WALL_STYLE_COUNT,
+  WALL_STYLE_LABELS,
+  WALL_STYLES,
+  wallStyleColor,
+} from './styles.js';
+export type {
+  BubbleKind,
+  Ghost,
+  TilePoint,
+  World,
+  WorldAvatarInput,
+  WorldEvents,
+} from './types.js';
 export type { WorldExtras } from './world.js';
 export { createWorld } from './world.js';

@@ -202,6 +202,8 @@ export const SettingsSchema = z.object({
   concurrencyCap: z.number().int().min(1).max(16),
   dailyCapUsd: z.number().nonnegative(),
   permissionTimeoutMs: z.number().int().positive(),
+  /** Idle Claude Code processes are stopped (session kept for resume) after this many minutes; 0 = never. */
+  idleTimeoutMinutes: z.number().int().min(0).max(1440).default(15),
   soundEnabled: z.boolean(),
   policyCheckedAt: z.string(),
   onboarded: z.boolean(),

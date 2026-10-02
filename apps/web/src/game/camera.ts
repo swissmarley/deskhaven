@@ -191,7 +191,8 @@ function clampZoom(z: number): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
 }
 
-function isTypingTarget(t: EventTarget | null): boolean {
+/** True when a key event originated in a text field, where shortcuts must not fire. */
+export function isTypingTarget(t: EventTarget | null): boolean {
   if (!(t instanceof HTMLElement)) return false;
   return (
     t instanceof HTMLInputElement ||
