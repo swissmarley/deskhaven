@@ -1,0 +1,35 @@
+{
+  "name": "@agenthotel/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/index.ts",
+    "start": "NODE_ENV=production tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@agenthotel/shared": "workspace:*",
+    "@anthropic-ai/claude-agent-sdk": "0.3.287",
+    "@fastify/static": "^9.0.0",
+    "@fastify/websocket": "^11.3.1",
+    "@napi-rs/keyring": "^2.1.0",
+    "better-sqlite3": "^13.0.3",
+    "diff": "^8.0.2",
+    "drizzle-orm": "^0.45.3",
+    "fastify": "^5.12.5",
+    "ws": "^8.22.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/diff": "^8.0.0",
+    "@types/node": "^22.19.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.3"
+  }
+}

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.env
+.env.*
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.agenthotel/
+/tmp/

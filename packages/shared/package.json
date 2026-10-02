@@ -1,0 +1,23 @@
+{
+  "name": "@agenthotel/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.3",
+    "@types/node": "^22.19.0"
+  }
+}
