@@ -32,7 +32,7 @@ export function defaultRoom(now = Date.now()): Room {
     f('desk-6', 'desk', 8, 4),
     f('bookshelf-1', 'bookshelf', 11, 0),
     f('rack-1', 'server_rack', 13, 2),
-    f('rack-2', 'server_rack', 13, 3),
+    f('rack-2', 'server_rack', 13, 4),
     f('library-1', 'library_pc', 11, 3),
     f('whiteboard-1', 'whiteboard', 0, 0),
     f('coffee-1', 'coffee_machine', 12, 7),

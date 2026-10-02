@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { defaultRoom } from '../src/defaultRoom.js';
 import { RoomSchema } from '../src/dto.js';
-import { footprintTiles, interactionTiles, rotatedSize, rotateOffset } from '../src/furniture.js';
+import {
+  FURNITURE_CATALOG,
+  footprintTiles,
+  interactionTiles,
+  rotatedSize,
+  rotateOffset,
+} from '../src/furniture.js';
 import { BUILTIN_PRESETS } from '../src/presets.js';
 import { classifyTool, isDangerousTool, summarizeToolInput } from '../src/tools.js';
 
@@ -19,12 +25,10 @@ describe('furniture geometry', () => {
     ]);
   });
   it('rotateOffset cycles back after four turns', () => {
-    const p = rotateOffset(1, 0, 2, 1, 4);
-    expect(p).toEqual({ dx: 1, dy: 0 });
+    expect(rotateOffset(1, 0, 2, 1, 4)).toEqual({ dx: 1, dy: 0 });
   });
   it('desk seat is in front of the desk at rotation 0', () => {
-    const pts = interactionTiles('desk', 2, 1, 0);
-    expect(pts).toEqual([{ x: 2, y: 2, type: 'seat', facing: 0 }]);
+    expect(interactionTiles('desk', 2, 1, 0)).toEqual([{ x: 2, y: 2, type: 'seat', facing: 0 }]);
   });
   it('interaction points stay adjacent to the footprint when rotated', () => {
     for (const rot of [0, 1, 2, 3]) {
@@ -49,6 +53,26 @@ describe('presets and default room', () => {
       'reviewer',
     ]);
     for (const p of BUILTIN_PRESETS) expect(p.permissionMode).not.toBe('bypassPermissions');
+  });
+  it('default room: interaction tiles are inside the room and not covered by another piece', () => {
+    const room = defaultRoom(0);
+    const owner = new Map<string, string>();
+    for (const f of room.furniture) {
+      if (!FURNITURE_CATALOG[f.kind].blocks) continue;
+      for (const t of footprintTiles(f.kind, f.x, f.y, f.rotation))
+        owner.set(`${t.x},${t.y}`, f.id);
+    }
+    for (const f of room.furniture) {
+      for (const p of interactionTiles(f.kind, f.x, f.y, f.rotation)) {
+        const inside = p.x >= 0 && p.y >= 0 && p.x < room.width && p.y < room.height;
+        expect(inside, `${f.id} point outside the room`).toBe(true);
+        const o = owner.get(`${p.x},${p.y}`);
+        // a seat on the piece itself (sofa, chair, door) is fine; another piece covering it is not
+        expect(o === undefined || o === f.id, `${f.id} tile ${p.x},${p.y} covered by ${o}`).toBe(
+          true,
+        );
+      }
+    }
   });
   it('default room validates and has six desks', () => {
     const room = RoomSchema.parse(defaultRoom(0));
