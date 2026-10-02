@@ -6,7 +6,6 @@ export type {
   SheetFrames,
 } from './assets/index.js';
 export { ASSET_MANIFEST, assetEntry, furnitureAssetKey } from './assets/index.js';
-export { sheetFrameFor } from './avatar.js';
 export type { CameraView } from './camera.js';
 export { ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from './camera.js';
 export type { DragGrab, EditorKey, PaintStroke, PlacedPiece } from './editor.js';
@@ -45,6 +44,7 @@ export {
 export type { Motion, MotionSample } from './motion.js';
 export { advanceMotion, buildMotion, easeTrapezoid, SPEED_TILES_PER_S } from './motion.js';
 export { findPath } from './pathfinding.js';
+export { sheetFrameFor } from './pixi/avatar.js';
 export type { Pose } from './pose.js';
 export { poseFor } from './pose.js';
 export type { RendererKind } from './renderer.js';
@@ -53,8 +53,11 @@ export {
   RENDERER_STORAGE_KEY,
   rendererKind,
   resolveRendererKind,
+  sceneFactory,
+  worldFactory,
 } from './renderer.js';
 export { hashString, mulberry32 } from './rng.js';
+export type { Scene, SceneAvatarInit, SceneFactory, SceneHit, SceneHost } from './scene.js';
 export type { SoundKind, SoundPrefs, ThrottleState } from './sound.js';
 export {
   createThrottleState,

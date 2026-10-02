@@ -1,10 +1,10 @@
 import type { Avatar, Facing } from '@agenthotel/shared';
 import { Container, Graphics, Rectangle, Sprite, Text, TextStyle, Texture } from 'pixi.js';
-import type { AvatarPalette, AvatarSheetTextures, Painters } from './assets/index.js';
-import { parseHex } from './color.js';
-import { FACING_DIR, tileDiamond } from './iso.js';
-import type { Pose } from './pose.js';
-import { frameKey, type SheetPose } from './sprites.js';
+import type { AvatarPalette, AvatarSheetTextures, Painters } from '../assets/index.js';
+import { parseHex } from '../color.js';
+import { FACING_DIR, tileDiamond } from '../iso.js';
+import type { Pose } from '../pose.js';
+import { frameKey, type SheetPose } from '../sprites.js';
 
 export type { Pose };
 

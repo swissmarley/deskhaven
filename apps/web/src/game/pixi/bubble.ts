@@ -1,6 +1,6 @@
 import { truncate } from '@agenthotel/shared';
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
-import type { BubbleKind } from './types.js';
+import type { BubbleKind } from '../types.js';
 
 const MAX_WIDTH = 180;
 const PAD_X = 8;

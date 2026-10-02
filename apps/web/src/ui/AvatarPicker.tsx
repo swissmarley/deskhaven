@@ -43,13 +43,13 @@ export function randomAvatar(): Avatar {
 
 type PreviewFn = (avatar: Avatar, facing?: 0 | 1 | 2 | 3, scale?: number) => string;
 
-/** Loads the sprite preview renderer lazily; falls back to a colour swatch while sprites are not available. */
+/** Loads the sprite preview renderer lazily (the pure sprite module, never a world renderer); falls back to a colour swatch while sprites are not available. */
 export function useAvatarPreview(avatar: Avatar, facing: 0 | 1 | 2 | 3 = 2): string | null {
   const [url, setUrl] = useState<string | null>(null);
   const key = JSON.stringify(avatar);
   useEffect(() => {
     let cancelled = false;
-    void import('../game/index.js').then((mod) => {
+    void import('../game/sprites.js').then((mod) => {
       const fn = (mod as unknown as { renderAvatarPreview?: PreviewFn }).renderAvatarPreview;
       if (!fn || cancelled) return;
       try {

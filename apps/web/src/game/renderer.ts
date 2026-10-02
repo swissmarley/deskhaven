@@ -1,4 +1,6 @@
+import { WorldCore } from './core/world-core.js';
 import { LazyWorld } from './lazy-world.js';
+import type { SceneFactory } from './scene.js';
 import type { World } from './types.js';
 import type { WorldExtras } from './world-extras.js';
 
@@ -37,12 +39,17 @@ export function rendererKind(): RendererKind {
 }
 
 /**
- * Loads a renderer on demand. Dynamic imports keep Three out of the Pixi bundle and vice versa;
- * neither renderer module is evaluated until `mount()`.
+ * The scene backend for a renderer, loaded on demand. Dynamic imports keep Three out of the Pixi
+ * bundle and vice versa; neither backend module is evaluated until `mount()`.
  */
+export function sceneFactory(kind: RendererKind): SceneFactory {
+  if (kind === 'three') return () => import('./three/scene.js').then((m) => m.createThreeScene());
+  return () => import('./pixi/scene.js').then((m) => m.createPixiScene());
+}
+
+/** One simulation (`WorldCore`) over the chosen backend. */
 export function worldFactory(kind: RendererKind): () => Promise<World & WorldExtras> {
-  if (kind === 'three') return () => import('./three/world.js').then((m) => m.createThreeWorld());
-  return () => import('./world.js').then((m) => m.createPixiWorld());
+  return () => Promise.resolve(new WorldCore(sceneFactory(kind)));
 }
 
 /** The world the UI mounts. Calls made before the renderer has loaded are queued and replayed. */

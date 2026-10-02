@@ -2,6 +2,12 @@
 
 One 3-line note per milestone, newest first.
 
+## G1a — one simulation core, two scene backends (2026-10-03)
+
+1. `world.ts` split into `core/world-core.ts` (tiles, A*, motions, stations, behaviour → pose, editor pointer state machine, pre-mount queue, camera, DOM input via `core/dom-input.ts`) driving the `Scene` port in `scene.ts`; `pixi/scene.ts` wraps the moved `pixi/{avatar,room,bubble}.ts` (pick through Pixi's own hit test, bubble lift and depth sorting stay Pixi-side); `three/scene.ts` is the room-only Three backend; `renderer.ts` builds `new WorldCore(sceneFactory(kind))`. The core has no runtime Pixi or Three import, so `test/world-core.test.ts` drives it under Node with a recording `FakeScene` (24 tests: seating, walking to stations, leave/finish, interns, drag/paint/hover/keys, re-settle after `setRoom`, pre-mount replay, StrictMode destroy races).
+2. Verified in the browser on the Pixi path after the refactor: click-to-walk, editor hover ghost, floor paint (tile + stroke, saved), furniture drag and back, replay of all 273 events at 4× and 16× (bubbles, interns, desk work) and stop/resync, with no console errors. Avatar previews now import `game/sprites.js` directly (no renderer load). Gates green: 201 tests (30 shared, 118 web + 2 skipped, 53 server); Three stays a lazy 544 kB chunk, Pixi scene 15 kB.
+3. Next: G1b — `ThreeScene` with glTF furniture (procedural fallbacks), raycast picking, editor parity (grid, hover, ghost, highlight, drag preview) and capsule avatars so the board drop works in 3D.
+
 ## G0 — graphics phase: plan, assets, renderer switch (2026-10-03)
 
 1. Plan approved (ARCHITECTURE §11, PLAN.md phase 2, 4 questions answered): Three.js 0.186.1 behind the existing `World` contract with one simulation core and two scene backends (G1). `createWorld()` now returns a `LazyWorld` that dynamically imports the backend chosen by `VITE_RENDERER` or `localStorage['agenthotel.renderer']` (Pixi default; entry bundle 334 kB, Pixi world chunk 27 kB, Three world chunk 546 kB / 137 kB gzip, both lazy). New pure modules + tests: `pose.ts`, `camera.ts` over `CameraView`, `renderer.ts`, `lazy-world.ts` (StrictMode races), `three/camera.ts` (projection proven equal to `iso.tileToScreen` within 0.01 px).

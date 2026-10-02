@@ -5,11 +5,7 @@ import {
   type Room,
   stationForBehavior,
 } from '@agenthotel/shared';
-import { Application, Container, type FederatedPointerEvent, type Ticker } from 'pixi.js';
-import { loadPainters, type Painters } from './assets/index.js';
-import { AvatarSprite } from './avatar.js';
-import { Bubble } from './bubble.js';
-import { Camera, type CameraView, isTypingTarget } from './camera.js';
+import { Camera, type CameraView } from '../camera.js';
 import {
   beginFurnitureDrag,
   beginPaint,
@@ -20,7 +16,7 @@ import {
   type PaintStroke,
   paintStep,
   samePoint,
-} from './editor.js';
+} from '../editor.js';
 import {
   buildGrid,
   type Grid,
@@ -29,14 +25,14 @@ import {
   nearestWalkable,
   randomWalkable,
   tileKey,
-} from './grid.js';
-import { depthKey, facingFromDelta, roomBounds, screenToTile, tileToScreen } from './iso.js';
-import { advanceMotion, buildMotion, type Motion } from './motion.js';
-import { findPath } from './pathfinding.js';
-import { poseFor } from './pose.js';
-import { hashString, mulberry32, range } from './rng.js';
-import { FurnitureSprite, RoomView } from './room.js';
-import { resolveStation, type StationTarget } from './stations.js';
+} from '../grid.js';
+import { facingFromDelta, roomBounds, screenToTile } from '../iso.js';
+import { advanceMotion, buildMotion, type Motion } from '../motion.js';
+import { findPath } from '../pathfinding.js';
+import { type Pose, poseFor } from '../pose.js';
+import { hashString, mulberry32, range } from '../rng.js';
+import type { Scene, SceneFactory, SceneHit } from '../scene.js';
+import { resolveStation, type StationTarget } from '../stations.js';
 import type {
   BubbleKind,
   Ghost,
@@ -44,21 +40,17 @@ import type {
   World,
   WorldAvatarInput,
   WorldEvents,
-} from './types.js';
-import type { WorldExtras } from './world-extras.js';
+} from '../types.js';
+import type { WorldExtras } from '../world-extras.js';
+import { bindDomInput, type InputBinder, type InputTarget } from './dom-input.js';
 
-/** Avatars sort above furniture sharing their tile row (see `depthKey`). */
-const AVATAR_DEPTH_EXTRA = 500;
 const WANDER_MIN_S = 6;
 const WANDER_MAX_S = 12;
 const CLICK_SLOP_PX = 4;
 const MAX_FRAME_MS = 100;
-const BACKGROUND = 0x1d2229;
 
 interface AvatarState {
   input: WorldAvatarInput;
-  sprite: AvatarSprite;
-  bubble: Bubble;
   /** Logical tile: the tile the avatar is on, or is about to reach while walking. */
   tile: TilePoint;
   /** Fractional render position in tile units. */
@@ -74,12 +66,15 @@ interface AvatarState {
   leaving: boolean;
   /** For interns: face this avatar once in place. */
   faceAvatarId: string | null;
+  /** Visual state mirrored to the scene (what the sprite used to remember itself). */
+  pose: Pose;
+  facing: Facing;
+  seated: boolean;
 }
 
-/** A furniture piece being dragged in editor mode. The sprite only previews; `setRoom` moves it. */
+/** A furniture piece being dragged in editor mode. The scene only previews; `setRoom` moves it. */
 interface FurnitureDrag {
   id: string;
-  sprite: FurnitureSprite;
   grab: DragGrab;
   /** Origin the preview currently shows (starts at the piece's real origin). */
   origin: TilePoint;
@@ -87,37 +82,31 @@ interface FurnitureDrag {
   moved: boolean;
 }
 
-export type { WorldExtras } from './world-extras.js';
+/** What the core resolved under the pointer at press time. */
+type PickResult = { kind: 'avatar'; id: string } | { kind: 'furniture'; id: string } | null;
 
-export function createPixiWorld(): World & WorldExtras {
-  return new PixiWorld();
-}
-
-class PixiWorld implements World, WorldExtras {
-  private app: Application | null = null;
-  private painters: Painters | null = null;
-  private roomView: RoomView | null = null;
-  private readonly viewport = new Container();
-  private readonly layers = {
-    floor: new Container(),
-    grid: new Container(),
-    objects: new Container(),
-    bubbles: new Container(),
-    ui: new Container(),
-  };
-  private readonly camera = new Camera(pixiCameraView(this.viewport));
+/**
+ * The renderer-agnostic simulation behind the `World` contract: tiles, A* paths, motions,
+ * stations, behaviour → pose, bubbles, the editor pointer state machine, the pre-mount queue, the
+ * camera and the DOM input adapter. Everything drawn goes through the `Scene` port, so the Pixi
+ * and Three backends share one simulation and this class runs under plain Node in tests.
+ */
+export class WorldCore implements World, WorldExtras, InputTarget {
+  private scene: Scene | null = null;
+  private unbindInput: (() => void) | null = null;
+  private readonly camera: Camera;
   private room: Room = defaultRoom();
   private grid: Grid = buildGrid(this.room);
   private readonly avatars = new Map<string, AvatarState>();
   private events: WorldEvents = {};
   private highlightedAvatar: string | null = null;
-  private pointerDown: { x: number; y: number; target: unknown; button: number } | null = null;
+  private pointer: { x: number; y: number; hit: PickResult; button: number } | null = null;
   private destroyed = false;
   /** Incremented per `mount` so a mount that lost a race with `destroy`/re-mount tears itself down. */
   private mountGen = 0;
   /** The user's grid toggle; the grid is also forced on in editor mode. */
   private showGrid = true;
-  /** Calls made before `mount` resolved, replayed once Pixi is ready. */
+  /** Calls made before `mount` resolved, replayed once the scene is ready. */
   private preMount: (() => void)[] = [];
   private readonly removeQueue: string[] = [];
 
@@ -128,68 +117,51 @@ class PixiWorld implements World, WorldExtras {
   private hoverTile: TilePoint | null = null;
   private paint: PaintStroke | null = null;
   private drag: FurnitureDrag | null = null;
-  /** Element carrying the keydown listener (the mount container, so canvas or container focus works). */
-  private keyTarget: HTMLElement | null = null;
 
-  private readonly tick = (ticker: Ticker): void => this.step(ticker.deltaMS);
-  private readonly onResize = (w: number, h: number): void => {
-    this.camera.setScreen(w, h);
-    if (this.app) this.app.stage.hitArea = this.app.screen;
-  };
+  constructor(
+    private readonly createScene: SceneFactory,
+    private readonly bindInput: InputBinder = bindDomInput,
+  ) {
+    // The camera outlives scenes; its view forwards to whichever scene is mounted.
+    const view: CameraView = {
+      setTransform: (zoom, x, y) => this.scene?.cameraView.setTransform(zoom, x, y),
+    };
+    this.camera = new Camera(view);
+  }
 
   async mount(container: HTMLElement): Promise<void> {
     this.destroyed = false;
     const gen = ++this.mountGen;
-    const app = new Application();
-    await app.init({
-      resizeTo: container,
-      background: BACKGROUND,
-      antialias: false,
-      resolution: window.devicePixelRatio || 1,
-      autoDensity: true,
-    });
-    const painters = await loadPainters();
+    const scene = await this.createScene();
+    const host = {
+      onFrame: (dtMs: number): void => {
+        if (this.scene === scene) this.step(dtMs);
+      },
+      onResize: (w: number, h: number): void => {
+        if (this.scene === scene) this.camera.setScreen(w, h);
+      },
+    };
+    await scene.mount(container, host);
     if (this.destroyed || gen !== this.mountGen) {
-      app.destroy({ removeView: true }, { children: true });
+      scene.destroy();
       return;
     }
-    this.app = app;
-    this.painters = painters;
-    app.canvas.style.display = 'block';
+    this.scene = scene;
+    const canvas = scene.canvas;
+    canvas.style.display = 'block';
     // Focusable so editor shortcuts work; focus is taken on pointer down in editor mode.
-    app.canvas.tabIndex = 0;
-    app.canvas.style.outline = 'none';
-    container.appendChild(app.canvas);
-    container.addEventListener('keydown', this.onKeyDown);
-    this.keyTarget = container;
+    canvas.tabIndex = 0;
+    canvas.style.outline = 'none';
 
-    const { floor, grid, objects, bubbles, ui } = this.layers;
-    objects.sortableChildren = true;
-    bubbles.eventMode = 'none';
-    ui.eventMode = 'none';
-    grid.eventMode = 'none';
-    this.viewport.addChild(floor, grid, objects, bubbles, ui);
-    app.stage.addChild(this.viewport);
-
-    this.roomView = new RoomView(this.layers, painters);
-    this.roomView.setRoom(this.room);
-    this.roomView.setGridVisible(this.showGrid || this.editorMode);
-    this.roomView.setEditorMode(this.editorMode);
-    this.roomView.setGhost(this.ghost);
-    this.camera.setScreen(app.screen.width, app.screen.height);
+    // Pushed in this order on every mount. `setHighlight` is not replayed on a re-mount (it was
+    // never remembered across mounts; the UI re-issues it on hover/selection changes).
+    scene.setRoom(this.room);
+    scene.setGridVisible(this.showGrid || this.editorMode);
+    scene.setEditorMode(this.editorMode);
+    scene.setGhost(this.ghost);
+    this.camera.setScreen(scene.screenWidth, scene.screenHeight);
     this.camera.setBounds(roomBounds(this.room.width, this.room.height), true);
-    this.camera.attach(app.canvas);
-    app.renderer.on('resize', this.onResize);
-
-    const stage = app.stage;
-    stage.eventMode = 'static';
-    stage.hitArea = app.screen;
-    stage.on('pointerdown', this.onPointerDown);
-    stage.on('pointerup', this.onPointerUp);
-    stage.on('pointerupoutside', this.onPointerCancel);
-    stage.on('pointermove', this.onPointerMove);
-    stage.on('pointerleave', this.onPointerLeave);
-    app.ticker.add(this.tick);
+    this.unbindInput = this.bindInput(canvas, container, this, this.camera);
 
     const queued = this.preMount;
     this.preMount = [];
@@ -198,35 +170,25 @@ class PixiWorld implements World, WorldExtras {
 
   destroy(): void {
     this.destroyed = true;
-    this.camera.detach();
-    this.keyTarget?.removeEventListener('keydown', this.onKeyDown);
-    this.keyTarget = null;
+    // Detaches the camera first, before the scene removes the canvas.
+    this.unbindInput?.();
+    this.unbindInput = null;
     this.drag = null;
     this.paint = null;
     this.hoverTile = null;
-    this.pointerDown = null;
-    for (const st of this.avatars.values()) this.disposeAvatar(st);
+    this.pointer = null;
+    this.highlightedAvatar = null;
+    this.removeQueue.length = 0;
     this.avatars.clear();
-    this.roomView?.destroy();
-    this.roomView = null;
-    const app = this.app;
-    if (app) {
-      app.ticker.remove(this.tick);
-      app.renderer.off('resize', this.onResize);
-      app.stage.removeAllListeners();
-      // Keep our layer containers alive (avatars and room graphics were destroyed above) so the
-      // same World can be mounted again, e.g. under React StrictMode.
-      this.viewport.removeFromParent();
-      app.destroy({ removeView: true }, { children: true });
-    }
-    this.app = null;
-    this.painters = null;
+    const scene = this.scene;
+    this.scene = null;
+    scene?.destroy();
     this.preMount = [];
   }
 
   setGridVisible(visible: boolean): void {
     this.showGrid = visible;
-    this.roomView?.setGridVisible(visible || this.editorMode);
+    this.scene?.setGridVisible(visible || this.editorMode);
   }
 
   get gridVisible(): boolean {
@@ -239,8 +201,8 @@ class PixiWorld implements World, WorldExtras {
     this.grid = buildGrid(room);
     // The layout changed under the pointer: drop the preview and wait for the next press.
     this.cancelDrag();
-    if (this.roomView) {
-      this.roomView.setRoom(room);
+    if (this.scene) {
+      this.scene.setRoom(room);
       this.camera.setBounds(roomBounds(room.width, room.height), sizeChanged);
     }
     this.settleAvatars();
@@ -248,28 +210,25 @@ class PixiWorld implements World, WorldExtras {
   }
 
   upsertAvatar(input: WorldAvatarInput): void {
-    if (!this.painters) {
+    const scene = this.scene;
+    if (!scene) {
       this.preMount.push(() => this.upsertAvatar(input));
       return;
     }
     const existing = this.avatars.get(input.id);
     if (existing && !existing.leaving) {
       existing.input = input;
-      existing.sprite.setName(input.name);
-      existing.sprite.setAppearance(input.avatar, input.isIntern ?? false);
+      scene.setAvatarName(input.id, input.name);
+      scene.setAvatarAppearance(input.id, input.avatar, input.isIntern ?? false);
       return;
     }
     if (existing) {
-      this.disposeAvatar(existing);
+      scene.removeAvatar(input.id);
       this.avatars.delete(input.id);
     }
-    const sprite = new AvatarSprite({ ...input, painters: this.painters });
-    const bubble = new Bubble();
     const rng = mulberry32(hashString(input.id));
     const st: AvatarState = {
       input,
-      sprite,
-      bubble,
       tile: { x: 0, y: 0 },
       pos: { x: 0, y: 0 },
       motion: null,
@@ -280,10 +239,17 @@ class PixiWorld implements World, WorldExtras {
       rng,
       leaving: false,
       faceAvatarId: null,
+      pose: 'idle',
+      facing: 2,
+      seated: false,
     };
     this.avatars.set(input.id, st);
-    this.layers.objects.addChild(sprite);
-    this.layers.bubbles.addChild(bubble);
+    scene.addAvatar({
+      id: input.id,
+      name: input.name,
+      avatar: input.avatar,
+      isIntern: input.isIntern ?? false,
+    });
 
     const occupied = this.occupiedExcept(input.id);
     if (input.isIntern) {
@@ -295,7 +261,7 @@ class PixiWorld implements World, WorldExtras {
       const spawn = door ?? randomWalkable(this.grid, rng) ?? { x: 0, y: 0 };
       this.place(st, spawn);
       // Visual only: the UI plays the matching sound.
-      sprite.poof();
+      scene.poofAvatar(input.id);
       const parent = input.parentId ? this.avatars.get(input.parentId) : undefined;
       if (parent) {
         const exclude = new Set(occupied);
@@ -320,17 +286,17 @@ class PixiWorld implements World, WorldExtras {
     );
     if (seat) {
       this.place(st, seat);
-      sprite.setFacing(seat.facing);
-      sprite.setSeated(seat.seated);
+      this.setFacing(st, seat.facing);
+      this.setSeated(st, seat.seated);
     } else {
       const free = randomWalkable(this.grid, rng, (t) => !occupied.has(tileKey(t.x, t.y)));
       this.place(st, free ?? { x: 0, y: 0 });
     }
-    sprite.setPose('idle');
+    this.setPose(st, 'idle');
   }
 
   removeAvatar(id: string): void {
-    if (!this.painters) {
+    if (!this.scene) {
       this.preMount.push(() => this.removeAvatar(id));
       return;
     }
@@ -338,7 +304,7 @@ class PixiWorld implements World, WorldExtras {
     if (!st || st.leaving) return;
     st.leaving = true;
     st.behavior = { kind: 'leave' };
-    st.bubble.hide();
+    this.scene.hideBubble(id);
     const door = resolveStation(
       this.room,
       { kind: 'leave' },
@@ -352,7 +318,7 @@ class PixiWorld implements World, WorldExtras {
   applyBehavior(avatarId: string, behavior: Behavior): void {
     const st = this.avatars.get(avatarId);
     if (!st) {
-      if (!this.painters) this.preMount.push(() => this.applyBehavior(avatarId, behavior));
+      if (!this.scene) this.preMount.push(() => this.applyBehavior(avatarId, behavior));
       return;
     }
     if (st.leaving) return;
@@ -389,7 +355,7 @@ class PixiWorld implements World, WorldExtras {
     const end = path.at(-1) ?? from;
     this.goTo(
       st,
-      { x: end.x, y: end.y, facing: st.sprite.facing, seated: false, furnitureId: null },
+      { x: end.x, y: end.y, facing: st.facing, seated: false, furnitureId: null },
       null,
     );
   }
@@ -397,7 +363,7 @@ class PixiWorld implements World, WorldExtras {
   say(avatarId: string, text: string, opts?: { durationMs?: number; kind?: BubbleKind }): void {
     const st = this.avatars.get(avatarId);
     if (!st || st.leaving) return;
-    st.bubble.show(text, opts?.kind ?? 'speech', opts?.durationMs ?? 4000);
+    this.scene?.showBubble(avatarId, text, opts?.kind ?? 'speech', opts?.durationMs ?? 4000);
   }
 
   setEvents(events: WorldEvents): void {
@@ -413,19 +379,18 @@ class PixiWorld implements World, WorldExtras {
   }
 
   screenToTile(clientX: number, clientY: number): TilePoint | null {
-    if (!this.app) return null;
-    const r = this.app.canvas.getBoundingClientRect();
+    if (!this.scene) return null;
+    const r = this.scene.canvas.getBoundingClientRect();
     return this.tileAtScreen(clientX - r.left, clientY - r.top);
   }
 
   setHighlight(target: { tile?: TilePoint; avatarId?: string; furnitureId?: string } | null): void {
-    this.roomView?.setHighlightTile(target?.tile ?? null);
-    this.roomView?.setHighlightFurniture(target?.furnitureId ?? null);
+    this.scene?.setHighlightTile(target?.tile ?? null);
+    this.scene?.setHighlightFurniture(target?.furnitureId ?? null);
     const next = target?.avatarId ?? null;
     if (next !== this.highlightedAvatar) {
-      if (this.highlightedAvatar)
-        this.avatars.get(this.highlightedAvatar)?.sprite.setHighlighted(false);
-      if (next) this.avatars.get(next)?.sprite.setHighlighted(true);
+      if (this.highlightedAvatar) this.scene?.setAvatarHighlighted(this.highlightedAvatar, false);
+      if (next) this.scene?.setAvatarHighlighted(next, true);
       this.highlightedAvatar = next;
     }
   }
@@ -435,19 +400,19 @@ class PixiWorld implements World, WorldExtras {
   setEditorMode(on: boolean): void {
     if (on === this.editorMode) return;
     this.editorMode = on;
-    this.roomView?.setGridVisible(this.showGrid || on);
-    this.roomView?.setEditorMode(on);
+    this.scene?.setGridVisible(this.showGrid || on);
+    this.scene?.setEditorMode(on);
     if (on) return;
     this.cancelDrag();
     this.paint = null;
     this.hoverTile = null;
     this.setGhost(null);
-    this.roomView?.setHighlightFurniture(null);
+    this.scene?.setHighlightFurniture(null);
   }
 
   setGhost(ghost: Ghost | null): void {
     this.ghost = ghost;
-    this.roomView?.setGhost(ghost);
+    this.scene?.setGhost(ghost);
   }
 
   /** Snap a dragged piece back to its real origin without emitting anything. */
@@ -455,40 +420,35 @@ class PixiWorld implements World, WorldExtras {
     const d = this.drag;
     this.drag = null;
     if (!d) return;
-    // The sprite may have been replaced by `setRoom`; only touch it while it is still the live one.
-    if (this.roomView?.furnitureById(d.id) === d.sprite) d.sprite.setDragging(false);
+    this.scene?.setFurniturePreview(d.id, null);
   }
 
-  private readonly onKeyDown = (e: KeyboardEvent): void => {
-    if (!this.editorMode || isTypingTarget(e.target)) return;
-    const key = editorKeyFor(e.key);
-    if (!key) return;
-    e.preventDefault();
-    this.events.onEditorKey?.(key);
-  };
+  keyDown(key: string, typingTarget: boolean): boolean {
+    if (!this.editorMode || typingTarget) return false;
+    const editorKey = editorKeyFor(key);
+    if (!editorKey) return false;
+    this.events.onEditorKey?.(editorKey);
+    return true;
+  }
 
   // ---- frame loop -------------------------------------------------------------------------------
 
-  private step(rawDeltaMS: number): void {
+  /** One simulation frame. Public so tests (and the scene host) can drive it. */
+  step(rawDeltaMS: number): void {
+    const scene = this.scene;
+    if (!scene) return;
     const deltaMS = Math.min(rawDeltaMS, MAX_FRAME_MS);
     const dt = deltaMS / 1000;
     this.removeQueue.length = 0;
     for (const st of this.avatars.values()) {
       this.advance(st, dt);
-      st.sprite.update(deltaMS);
-      const { sx, sy } = tileToScreen(st.pos.x, st.pos.y);
-      st.sprite.position.set(sx, sy);
-      st.sprite.zIndex = depthKey(st.pos.x, st.pos.y, AVATAR_DEPTH_EXTRA);
-      st.bubble.update(deltaMS);
-      if (st.bubble.active) {
-        const lift = (st.sprite.seated ? 56 : 62) * (st.input.isIntern ? 0.8 : 1);
-        st.bubble.position.set(sx, sy - lift);
-      }
-      if (st.sprite.finished) this.removeQueue.push(st.input.id);
+      scene.setAvatarPosition(st.input.id, st.pos.x, st.pos.y);
     }
+    scene.update(deltaMS);
+    for (const st of this.avatars.values())
+      if (scene.isAvatarFinished(st.input.id)) this.removeQueue.push(st.input.id);
     for (const id of this.removeQueue) {
-      const st = this.avatars.get(id);
-      if (st) this.disposeAvatar(st);
+      if (this.avatars.has(id)) scene.removeAvatar(id);
       this.avatars.delete(id);
       if (this.highlightedAvatar === id) this.highlightedAvatar = null;
     }
@@ -501,7 +461,8 @@ class PixiWorld implements World, WorldExtras {
       if (sample) {
         st.pos.x = sample.x;
         st.pos.y = sample.y;
-        st.sprite.setFacing(
+        this.setFacing(
+          st,
           facingFromDelta(sample.to.x - sample.from.x, sample.to.y - sample.from.y),
         );
         st.tile = { x: Math.round(sample.to.x), y: Math.round(sample.to.y) };
@@ -554,8 +515,8 @@ class PixiWorld implements World, WorldExtras {
       this.arrive(st);
       return;
     }
-    st.sprite.setSeated(false);
-    st.sprite.setPose('walk');
+    this.setSeated(st, false);
+    this.setPose(st, 'walk');
     st.motion = buildMotion(points);
   }
 
@@ -579,21 +540,22 @@ class PixiWorld implements World, WorldExtras {
     const target = st.target;
     st.target = null;
     if (target) {
-      st.sprite.setFacing(target.facing);
-      st.sprite.setSeated(target.seated);
+      this.setFacing(st, target.facing);
+      this.setSeated(st, target.seated);
     }
     if (st.faceAvatarId) {
       const other = this.avatars.get(st.faceAvatarId);
       if (other)
-        st.sprite.setFacing(facingFromDelta(other.tile.x - st.tile.x, other.tile.y - st.tile.y));
+        this.setFacing(st, facingFromDelta(other.tile.x - st.tile.x, other.tile.y - st.tile.y));
     }
     const pending = st.pending;
     st.pending = null;
-    const wasLeaving = st.sprite.pose === 'leave';
+    const wasLeaving = st.pose === 'leave';
     if (pending) this.enact(st, pending);
-    else st.sprite.setPose(st.leaving ? 'leave' : 'idle');
+    else this.setPose(st, st.leaving ? 'leave' : 'idle');
     // Interns vanish in a puff once they reach the door (first time the leave fade starts).
-    if (st.input.isIntern && !wasLeaving && st.sprite.pose === 'leave') st.sprite.poof();
+    if (st.input.isIntern && !wasLeaving && st.pose === 'leave')
+      this.scene?.poofAvatar(st.input.id);
     if (st.behavior.kind === 'idle' && st.behavior.variant === 'wander')
       st.wanderTimer = range(st.rng, WANDER_MIN_S, WANDER_MAX_S);
   }
@@ -601,8 +563,7 @@ class PixiWorld implements World, WorldExtras {
   /** Play the pose (and bubble) for a behaviour where the avatar stands. */
   private enact(st: AvatarState, b: Behavior): void {
     const id = st.input.id;
-    const pose = poseFor(b);
-    st.sprite.setPose(pose);
+    this.setPose(st, poseFor(b));
     switch (b.kind) {
       case 'thinking':
         this.say(id, '…', { kind: 'thought', durationMs: 3000 });
@@ -661,9 +622,9 @@ class PixiWorld implements World, WorldExtras {
       st.motion = null;
       st.target = null;
       st.pending = null;
-      st.sprite.setSeated(false);
+      this.setSeated(st, false);
       this.place(st, dest);
-      st.sprite.setPose('idle');
+      this.setPose(st, 'idle');
     }
   }
 
@@ -689,8 +650,8 @@ class PixiWorld implements World, WorldExtras {
       }
       if (target && !st.motion) {
         // Same seat, possibly rotated: just face the new way.
-        st.sprite.setFacing(target.facing);
-        st.sprite.setSeated(target.seated);
+        this.setFacing(st, target.facing);
+        this.setSeated(st, target.seated);
       }
     }
     if (!st.motion) return;
@@ -709,9 +670,24 @@ class PixiWorld implements World, WorldExtras {
     st.tile = { x: tile.x, y: tile.y };
     st.pos = { x: tile.x, y: tile.y };
     st.motion = null;
-    const { sx, sy } = tileToScreen(tile.x, tile.y);
-    st.sprite.position.set(sx, sy);
-    st.sprite.zIndex = depthKey(tile.x, tile.y, AVATAR_DEPTH_EXTRA);
+    this.scene?.setAvatarPosition(st.input.id, tile.x, tile.y);
+  }
+
+  /** Mirror of `AvatarSprite.setFacing`: only a change reaches the scene. */
+  private setFacing(st: AvatarState, facing: Facing): void {
+    if (facing === st.facing) return;
+    st.facing = facing;
+    this.scene?.setAvatarFacing(st.input.id, facing);
+  }
+
+  private setSeated(st: AvatarState, seated: boolean): void {
+    st.seated = seated;
+    this.scene?.setAvatarSeated(st.input.id, seated);
+  }
+
+  private setPose(st: AvatarState, pose: Pose): void {
+    st.pose = pose;
+    this.scene?.setAvatarPose(st.input.id, pose);
   }
 
   private stationAvatar(st: AvatarState): {
@@ -720,7 +696,7 @@ class PixiWorld implements World, WorldExtras {
     tile: TilePoint;
     facing: Facing;
   } {
-    return { id: st.input.id, deskId: st.input.deskId, tile: st.tile, facing: st.sprite.facing };
+    return { id: st.input.id, deskId: st.input.deskId, tile: st.tile, facing: st.facing };
   }
 
   /** Tiles claimed by every other avatar: where they stand and where they are heading. */
@@ -734,13 +710,6 @@ class PixiWorld implements World, WorldExtras {
     return out;
   }
 
-  private disposeAvatar(st: AvatarState): void {
-    st.sprite.removeFromParent();
-    st.bubble.removeFromParent();
-    st.sprite.destroy({ children: true });
-    st.bubble.destroy({ children: true });
-  }
-
   private tileAtScreen(sx: number, sy: number): TilePoint | null {
     const w = this.camera.screenToWorld(sx, sy);
     const t = screenToTile(w.x, w.y);
@@ -749,19 +718,22 @@ class PixiWorld implements World, WorldExtras {
 
   // ---- pointer ----------------------------------------------------------------------------------
 
-  private readonly onPointerDown = (e: FederatedPointerEvent): void => {
-    this.pointerDown = { x: e.global.x, y: e.global.y, target: e.target, button: e.button };
-    if (!this.editorMode || e.button !== 0 || this.camera.panModifier) return;
-    this.app?.canvas.focus({ preventScroll: true });
-    const target = e.target;
-    if (target instanceof AvatarSprite) return;
-    const tile = this.tileAtScreen(e.global.x, e.global.y);
-    if (target instanceof FurnitureSprite) {
-      const piece = target.piece;
+  pointerDown(p: { x: number; y: number; button: number }): void {
+    const scene = this.scene;
+    if (!scene) return;
+    // Picked exactly once per press; the release classifies from this stored hit.
+    const hit: SceneHit = scene.pick(p.x, p.y);
+    this.pointer = { x: p.x, y: p.y, hit, button: p.button };
+    if (!this.editorMode || p.button !== 0 || this.camera.panModifier) return;
+    scene.canvas.focus({ preventScroll: true });
+    if (hit?.kind === 'avatar') return;
+    const tile = this.tileAtScreen(p.x, p.y);
+    if (hit?.kind === 'furniture') {
+      const piece = this.room.furniture.find((f) => f.id === hit.id);
+      if (!piece) return;
       const home = { x: piece.x, y: piece.y };
       this.drag = {
-        id: target.furnitureId,
-        sprite: target,
+        id: hit.id,
         grab: beginFurnitureDrag(piece, tile ?? home),
         origin: home,
         moved: false,
@@ -769,31 +741,31 @@ class PixiWorld implements World, WorldExtras {
       return;
     }
     if (tile) this.paint = beginPaint(tile);
-  };
+  }
 
-  private readonly onPointerCancel = (): void => {
-    this.pointerDown = null;
+  pointerCancel(): void {
+    this.pointer = null;
     this.paint = null;
     this.cancelDrag();
-  };
+  }
 
-  private readonly onPointerUp = (e: FederatedPointerEvent): void => {
-    const down = this.pointerDown;
-    this.pointerDown = null;
+  pointerUp(p: { x: number; y: number }): void {
+    const down = this.pointer;
+    this.pointer = null;
     const drag = this.drag;
     this.drag = null;
     const paint = this.paint;
     this.paint = null;
     if (drag) {
       // The world never moves the piece itself: snap back and let the UI answer with `setRoom`.
-      if (this.roomView?.furnitureById(drag.id) === drag.sprite) drag.sprite.setDragging(false);
+      this.scene?.setFurniturePreview(drag.id, null);
       if (drag.moved) this.events.onFurnitureDragEnd?.(drag.id, drag.origin);
       else this.events.onFurnitureClick?.(drag.id);
       return;
     }
     if (down?.button !== 0 || this.camera.dragging || this.camera.panModifier) return;
     if (paint) {
-      const tile = this.tileAtScreen(e.global.x, e.global.y);
+      const tile = this.tileAtScreen(p.x, p.y);
       if (paint.emitted) {
         for (const t of paintStep(paint, tile)) this.events.onTileDrag?.(t);
       } else if (tile) {
@@ -802,23 +774,23 @@ class PixiWorld implements World, WorldExtras {
       }
       return;
     }
-    if (Math.hypot(e.global.x - down.x, e.global.y - down.y) > CLICK_SLOP_PX) return;
-    const target = down.target;
-    if (target instanceof AvatarSprite) {
-      this.events.onAvatarClick?.(target.id);
+    if (Math.hypot(p.x - down.x, p.y - down.y) > CLICK_SLOP_PX) return;
+    const hit = down.hit;
+    if (hit?.kind === 'avatar') {
+      this.events.onAvatarClick?.(hit.id);
       return;
     }
-    if (target instanceof FurnitureSprite) {
-      this.events.onFurnitureClick?.(target.furnitureId);
+    if (hit?.kind === 'furniture') {
+      this.events.onFurnitureClick?.(hit.id);
       return;
     }
-    const tile = this.tileAtScreen(e.global.x, e.global.y);
+    const tile = this.tileAtScreen(p.x, p.y);
     if (tile) this.events.onTileClick?.(tile);
-  };
+  }
 
-  private readonly onPointerMove = (e: FederatedPointerEvent): void => {
-    const tile = this.tileAtScreen(e.global.x, e.global.y);
-    this.roomView?.setHover(tile);
+  pointerMove(p: { x: number; y: number; buttons: number }): void {
+    const tile = this.tileAtScreen(p.x, p.y);
+    this.scene?.setHoverTile(tile);
     if (!this.editorMode) return;
     if (!samePoint(tile, this.hoverTile)) {
       this.hoverTile = tile;
@@ -830,45 +802,32 @@ class PixiWorld implements World, WorldExtras {
       if (!tile) return;
       const origin = clampOrigin(dragOriginFor(drag.grab, tile), drag.grab, this.room);
       if (samePoint(origin, drag.origin)) return;
-      if (!drag.moved) {
-        drag.moved = true;
-        drag.sprite.setDragging(true);
-      }
+      drag.moved = true;
       drag.origin = origin;
-      drag.sprite.moveTo(origin.x, origin.y);
+      this.scene?.setFurniturePreview(drag.id, origin);
       return;
     }
     const paint = this.paint;
     if (paint) {
-      if ((e.buttons & 1) === 0) {
+      if ((p.buttons & 1) === 0) {
         // Released outside the canvas; the stroke is over.
         this.paint = null;
         return;
       }
       for (const t of paintStep(paint, tile)) this.events.onTileDrag?.(t);
     }
-  };
+  }
 
-  private readonly onPointerLeave = (): void => {
-    this.roomView?.setHover(null);
+  pointerLeave(): void {
+    this.scene?.setHoverTile(null);
     if (this.editorMode && this.hoverTile !== null) {
       this.hoverTile = null;
       this.events.onTileHover?.(null);
     }
-  };
+  }
 }
 
 // ---- pure helpers ---------------------------------------------------------------------------------
-
-/** Adapts the Pixi viewport container to the renderer-agnostic camera contract. */
-function pixiCameraView(view: Container): CameraView {
-  return {
-    setTransform(zoom, x, y) {
-      view.scale.set(zoom);
-      view.position.set(x, y);
-    },
-  };
-}
 
 const RAISE_HAND_TEXT: Record<Extract<Behavior, { kind: 'raise_hand' }>['reason'], string> = {
   permission: 'needs permission',

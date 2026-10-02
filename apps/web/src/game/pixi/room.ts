@@ -6,10 +6,10 @@ import {
   rotatedSize,
 } from '@agenthotel/shared';
 import { Container, Graphics, Polygon, Text, TextStyle } from 'pixi.js';
-import type { Painters } from './assets/index.js';
-import { GHOST_ALPHA, ghostTint } from './editor.js';
-import { depthKey, FACING_DIR, isoRectPoints, tileDiamond, tileToScreen } from './iso.js';
-import type { Ghost, TilePoint } from './types.js';
+import type { Painters } from '../assets/index.js';
+import { GHOST_ALPHA, ghostTint } from '../editor.js';
+import { depthKey, FACING_DIR, isoRectPoints, tileDiamond, tileToScreen } from '../iso.js';
+import type { Ghost, TilePoint } from '../types.js';
 
 export interface RoomLayers {
   floor: Container;

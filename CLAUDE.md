@@ -100,7 +100,7 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   may touch the DOM, so keep them out of modules imported by tests.
 - zsh: never `echo =====` unquoted (zsh expands `=word` as a command path); quote separators.
 - Graphics work uses the Replay tab (≈290 logged events); no live agent runs are needed.
-- `three/world.ts` must only be reached through the dynamic import in `game/renderer.ts`; a static
+- `three/scene.ts` must only be reached through the dynamic import in `game/renderer.ts`; a static
   import anywhere under `game/index.ts` would pull the ~546 kB Three chunk into the entry bundle.
 - Three 0.186 removed `PCFSoftShadowMap` (logs a warning and falls back); use `PCFShadowMap` (or VSM).
 - In the Three renderer, pan is a frustum shift (`left/right/top/bottom`), not a camera move: the camera
