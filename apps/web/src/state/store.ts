@@ -48,6 +48,7 @@ export interface AppState {
   lastSeq: number;
   selectedAgentId: string | null;
   sideTab: 'agents' | 'inspector' | 'feed' | 'settings' | 'board';
+  boardOpen: boolean;
   notices: Notice[];
   soundEnabled: boolean;
 
@@ -55,6 +56,7 @@ export interface AppState {
   applyServerMessage: (m: ServerMessage) => void;
   selectAgent: (id: string | null) => void;
   setSideTab: (tab: AppState['sideTab']) => void;
+  setBoardOpen: (open: boolean) => void;
   pushNotice: (level: Notice['level'], message: string, agentId?: string) => void;
   dismissNotice: (id: number) => void;
   setSoundEnabled: (on: boolean) => void;
@@ -81,6 +83,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastSeq: 0,
   selectedAgentId: null,
   sideTab: 'agents',
+  boardOpen: true,
   notices: [],
   soundEnabled: true,
 
@@ -88,6 +91,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectAgent: (selectedAgentId) =>
     set({ selectedAgentId, sideTab: selectedAgentId ? 'inspector' : get().sideTab }),
   setSideTab: (sideTab) => set({ sideTab }),
+  setBoardOpen: (boardOpen) => set({ boardOpen }),
   pushNotice: (level, message, agentId) =>
     set((s) => ({
       notices: [...s.notices.slice(-9), { id: ++noticeSeq, level, message, agentId }],

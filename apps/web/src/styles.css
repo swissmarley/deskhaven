@@ -66,7 +66,7 @@ textarea {
 .app {
   display: grid;
   grid-template-rows: 44px 1fr;
-  grid-template-columns: 1fr 380px;
+  grid-template-columns: minmax(0, 1fr) 380px;
   height: 100%;
 }
 .topbar {
@@ -75,6 +75,8 @@ textarea {
   align-items: center;
   gap: 12px;
   padding: 0 12px;
+  white-space: nowrap;
+  overflow: hidden;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
@@ -85,6 +87,11 @@ textarea {
 .topbar .status {
   color: var(--muted);
   font-size: 12px;
+  white-space: nowrap;
+}
+.topbar button {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .dot {
   display: inline-block;
@@ -489,4 +496,198 @@ button.link.name {
 }
 .notice-toast.error {
   border-left-color: var(--danger);
+}
+
+/* ---- avatar picker (M3) ---- */
+.avatar-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+}
+.avatar-picker-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.swatch-label {
+  width: 40px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.swatch-btn {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 4px;
+  border: 2px solid transparent;
+}
+.swatch-btn.active {
+  border-color: white;
+}
+.avatar-fallback {
+  display: inline-grid;
+  grid-template-rows: 1fr 1fr 2fr 2fr;
+  border-radius: 4px;
+  overflow: hidden;
+  vertical-align: middle;
+}
+.avatar-fallback span {
+  display: block;
+}
+textarea.mono {
+  font-family: var(--font);
+  font-size: 11px;
+}
+
+/* ---- task board drawer (M4) ---- */
+.app.with-board {
+  grid-template-rows: 44px 1fr 270px;
+}
+.board {
+  grid-column: 1 / 2;
+  grid-row: 3;
+  min-width: 0;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.app.with-board .side {
+  grid-row: 2 / 4;
+}
+.board-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.board-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.task-form {
+  margin: 8px 12px 0;
+}
+.columns {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px 12px;
+  overflow: auto;
+  min-height: 0;
+}
+.column {
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow: auto;
+}
+.column.over {
+  border-color: var(--accent);
+  background: rgba(255, 183, 3, 0.06);
+}
+.column-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+}
+.col-needs_input .column-head {
+  color: var(--danger);
+}
+.col-done .column-head {
+  color: var(--ok);
+}
+.card-task {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: grab;
+  touch-action: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.card-task.dragging {
+  opacity: 0.85;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  cursor: grabbing;
+}
+.card-title {
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+.card-title:hover {
+  color: var(--accent);
+}
+.card-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  align-items: center;
+}
+.assignee {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.card-summary {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.task-detail {
+  width: min(680px, 94vw);
+  max-height: 86vh;
+  overflow: auto;
+}
+.files {
+  margin: 0;
+  padding-left: 16px;
+}
+.topbar button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pill.status-backlog,
+.pill.status-assigned,
+.pill.status-in_progress,
+.pill.status-review,
+.pill.status-done {
+  color: var(--text);
+}
+.pill.status-done {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.pill.status-in_progress {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
 }

@@ -11,6 +11,9 @@ export function TopBar(): JSX.Element {
   const soundEnabled = useAppStore((s) => s.soundEnabled);
   const setSoundEnabled = useAppStore((s) => s.setSoundEnabled);
   const pushNotice = useAppStore((s) => s.pushNotice);
+  const boardOpen = useAppStore((s) => s.boardOpen);
+  const setBoardOpen = useAppStore((s) => s.setBoardOpen);
+  const taskCount = useAppStore((s) => Object.keys(s.tasks).length);
 
   const modeLabel = settings?.authMode === 'CLAUDE_SUBSCRIPTION' ? 'Subscription' : 'API key';
   const inUse = usage?.authModeInUse ?? 'unknown';
@@ -67,6 +70,14 @@ export function TopBar(): JSX.Element {
         ))}
       </span>
       <span className="spacer" />
+      <button
+        type="button"
+        className={boardOpen ? 'active' : ''}
+        onClick={() => setBoardOpen(!boardOpen)}
+        title="Toggle the task board"
+      >
+        Board{taskCount ? ` (${taskCount})` : ''}
+      </button>
       <button type="button" onClick={() => setSoundEnabled(!soundEnabled)} title="Toggle sounds">
         {soundEnabled ? '🔊' : '🔇'}
       </button>

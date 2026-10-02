@@ -1,0 +1,225 @@
+import type { Task, TaskStatus } from '@agenthotel/shared';
+import {
+  DndContext,
+  type DragEndEvent,
+  type DragMoveEvent,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import { type JSX, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import { api } from '../net/api.js';
+import { useAppStore } from '../state/store.js';
+import { AvatarPreview } from './AvatarPicker.js';
+import { fmtUsd } from './eventText.js';
+import { TaskDetail } from './TaskDetail.js';
+import { getWorldHandle } from './worldHandle.js';
+
+export const COLUMNS: { id: TaskStatus; label: string }[] = [
+  { id: 'backlog', label: 'Backlog' },
+  { id: 'assigned', label: 'Assigned' },
+  { id: 'in_progress', label: 'In progress' },
+  { id: 'needs_input', label: 'Needs input' },
+  { id: 'review', label: 'Review' },
+  { id: 'done', label: 'Done' },
+];
+
+const selectTasks = (s: { tasks: Record<string, Task> }) =>
+  Object.values(s.tasks).sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
+
+/** Kanban drawer. Cards drag between columns, or onto an avatar in the room to assign the task. */
+export function BoardPanel(): JSX.Element {
+  const tasks = useAppStore(useShallow(selectTasks));
+  const agents = useAppStore((s) => s.agents);
+  const pushNotice = useAppStore((s) => s.pushNotice);
+  const [creating, setCreating] = useState(false);
+  const [openTask, setOpenTask] = useState<string | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
+  const onDragMove = (e: DragMoveEvent) => {
+    const world = getWorldHandle();
+    const rect = e.active.rect.current.translated;
+    if (!world || !rect) return;
+    const tile = world.screenToTile(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const avatarId = tile ? world.getAvatarAt(tile) : null;
+    world.setHighlight(avatarId ? { avatarId } : tile ? { tile } : null);
+  };
+
+  const onDragEnd = async (e: DragEndEvent) => {
+    const world = getWorldHandle();
+    world?.setHighlight(null);
+    const taskId = String(e.active.id);
+    try {
+      if (e.over) {
+        const status = String(e.over.id) as TaskStatus;
+        const task = tasks.find((t) => t.id === taskId);
+        if (task && task.status !== status) await api.updateTask(taskId, { status });
+        return;
+      }
+      const rect = e.active.rect.current.translated;
+      if (!world || !rect) return;
+      const tile = world.screenToTile(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      const avatarId = tile ? world.getAvatarAt(tile) : null;
+      if (avatarId && agents[avatarId]) await api.assignTask(taskId, avatarId);
+    } catch (err) {
+      pushNotice('error', String(err instanceof Error ? err.message : err));
+    }
+  };
+
+  return (
+    <section className="board">
+      <div className="board-head">
+        <h3>Task board</h3>
+        <span className="muted small">drag a card onto an avatar to assign it</span>
+        <span className="spacer" />
+        <button type="button" className="primary" onClick={() => setCreating((v) => !v)}>
+          {creating ? 'Close' : 'New task'}
+        </button>
+      </div>
+      {creating ? <CreateTaskForm onDone={() => setCreating(false)} /> : null}
+      <DndContext sensors={sensors} onDragMove={onDragMove} onDragEnd={(e) => void onDragEnd(e)}>
+        <div className="columns">
+          {COLUMNS.map((c) => (
+            <Column
+              key={c.id}
+              id={c.id}
+              label={c.label}
+              tasks={tasks.filter((t) => t.status === c.id)}
+              onOpen={setOpenTask}
+            />
+          ))}
+        </div>
+      </DndContext>
+      {openTask ? <TaskDetail taskId={openTask} onClose={() => setOpenTask(null)} /> : null}
+    </section>
+  );
+}
+
+function Column({
+  id,
+  label,
+  tasks,
+  onOpen,
+}: {
+  id: TaskStatus;
+  label: string;
+  tasks: Task[];
+  onOpen: (id: string) => void;
+}): JSX.Element {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <div ref={setNodeRef} className={`column ${isOver ? 'over' : ''} col-${id}`}>
+      <div className="column-head">
+        {label} <span className="muted">{tasks.length}</span>
+      </div>
+      {tasks.map((t) => (
+        <Card key={t.id} task={t} onOpen={onOpen} />
+      ))}
+    </div>
+  );
+}
+
+function Card({ task, onOpen }: { task: Task; onOpen: (id: string) => void }): JSX.Element {
+  const agent = useAppStore((s) =>
+    task.assigneeAgentId ? s.agents[task.assigneeAgentId] : undefined,
+  );
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: task.id,
+  });
+  const style = transform
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 20 }
+    : undefined;
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`card-task ${isDragging ? 'dragging' : ''}`}
+      {...listeners}
+      {...attributes}
+    >
+      <button type="button" className="card-title" onClick={() => onOpen(task.id)}>
+        {task.title}
+      </button>
+      <div className="card-meta">
+        {agent ? (
+          <span className="assignee">
+            <AvatarPreview avatar={agent.avatar} size={18} /> {agent.name}
+          </span>
+        ) : (
+          <span className="muted">unassigned</span>
+        )}
+        {task.costUsd ? <span className="muted">{fmtUsd(task.costUsd)}</span> : null}
+        {task.filesChanged.length ? (
+          <span className="muted">{task.filesChanged.length} files</span>
+        ) : null}
+      </div>
+      {task.resultSummary &&
+      (task.status === 'review' || task.status === 'done' || task.status === 'needs_input') ? (
+        <p className="card-summary">{task.resultSummary.slice(0, 140)}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function CreateTaskForm({ onDone }: { onDone: () => void }): JSX.Element {
+  const agents = useAppStore(useShallow((s) => Object.values(s.agents)));
+  const pushNotice = useAppStore((s) => s.pushNotice);
+  const [title, setTitle] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [assignee, setAssignee] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await api.createTask({ title, prompt, assigneeAgentId: assignee || null });
+      onDone();
+    } catch (err) {
+      pushNotice('error', String(err instanceof Error ? err.message : err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form
+      className="form task-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit();
+      }}
+    >
+      <div className="row">
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Title"
+          required
+        />
+        <select value={assignee} onChange={(e) => setAssignee(e.target.value)}>
+          <option value="">Backlog (unassigned)</option>
+          {agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name} · {a.rolePresetId}
+            </option>
+          ))}
+        </select>
+        <button
+          type="submit"
+          className="primary"
+          disabled={busy || !title.trim() || !prompt.trim()}
+        >
+          {assignee ? 'Create & assign' : 'Create'}
+        </button>
+      </div>
+      <textarea
+        rows={3}
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        placeholder="What should the agent do? This becomes the prompt."
+        required
+      />
+    </form>
+  );
+}

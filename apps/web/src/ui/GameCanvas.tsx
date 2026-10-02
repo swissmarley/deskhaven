@@ -5,6 +5,7 @@ import type { World } from '../game/types.js';
 import { worldBus } from '../state/bus.js';
 import { useAppStore } from '../state/store.js';
 import { beep } from './sfx.js';
+import { setWorldHandle } from './worldHandle.js';
 
 const INTERN_AVATAR: Avatar = {
   skin: '#f1c27d',
@@ -25,6 +26,7 @@ export function GameCanvas(): JSX.Element {
     if (!el) return;
     const world = createWorld();
     worldRef.current = world;
+    setWorldHandle(world);
     let disposed = false;
     const unsubs: (() => void)[] = [];
 
@@ -122,6 +124,7 @@ export function GameCanvas(): JSX.Element {
       for (const u of unsubs) u();
       world.destroy();
       worldRef.current = null;
+      setWorldHandle(null);
     };
   }, []);
 
