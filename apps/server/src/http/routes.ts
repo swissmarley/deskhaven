@@ -19,6 +19,8 @@ const eventsQuery = z.object({
   sinceSeq: z.coerce.number().int().nonnegative().optional(),
   limit: z.coerce.number().int().positive().max(5000).optional(),
   asc: z.stringbool().optional(),
+  fromTs: z.coerce.number().int().nonnegative().optional(),
+  toTs: z.coerce.number().int().nonnegative().optional(),
 });
 
 function parse<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T | null {
@@ -229,6 +231,8 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
       ascending: q.asc,
     });
   });
+
+  app.get('/api/events/summary', async () => ctx.events.summary());
 
   app.get('/api/permissions', async () => ctx.broker.listPending());
 

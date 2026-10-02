@@ -75,6 +75,12 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   for resume and do not occupy a desk.
 - `allowedTools` rules such as `Bash(npm test:*)` only match simple commands; a compound command
   (`npm test 2>&1; echo ...`) falls through to the permission modal. That is intended.
+- The Zustand store module forces a full page reload on hot update (a second store copy would desync the
+  Pixi bridge). Editing `world.ts` while the page is open leaves a stale mounted world: reload the page.
+- Replay feeds logged events through the same store path as live traffic; while replaying, live `event`
+  messages are dropped and a `hello` resync follows `stopReplay()`.
+- GIF for the README: `docs/demo.gif` was assembled from browser-pane screenshots with Pillow
+  (`python3` + `PIL`); ffmpeg is also available on this machine.
 - Browser pane clicks: use `find` + `ref` (coordinate clicks were off by the screenshot scale factor).
 - Dev verification runs use Sonnet in subscription mode against the owner's Max plan (approved
   2026-10-02): keep prompts short, concurrency ≤ 2.

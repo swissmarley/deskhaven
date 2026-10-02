@@ -1,10 +1,9 @@
 import type { Avatar } from '@agenthotel/shared';
 import { type JSX, useEffect, useRef } from 'react';
-import { createWorld } from '../game/index.js';
+import { createWorld, playSound, unlockAudio } from '../game/index.js';
 import type { World } from '../game/types.js';
 import { worldBus } from '../state/bus.js';
 import { useAppStore } from '../state/store.js';
-import { beep } from './sfx.js';
 import { setWorldHandle } from './worldHandle.js';
 
 const INTERN_AVATAR: Avatar = {
@@ -74,11 +73,17 @@ export function GameCanvas(): JSX.Element {
       );
       unsubs.push(
         worldBus.on(({ event }) => {
-          const sound = store.getState().soundEnabled;
+          const st = store.getState();
+          const sound = st.soundEnabled && !st.replay;
+          const play = (kind: Parameters<typeof playSound>[0]) => {
+            if (sound) playSound(kind);
+          };
           switch (event.type) {
             case 'assistant_text':
-              if (!event.parentToolUseId)
+              if (!event.parentToolUseId) {
                 world.say(event.agentId, event.text, { kind: 'speech', durationMs: 6000 });
+                play('message');
+              }
               break;
             case 'subagent_started':
               world.upsertAvatar({
@@ -89,18 +94,25 @@ export function GameCanvas(): JSX.Element {
                 isIntern: true,
                 parentId: event.agentId,
               });
+              play('intern');
               break;
             case 'subagent_stopped':
               world.removeAvatar(`intern:${event.subagentId}`);
               break;
+            case 'tool_started':
+              play(event.category === 'edit' ? 'typing' : 'tool_start');
+              break;
             case 'permission_requested':
-              if (sound) beep('alert');
+              play('permission');
               break;
             case 'turn_completed':
-              if (sound) beep(event.ok ? 'ok' : 'error');
+              play(event.ok ? 'done' : 'error');
               break;
             case 'error':
-              if (sound) beep('error');
+              play(event.kind === 'rate_limit' ? 'rate_limit' : 'error');
+              break;
+            case 'rate_limit':
+              if (event.status === 'rejected') play('rate_limit');
               break;
             default:
               break;
@@ -134,5 +146,5 @@ export function GameCanvas(): JSX.Element {
     };
   }, []);
 
-  return <div ref={host} className="canvas-host" />;
+  return <div ref={host} className="canvas-host" onPointerDown={unlockAudio} />;
 }

@@ -21,11 +21,12 @@ const PERMISSION_MODES: { id: PermissionMode; label: string }[] = [
 interface Props {
   /** When set, the form edits this agent instead of creating one. */
   agent?: Agent;
+  initialWorkdir?: string;
   onDone: () => void;
 }
 
 /** Shared create / edit form for the HR desk. */
-export function AgentForm({ agent, onDone }: Props): JSX.Element {
+export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element {
   const pushNotice = useAppStore((s) => s.pushNotice);
   const settings = useAppStore((s) => s.settings);
   const rooms = useAppStore((s) => s.rooms);
@@ -35,7 +36,7 @@ export function AgentForm({ agent, onDone }: Props): JSX.Element {
   const [name, setName] = useState(agent?.name ?? '');
   const [avatar, setAvatar] = useState<Avatar>(agent?.avatar ?? randomAvatar());
   const [rolePresetId, setRole] = useState(agent?.rolePresetId ?? 'engineer');
-  const [workdir, setWorkdir] = useState(agent?.workdir ?? '');
+  const [workdir, setWorkdir] = useState(agent?.workdir ?? initialWorkdir ?? '');
   const [model, setModel] = useState(agent?.model ?? '');
   const [permissionMode, setPermissionMode] = useState<PermissionMode | ''>(
     agent?.permissionMode ?? '',

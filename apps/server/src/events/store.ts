@@ -1,5 +1,5 @@
 import { type AgentEvent, AgentEventSchema } from '@agenthotel/shared';
-import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, gte, inArray, lte } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { events as eventsTable } from '../db/schema.js';
 import type { WsHub } from '../ws/hub.js';
@@ -14,6 +14,8 @@ export interface ListEventsQuery {
   types?: AgentEvent['type'][];
   /** Oldest first when true (replay), newest first otherwise. */
   ascending?: boolean;
+  fromTs?: number;
+  toTs?: number;
 }
 
 export class EventStore {
@@ -53,6 +55,8 @@ export class EventStore {
     if (q.agentId) conds.push(eq(eventsTable.agentId, q.agentId));
     if (q.sinceSeq !== undefined) conds.push(gt(eventsTable.seq, q.sinceSeq));
     if (q.types?.length) conds.push(inArray(eventsTable.type, q.types));
+    if (q.fromTs !== undefined) conds.push(gte(eventsTable.ts, q.fromTs));
+    if (q.toTs !== undefined) conds.push(lte(eventsTable.ts, q.toTs));
     const rows = this.db
       .select({ seq: eventsTable.seq, payload: eventsTable.payload })
       .from(eventsTable)
@@ -66,6 +70,24 @@ export class EventStore {
       if (parsed.success) out.push(parsed.data);
     }
     return out;
+  }
+
+  /** Count and time span of the persisted log, for the replay picker. */
+  summary(): { count: number; firstTs: number | null; lastTs: number | null } {
+    const row = this.db.select({ n: count() }).from(eventsTable).get();
+    const first = this.db
+      .select({ ts: eventsTable.ts })
+      .from(eventsTable)
+      .orderBy(asc(eventsTable.seq))
+      .limit(1)
+      .get();
+    const last = this.db
+      .select({ ts: eventsTable.ts })
+      .from(eventsTable)
+      .orderBy(desc(eventsTable.seq))
+      .limit(1)
+      .get();
+    return { count: row?.n ?? 0, firstTs: first?.ts ?? null, lastTs: last?.ts ?? null };
   }
 
   latest(agentId: string, type: AgentEvent['type']): AgentEvent | undefined {

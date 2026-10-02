@@ -43,6 +43,23 @@ interface Particle {
 const CONFETTI_COLORS = [0xff595e, 0xffca3a, 0x8ac926, 0x1982c4, 0x6a4c93, 0xffffff];
 const CONFETTI_COUNT = 30;
 const CELEBRATE_S = 1.5;
+/** Intern arrival/departure "poof": a few light pixels drifting out and fading. */
+const POOF_COUNT = 6;
+const POOF_S = 0.5;
+const POOF_COLORS = [0xffffff, 0xe8ecf1, 0xd7dde6];
+/** Emote overlay colours. */
+const OUTLINE = 0x101418;
+const SWEAT_COLOR = 0x4cc9f0;
+const SAND = 0xf4c15d;
+const GLASS = 0xdbeafe;
+const HOURGLASS_FRAME = 0x8d5a2b;
+const ZZZ_COLOR = 0xdfe7ef;
+/** Screen pixels per emote-icon cell (matches the 2× generated sheet). */
+const PX = 2;
+const SWEAT_LOOP_S = 0.8;
+const HOURGLASS_FRAME_S = 0.45;
+const ZZZ_LIFE_S = 2.4;
+const ZZZ_GAP_S = 0.8;
 const LEAVE_FADE_S = 0.7;
 const SEAT_SINK_PX = 6;
 const LABEL_Y = -58;
@@ -51,6 +68,8 @@ const WALK_FPS = 8;
 const TYPE_FPS = 6;
 const INTERN_TINT = 0xcfd4dc;
 const WAIT_TINT = 0x9a9a9a;
+/** Faint blue cast while rate-limited. */
+const COOLDOWN_TINT = 0xb9d0ff;
 
 const FALLBACK: AvatarPalette = {
   skin: 0xf1c27d,
@@ -95,6 +114,21 @@ export function sheetFrameFor(
   }
 }
 
+/** Fill one block of emote-icon cells (grid units of `PX`) at a given alpha. */
+function cell(
+  g: Graphics,
+  x0: number,
+  y0: number,
+  cx: number,
+  cy: number,
+  w: number,
+  h: number,
+  color: number,
+  alpha: number,
+): void {
+  g.rect(x0 + cx * PX, y0 + cy * PX, w * PX, h * PX).fill({ color, alpha });
+}
+
 const NAME_STYLE = new TextStyle({
   fontFamily: 'system-ui, -apple-system, Segoe UI, sans-serif',
   fontSize: 11,
@@ -136,6 +170,15 @@ export class AvatarSprite extends Container {
   private t = 0;
   private poseT = 0;
   private readonly confetti: Particle[] = [];
+  /** Fixed pool for `poof()`; `poofT` counts down while it is visible. */
+  private readonly puff: Particle[] = Array.from({ length: POOF_COUNT }, () => ({
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    color: 0xffffff,
+  }));
+  private poofT = 0;
   private highlighted = false;
 
   constructor(opts: AvatarSpriteOptions) {
@@ -237,6 +280,7 @@ export class AvatarSprite extends Container {
     this.pose = pose;
     this.poseT = 0;
     this.fxText.visible = false;
+    this.fxText.scale.set(1);
     switch (pose) {
       case 'celebrate':
         this.spawnConfetti();
@@ -246,10 +290,6 @@ export class AvatarSprite extends Container {
         this.fxText.style.fill = 0xff3b30;
         this.fxText.position.set(0, -70);
         this.fxText.alpha = 1;
-        break;
-      case 'nap':
-        this.fxText.text = 'z z z';
-        this.fxText.style.fill = 0xdfe7ef;
         break;
       default:
         break;
@@ -340,32 +380,21 @@ export class AvatarSprite extends Container {
         }
         this.fxText.visible = true;
         this.fxText.y = -70 + Math.sin(this.t * 6) * 2;
+        // Pulse 1.0 → 1.15 so the "!" catches the eye.
+        this.fxText.scale.set(1.075 + 0.075 * Math.sin(this.poseT * Math.PI * 2 * 2));
         break;
       }
-      case 'sweat': {
-        // A drop that repeatedly forms at the temple and falls.
-        const ph = (this.t * 1.2) % 1;
-        const dy = ph * 14;
-        const alpha = 1 - ph * 0.7;
-        fx.poly([9, -50 + dy, 6.5, -45 + dy, 11.5, -45 + dy]).fill({ color: 0x4cc9f0, alpha });
-        fx.circle(9, -44.5 + dy, 2.5).fill({ color: 0x4cc9f0, alpha });
+      case 'sweat':
+        this.drawSweat(fx, side);
         break;
-      }
-      case 'cooldown': {
-        const cx = 11;
-        const cy = -54;
-        fx.circle(cx, cy, 5.5).fill({ color: 0xcfd8dc, alpha: 0.9 });
-        for (let i = 0; i < 3; i++) {
-          const a = this.t * 0.8 + (i * Math.PI) / 3;
-          fx.moveTo(cx - Math.cos(a) * 7, cy - Math.sin(a) * 7)
-            .lineTo(cx + Math.cos(a) * 7, cy + Math.sin(a) * 7)
-            .stroke({ width: 1, color: 0xffffff });
-        }
+      case 'cooldown':
+        this.drawHourglass(fx, 13, -52);
         break;
-      }
       case 'celebrate': {
-        if (this.poseT < CELEBRATE_S)
+        if (this.poseT < CELEBRATE_S) {
           bob = -Math.abs(Math.sin(this.poseT * Math.PI * 2 * 1.5)) * 10;
+          this.drawThumbsUp(fx);
+        }
         if (limbs) {
           fx.rect(-14, -46, 4, 14).fill(p.shirt);
           fx.rect(10, -46, 4, 14).fill(p.shirt);
@@ -375,14 +404,10 @@ export class AvatarSprite extends Container {
         this.updateConfetti(dt, fx);
         break;
       }
-      case 'nap': {
-        const ph = (this.t * 0.5) % 1;
+      case 'nap':
         if (limbs) lean = 0.08;
-        this.fxText.visible = true;
-        this.fxText.position.set(10 + ph * 6, -60 - ph * 12);
-        this.fxText.alpha = 1 - ph;
+        this.drawZzz(fx, side);
         break;
-      }
       case 'leave':
         this.alpha = Math.max(0, this.alpha - dt / LEAVE_FADE_S);
         if (this.alpha <= 0) this.finished = true;
@@ -403,6 +428,8 @@ export class AvatarSprite extends Container {
         break;
       }
     }
+
+    if (this.poofT > 0) this.updatePoof(dt, fx);
 
     // Pixel frames stay on whole pixels so they remain crisp.
     if (!limbs) bob = Math.round(bob);
@@ -435,7 +462,13 @@ export class AvatarSprite extends Container {
 
   private applyTint(): void {
     const tint =
-      this.pose === 'wait' ? WAIT_TINT : this.intern && this.pixel ? INTERN_TINT : 0xffffff;
+      this.pose === 'wait'
+        ? WAIT_TINT
+        : this.pose === 'cooldown'
+          ? COOLDOWN_TINT
+          : this.intern && this.pixel
+            ? INTERN_TINT
+            : 0xffffff;
     (this.pixel ?? this.body).tint = tint;
   }
 
@@ -446,6 +479,110 @@ export class AvatarSprite extends Container {
     }
     this.body.clear();
     this.painters.avatarBody(this.body, this.palette, this.facing, this.intern);
+  }
+
+  /**
+   * A brief puff of light pixels around the body (interns appearing at the door or leaving).
+   * Reuses a fixed particle pool; nothing is allocated.
+   */
+  poof(): void {
+    this.poofT = POOF_S;
+    const n = this.puff.length;
+    for (let i = 0; i < n; i++) {
+      const c = this.puff[i];
+      if (!c) continue;
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.6;
+      c.x = Math.cos(a) * 4;
+      c.y = -26 + Math.sin(a) * 6;
+      c.vx = Math.cos(a) * 36;
+      c.vy = Math.sin(a) * 30 - 14;
+      c.color = POOF_COLORS[i % POOF_COLORS.length] ?? 0xffffff;
+    }
+  }
+
+  private updatePoof(dt: number, g: Graphics): void {
+    this.poofT = Math.max(0, this.poofT - dt);
+    const alpha = this.poofT / POOF_S;
+    for (const c of this.puff) {
+      c.x += c.vx * dt;
+      c.y += c.vy * dt;
+      g.rect(Math.round(c.x) - 1, Math.round(c.y) - 1, PX, PX).fill({ color: c.color, alpha });
+    }
+  }
+
+  /** Pixel thumbs-up (8×9 cells incl. outline) bobbing above the name label for the celebration. */
+  private drawThumbsUp(g: Graphics): void {
+    const p = this.palette;
+    const x0 = -4 * PX;
+    const bob = Math.round(Math.sin(this.poseT * Math.PI * 2 * 3) * 1.5) * PX;
+    const y0 = this.labelBaseY - 14 - 9 * PX + bob;
+    // Fade in over 100 ms, out over the last 300 ms.
+    const alpha = Math.max(0, Math.min(1, this.poseT / 0.1, (CELEBRATE_S - this.poseT) / 0.3));
+    // Outline boxes first, then the thumb, fist and cuff on top.
+    cell(g, x0, y0, 3, 0, 4, 5, OUTLINE, alpha);
+    cell(g, x0, y0, 0, 2, 8, 7, OUTLINE, alpha);
+    cell(g, x0, y0, 4, 1, 2, 3, p.skin, alpha);
+    cell(g, x0, y0, 1, 3, 6, 4, p.skin, alpha);
+    cell(g, x0, y0, 1, 7, 6, 1, p.shirt, alpha);
+    cell(g, x0, y0, 2, 4, 1, 1, 0xffffff, alpha);
+  }
+
+  /** Sweat drop: forms at the temple, falls with gravity, fades, repeats every 0.8 s. */
+  private drawSweat(g: Graphics, side: number): void {
+    const ph = (this.poseT / SWEAT_LOOP_S) % 1;
+    const x = side * 8;
+    const grow = Math.min(1, ph / 0.3);
+    const fall = Math.max(0, (ph - 0.3) / 0.7);
+    const y = -49 + fall * fall * 18;
+    const alpha = fall > 0.6 ? 1 - (fall - 0.6) / 0.4 : 1;
+    const r = 1.5 + grow;
+    g.poly([x, y - r * 2, x - r, y, x + r, y]).fill({ color: SWEAT_COLOR, alpha });
+    g.circle(x, y, r).fill({ color: SWEAT_COLOR, alpha });
+    // Shine pixel on the upper-left of the drop.
+    g.rect(x - r * 0.6 - 0.5, y - r * 0.4 - 0.5, 1, 1).fill({ color: 0xffffff, alpha });
+  }
+
+  /** Hourglass (5×7 cells) whose sand runs through three frames, beside the head. */
+  private drawHourglass(g: Graphics, cx: number, cy: number): void {
+    const x0 = cx - 2.5 * PX;
+    const y0 = cy - 3.5 * PX;
+    const frame = Math.floor(this.poseT / HOURGLASS_FRAME_S) % 3;
+    cell(g, x0, y0, 0, 0, 5, 1, HOURGLASS_FRAME, 1);
+    cell(g, x0, y0, 0, 6, 5, 1, HOURGLASS_FRAME, 1);
+    cell(g, x0, y0, 0, 1, 5, 1, GLASS, 1);
+    cell(g, x0, y0, 1, 2, 3, 1, GLASS, 1);
+    cell(g, x0, y0, 2, 3, 1, 1, GLASS, 1);
+    cell(g, x0, y0, 1, 4, 3, 1, GLASS, 1);
+    cell(g, x0, y0, 0, 5, 5, 1, GLASS, 1);
+    if (frame === 0) {
+      cell(g, x0, y0, 1, 1, 3, 1, SAND, 1);
+      cell(g, x0, y0, 2, 2, 1, 1, SAND, 1);
+    } else if (frame === 1) {
+      cell(g, x0, y0, 2, 2, 1, 1, SAND, 1);
+      cell(g, x0, y0, 2, 3, 1, 1, SAND, 1);
+      cell(g, x0, y0, 1, 5, 3, 1, SAND, 1);
+    } else {
+      cell(g, x0, y0, 2, 4, 1, 1, SAND, 1);
+      cell(g, x0, y0, 1, 5, 3, 1, SAND, 1);
+    }
+  }
+
+  /** Three "z" glyphs launched 0.8 s apart, each rising, growing and fading over 2.4 s. */
+  private drawZzz(g: Graphics, side: number): void {
+    for (let i = 0; i < 3; i++) {
+      const life = this.poseT - i * ZZZ_GAP_S;
+      if (life < 0) continue;
+      const ph = (life % ZZZ_LIFE_S) / ZZZ_LIFE_S;
+      const size = 3 + ph * 4;
+      const x = side * (8 + ph * 10) + Math.sin(ph * Math.PI * 4) * 2;
+      const y = -52 - ph * 28;
+      const alpha = ph < 0.1 ? ph / 0.1 : ph > 0.6 ? (1 - ph) / 0.4 : 1;
+      g.moveTo(x, y)
+        .lineTo(x + size, y)
+        .lineTo(x, y + size)
+        .lineTo(x + size, y + size)
+        .stroke({ width: 1.5, color: ZZZ_COLOR, alpha });
+    }
   }
 
   private spawnConfetti(): void {

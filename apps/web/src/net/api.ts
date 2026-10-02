@@ -68,7 +68,19 @@ export const api = {
     call<{ status?: string }>('POST', `/api/agents/${id}/${action}`),
   message: (id: string, text: string) =>
     call<{ ok: true }>('POST', `/api/agents/${id}/message`, { text }),
-  events: (q: { agentId?: string; sinceSeq?: number; limit?: number; asc?: boolean }) => {
+  eventsSummary: () =>
+    call<{ count: number; firstTs: number | null; lastTs: number | null }>(
+      'GET',
+      '/api/events/summary',
+    ),
+  events: (q: {
+    agentId?: string;
+    sinceSeq?: number;
+    limit?: number;
+    asc?: boolean;
+    fromTs?: number;
+    toTs?: number;
+  }) => {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(q)) if (v !== undefined) params.set(k, String(v));
     return call<AgentEvent[]>('GET', `/api/events?${params}`);

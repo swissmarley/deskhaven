@@ -200,7 +200,7 @@ interface AuthProvider {
 
 ### 5.1 Policy findings on subscription auth (checked 2026-10-02)
 
-Researched on 2026-10-02 by reading the current pages listed below (plus press coverage for the dated timeline). Re-check these two pages before M2 and before M7 and update this date; the Settings screen will show the date of the last check next to the mode switch.
+Researched on 2026-10-02 (re-checked the same day before M7: no change) by reading the current pages listed below (plus press coverage for the dated timeline). Re-check these two pages before M2 and before M7 and update this date; the Settings screen will show the date of the last check next to the mode switch.
 
 Primary sources:
 
@@ -275,6 +275,10 @@ A Manager is an ordinary agent whose preset has `manager: true`. Its session get
 ## 7.3 Budgets, cap, idle timeout, kill switch
 
 `BudgetGuard` runs before every dispatched prompt: per-agent `budget.dailyCapUsd` and the global `settings.dailyCapUsd` compare against today's `usage_daily` totals (SDK cost estimates). A refusal turns the task into Needs input with the reason. SDK-side `maxTurns`/`maxBudgetUsd` still apply per session (`maxBudgetUsd` is cumulative for the session, verified: once exceeded every later turn returns `error_max_budget_usd` immediately). The concurrency cap counts busy agents; `idleTimeoutMinutes` stops processes that sat idle (default 15 min) while keeping `session_id`. The kill switch interrupts, ends input streams, aborts after a grace period, and refuses new work until reset.
+
+## 7.4 Replay
+
+The event log is the source of truth, so replay needs no extra recording: the Replay tab loads a time range from `GET /api/events?asc=true&fromTs=…`, puts the store into replay mode (live `event` messages are held back), clears the timeline (feed, transcripts, behaviours) and feeds the logged events through the very same `applyEvent` → `mapEventToBehavior` path at `(ts[i+1] − ts[i]) / speed` (capped at 2.5 s per gap). Scrubbing rebuilds state from the range start without animations; stopping clears the timeline and asks the server for a fresh snapshot (`hello`), which also replays the recent persisted events into the feed.
 
 ## 8. Front-end structure
 

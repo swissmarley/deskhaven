@@ -296,6 +296,8 @@ class PixiWorld implements World, WorldExtras {
         }) ?? nearestWalkable(this.grid, { x: 0, y: this.room.height - 1 });
       const spawn = door ?? randomWalkable(this.grid, rng) ?? { x: 0, y: 0 };
       this.place(st, spawn);
+      // Visual only: the UI plays the matching sound.
+      sprite.poof();
       const parent = input.parentId ? this.avatars.get(input.parentId) : undefined;
       if (parent) {
         const exclude = new Set(occupied);
@@ -589,9 +591,11 @@ class PixiWorld implements World, WorldExtras {
     }
     const pending = st.pending;
     st.pending = null;
+    const wasLeaving = st.sprite.pose === 'leave';
     if (pending) this.enact(st, pending);
-    else if (st.leaving) st.sprite.setPose('leave');
-    else st.sprite.setPose('idle');
+    else st.sprite.setPose(st.leaving ? 'leave' : 'idle');
+    // Interns vanish in a puff once they reach the door (first time the leave fade starts).
+    if (st.input.isIntern && !wasLeaving && st.sprite.pose === 'leave') st.sprite.poof();
     if (st.behavior.kind === 'idle' && st.behavior.variant === 'wander')
       st.wanderTimer = range(st.rng, WANDER_MIN_S, WANDER_MAX_S);
   }

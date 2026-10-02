@@ -26,6 +26,14 @@ export interface Notice {
   agentId?: string;
 }
 
+export interface ReplayState {
+  events: AgentEvent[];
+  index: number;
+  speed: number;
+  playing: boolean;
+  label: string;
+}
+
 export interface AppState {
   connection: ConnectionState;
   serverVersion: string | null;
@@ -47,10 +55,14 @@ export interface AppState {
   seeds: Record<string, number>;
   lastSeq: number;
   selectedAgentId: string | null;
-  sideTab: 'agents' | 'inspector' | 'feed' | 'settings' | 'board' | 'room';
+  sideTab: 'agents' | 'inspector' | 'feed' | 'settings' | 'board' | 'room' | 'replay';
   boardOpen: boolean;
   notices: Notice[];
   soundEnabled: boolean;
+  /** Non-null while the viewer replays logged events; live events are ignored meanwhile. */
+  replay: ReplayState | null;
+  /** Installed by the WebSocket owner; asks the server for a fresh snapshot. */
+  requestResync: () => void;
 
   setConnection: (c: ConnectionState) => void;
   applyServerMessage: (m: ServerMessage) => void;
@@ -60,6 +72,14 @@ export interface AppState {
   pushNotice: (level: Notice['level'], message: string, agentId?: string) => void;
   dismissNotice: (id: number) => void;
   setSoundEnabled: (on: boolean) => void;
+  startReplay: (events: AgentEvent[], label: string, speed?: number) => void;
+  setReplayPlaying: (playing: boolean) => void;
+  setReplaySpeed: (speed: number) => void;
+  /** Apply the next replay event (returns false at the end). */
+  replayStep: () => boolean;
+  /** Jump to an index, rebuilding state from the start of the range. */
+  replaySeek: (index: number) => void;
+  stopReplay: () => void;
 }
 
 let noticeSeq = 0;
@@ -86,6 +106,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   boardOpen: true,
   notices: [],
   soundEnabled: true,
+  replay: null,
+  requestResync: () => {},
 
   setConnection: (connection) => set({ connection }),
   selectAgent: (selectedAgentId) =>
@@ -98,6 +120,38 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
   dismissNotice: (id) => set((s) => ({ notices: s.notices.filter((n) => n.id !== id) })),
   setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
+  startReplay: (events, label, speed = 4) => {
+    set({ ...clearedTimeline(get()), replay: { events, index: 0, speed, playing: true, label } });
+  },
+  setReplayPlaying: (playing) => set((s) => (s.replay ? { replay: { ...s.replay, playing } } : {})),
+  setReplaySpeed: (speed) => set((s) => (s.replay ? { replay: { ...s.replay, speed } } : {})),
+  replayStep: () => {
+    const r = get().replay;
+    if (!r) return false;
+    const ev = r.events[r.index];
+    if (!ev) {
+      set({ replay: { ...r, playing: false } });
+      return false;
+    }
+    applyEvent(ev, set, get, true, true);
+    set((s) => (s.replay ? { replay: { ...s.replay, index: r.index + 1 } } : {}));
+    return true;
+  },
+  replaySeek: (index) => {
+    const r = get().replay;
+    if (!r) return;
+    const target = Math.max(0, Math.min(index, r.events.length));
+    set({ ...clearedTimeline(get()), replay: { ...r, index: 0 } });
+    for (let i = 0; i < target; i++) {
+      const ev = r.events[i];
+      if (ev) applyEvent(ev, set, get, false, true);
+    }
+    set((s) => (s.replay ? { replay: { ...s.replay, index: target } } : {}));
+  },
+  stopReplay: () => {
+    set({ ...clearedTimeline(get()), replay: null });
+    get().requestResync();
+  },
 
   applyServerMessage: (m) => {
     switch (m.type) {
@@ -122,10 +176,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       case 'pong':
         break;
       case 'event':
-        applyEvent(m.event, set, get, true);
+        if (!get().replay) applyEvent(m.event, set, get, true);
         break;
       case 'events_batch':
-        for (const e of m.events) applyEvent(e, set, get, false);
+        if (!get().replay) for (const e of m.events) applyEvent(e, set, get, false);
         break;
       case 'agent_upserted':
         set((s) => ({
@@ -197,10 +251,17 @@ function initialBehavior(a: Agent): Behavior {
   }
 }
 
+/** Feed, transcripts, live text and behaviours reset to a blank timeline (agents become idle). */
+function clearedTimeline(s: AppState): Partial<AppState> {
+  const behaviors: Record<string, Behavior> = {};
+  for (const id of Object.keys(s.agents)) behaviors[id] = IDLE;
+  return { feed: [], transcripts: {}, liveText: {}, openTools: {}, behaviors, seeds: {} };
+}
+
 type Set = (fn: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void;
 type Get = () => AppState;
 
-function applyEvent(event: AgentEvent, set: Set, get: Get, live: boolean): void {
+function applyEvent(event: AgentEvent, set: Set, get: Get, live: boolean, replaying = false): void {
   const s = get();
   const agentId = event.agentId;
   // open-tool bookkeeping first so the behaviour mapping sees the post-event state
@@ -253,7 +314,7 @@ function applyEvent(event: AgentEvent, set: Set, get: Get, live: boolean): void 
       };
     }
   }
-  if (event.type === 'error' && live) {
+  if (event.type === 'error' && live && !replaying) {
     const label =
       event.kind === 'auth'
         ? 'Authentication'
@@ -267,7 +328,7 @@ function applyEvent(event: AgentEvent, set: Set, get: Get, live: boolean): void 
       { id: ++noticeSeq, level: 'error', message: `${label}: ${event.message}`, agentId },
     ];
   }
-  if (event.type === 'rate_limit' && event.status !== 'allowed' && live) {
+  if (event.type === 'rate_limit' && event.status !== 'allowed' && live && !replaying) {
     const when = event.resetsAt
       ? ` (resets ${new Date(event.resetsAt * (event.resetsAt < 1e12 ? 1000 : 1)).toLocaleTimeString()})`
       : '';

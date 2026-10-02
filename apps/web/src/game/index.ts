@@ -46,6 +46,30 @@ export type { Motion, MotionSample } from './motion.js';
 export { advanceMotion, buildMotion, easeTrapezoid, SPEED_TILES_PER_S } from './motion.js';
 export { findPath } from './pathfinding.js';
 export { hashString, mulberry32 } from './rng.js';
+export type { SoundKind, SoundPrefs, ThrottleState } from './sound.js';
+export {
+  createThrottleState,
+  DEFAULT_MASTER_VOLUME,
+  defaultPrefs,
+  getMasterVolume,
+  getSoundPrefs,
+  isSoundEnabled,
+  MAX_VOICES,
+  markPlayed,
+  parsePrefs,
+  playSound,
+  pruneVoices,
+  reloadSoundPrefs,
+  SOUND_KINDS,
+  SOUND_LABELS,
+  SOUND_STORAGE_KEY,
+  serializePrefs,
+  setMasterVolume,
+  setSoundEnabled,
+  shouldPlay,
+  THROTTLE_MS,
+  unlockAudio,
+} from './sound.js';
 export type {
   AvatarSheet,
   FrameRect,
