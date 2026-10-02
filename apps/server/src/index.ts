@@ -5,11 +5,24 @@ import { loadConfig } from './config.js';
 async function main(): Promise<void> {
   const config = loadConfig();
   fs.mkdirSync(config.dataDir, { recursive: true });
-  const { app } = await buildApp(config);
+  const { app, ctx } = await buildApp(config);
   await app.listen({ host: config.host, port: config.port });
-  app.log.info({ dataDir: config.dataDir }, 'AgentHotel server ready');
+  const status = await ctx.auth().probe();
+  app.log.info(
+    {
+      dataDir: config.dataDir,
+      authMode: status.mode,
+      authAvailable: status.available,
+      keySource: status.keySource,
+      loggedIn: status.loggedIn,
+    },
+    'AgentHotel server ready',
+  );
 
+  let closing = false;
   const shutdown = async (): Promise<void> => {
+    if (closing) return;
+    closing = true;
     await app.close();
     process.exit(0);
   };
@@ -18,6 +31,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  console.error(err);
+  console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });

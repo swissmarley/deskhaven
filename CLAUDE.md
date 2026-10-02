@@ -41,6 +41,11 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
 
 ## Gotchas (verified against the installed SDK 0.3.287)
 
+- Zustand selectors must return stable references: wrap array/object-producing selectors in `useShallow`
+  (or select primitives). A fresh array per call makes React loop ("getSnapshot should be cached").
+- Real sessions also emit `system/status`, `system/task_summary` and `system/post_turn_summary`; the
+  normaliser ignores unknown `system` subtypes on purpose (no `unknown` event, nothing persisted).
+
 - `Options.env` **replaces** the subprocess environment. Always spread the base env; strip
   `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` in subscription mode.
 - Omitting `permissionMode` yields the CLI's default ("auto" where available), not "ask". Always pass it.
@@ -57,5 +62,9 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   fixes it. `packageManager` is pinned in the root `package.json`.
 - pnpm 10 blocks lifecycle scripts; `better-sqlite3` and `esbuild` are allow-listed in
   `pnpm.onlyBuiltDependencies`.
+- Record real SDK traffic for fixtures with `AGENTHOTEL_RECORD_SDK=/path/to/file.jsonl pnpm dev`; the
+  normaliser test replays every `apps/server/test/fixtures/*.jsonl` file.
+- The sample repo (`examples/sample-repo`) is copied to `~/.agenthotel/sample-repo` by `POST /api/sample/init`;
+  its tests run with Node's `--experimental-strip-types` and a quoted glob (`--test 'test/*.test.ts'`).
 - Dev verification runs use Sonnet in subscription mode against the owner's Max plan (approved
   2026-10-02): keep prompts short, concurrency ≤ 2.

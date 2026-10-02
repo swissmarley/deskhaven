@@ -1,0 +1,215 @@
+import {
+  APP_VERSION,
+  CreateAgentSchema,
+  ResolvePermissionSchema,
+  UpdateAgentSchema,
+  UpdateSettingsSchema,
+} from '@agenthotel/shared';
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import { z } from 'zod';
+import type { AppContext } from '../app.js';
+
+const idParams = z.object({ id: z.string().min(1) });
+const messageBody = z.object({ text: z.string().min(1) });
+const apiKeyBody = z.object({ key: z.string().min(10) });
+const eventsQuery = z.object({
+  agentId: z.string().optional(),
+  sinceSeq: z.coerce.number().int().nonnegative().optional(),
+  limit: z.coerce.number().int().positive().max(5000).optional(),
+  asc: z.coerce.boolean().optional(),
+});
+
+function parse<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T | null {
+  const r = schema.safeParse(value);
+  if (r.success) return r.data;
+  void reply.code(400).send({ error: 'invalid_request', issues: r.error.issues });
+  return null;
+}
+
+function fail(reply: FastifyReply, err: unknown, code = 400): void {
+  void reply.code(code).send({ error: err instanceof Error ? err.message : String(err) });
+}
+
+export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
+  app.get('/api/health', async () => ({ ok: true, version: APP_VERSION, time: Date.now() }));
+
+  // ---- auth & settings --------------------------------------------------------------------------
+  app.get('/api/auth/status', async () => ctx.auth().probe());
+
+  app.post('/api/auth/api-key', async (req, reply) => {
+    const body = parse(apiKeyBody, req.body, reply);
+    if (!body) return;
+    await ctx.keyStore.set(body.key.trim());
+    ctx.reloadAuth();
+    return { stored: true, keySource: 'keychain' };
+  });
+
+  app.delete('/api/auth/api-key', async () => {
+    await ctx.keyStore.clear();
+    ctx.reloadAuth();
+    return { stored: false };
+  });
+
+  app.get('/api/settings', async () => ctx.settings.get());
+
+  app.patch('/api/settings', async (req, reply) => {
+    const body = parse(UpdateSettingsSchema, req.body, reply);
+    if (!body) return;
+    try {
+      const before = ctx.settings.get();
+      const next = ctx.settings.update(body);
+      if (next.authMode !== before.authMode) ctx.reloadAuth();
+      ctx.hub.broadcast({ type: 'settings_updated', settings: next });
+      return next;
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  // ---- agents -----------------------------------------------------------------------------------
+  app.get('/api/agents', async () => ctx.agents.list());
+
+  app.post('/api/agents', async (req, reply) => {
+    const body = parse(CreateAgentSchema, req.body, reply);
+    if (!body) return;
+    try {
+      const agent = ctx.agents.create(body);
+      if (body.useWorktree)
+        ctx.log.warn({ agentId: agent.id }, 'worktrees arrive in M3; created without one');
+      return reply.code(201).send(agent);
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  app.get('/api/agents/:id', async (req, reply) => {
+    const { id } = parse(idParams, req.params, reply) ?? {};
+    if (!id) return;
+    const agent = ctx.agents.get(id);
+    return agent ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  app.patch('/api/agents/:id', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    const body = p && parse(UpdateAgentSchema, req.body, reply);
+    if (!p || !body) return;
+    try {
+      const agent = ctx.agents.update(p.id, body);
+      ctx.manager.get(p.id)?.updateAgent(agent);
+      return agent;
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  app.delete('/api/agents/:id', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    const q = p && parse(z.object({ force: z.coerce.boolean().optional() }), req.query, reply);
+    if (!p || !q) return;
+    const agent = ctx.agents.get(p.id);
+    if (!agent) return reply.code(404).send({ error: 'not_found' });
+    await ctx.manager.remove(p.id);
+    if (agent.worktree) {
+      try {
+        await ctx.worktrees.remove(agent.workdir, agent.worktree, q.force ?? false);
+      } catch (err) {
+        return reply.code(409).send({
+          error: err instanceof Error ? err.message : String(err),
+          worktree: agent.worktree,
+        });
+      }
+    }
+    ctx.agents.remove(p.id);
+    return { ok: true };
+  });
+
+  for (const action of ['start', 'stop', 'pause', 'resume', 'interrupt'] as const) {
+    app.post(`/api/agents/:id/${action}`, async (req, reply) => {
+      const p = parse(idParams, req.params, reply);
+      if (!p) return;
+      try {
+        switch (action) {
+          case 'start':
+            return { status: ctx.manager.start(p.id) };
+          case 'stop':
+            await ctx.manager.stop(p.id);
+            return { status: 'stopped' };
+          case 'pause':
+            await ctx.manager.pause(p.id);
+            return { status: 'paused' };
+          case 'resume':
+            ctx.manager.resume(p.id);
+            return { status: ctx.manager.get(p.id)?.getStatus() ?? 'idle' };
+          case 'interrupt':
+            await ctx.manager.interrupt(p.id);
+            return { ok: true };
+        }
+      } catch (err) {
+        fail(reply, err);
+      }
+    });
+  }
+
+  app.post('/api/agents/:id/message', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    const body = p && parse(messageBody, req.body, reply);
+    if (!p || !body) return;
+    try {
+      ctx.manager.sendPrompt(p.id, body.text, null);
+      return { ok: true };
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  // ---- events, permissions, rooms, usage --------------------------------------------------------
+  app.get('/api/events', async (req, reply) => {
+    const q = parse(eventsQuery, req.query, reply);
+    if (!q) return;
+    return ctx.events.list({
+      agentId: q.agentId,
+      sinceSeq: q.sinceSeq,
+      limit: q.limit,
+      ascending: q.asc,
+    });
+  });
+
+  app.get('/api/permissions', async () => ctx.broker.listPending());
+
+  app.post('/api/permissions/:id/resolve', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    const body = p && parse(ResolvePermissionSchema, req.body, reply);
+    if (!p || !body) return;
+    const ok = ctx.broker.resolve(p.id, body.decision, body.message);
+    return ok ? { ok: true } : reply.code(404).send({ error: 'not_pending' });
+  });
+
+  app.get('/api/rooms', async () => [ctx.room()]);
+  app.get('/api/usage', async () => ctx.usage.snapshot());
+  app.get('/api/presets', async () => ctx.presets());
+  app.put('/api/presets/:id', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    if (!p) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      return ctx.presetService.upsert({ ...body, id: p.id });
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+  app.delete('/api/presets/:id', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    if (!p) return;
+    return { preset: ctx.presetService.reset(p.id) ?? null };
+  });
+  app.get('/api/models', async () => ctx.models());
+
+  app.post('/api/kill', async () => {
+    await ctx.manager.killAll();
+    return { killSwitch: true };
+  });
+  app.post('/api/kill/reset', async () => {
+    ctx.manager.resetKillSwitch();
+    return { killSwitch: false };
+  });
+}

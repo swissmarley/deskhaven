@@ -121,6 +121,7 @@ Gotchas confirmed in the type docs:
 | `system/task_started` / `task_notification` | `task_id`, `description`, `subagent_type`, `status` | intern avatars (with SubagentStart/Stop) |
 | `tool_progress` | `tool_use_id`, `tool_name`, `elapsed_time_seconds` | keep long Bash animations alive |
 | `system/compact_boundary`, `tool_use_summary`, `auth_status` | — | transcript markers |
+| `system/status`, `system/task_summary`, `system/post_turn_summary` (seen in recorded sessions) | — | ignored |
 
 **Cost.** `result.total_cost_usd` is a client-side **estimate** that includes subagents; `result.usage` is main-loop only; `modelUsage[model].costUSD` has the per-model breakdown. In streaming-input mode each turn emits its own `result`; we attribute each `result` to the task that was active for that turn. `Query.accountInfo()` returns `{ email?, organization?, subscriptionType?, apiProvider? }`.
 
@@ -181,6 +182,8 @@ interface AuthProvider {
   constraints(): { bindHost: '127.0.0.1' | string; defaultConcurrency: number; notice?: string };
 }
 ```
+
+**First run.** API_KEY is the product default. When the machine has no API key but `claude auth status` reports a claude.ai login, the server preselects subscription mode on first start (and the onboarding wizard shows the choice), so the app is usable immediately; the user can switch at any time in Settings.
 
 **API_KEY mode (default).** Key from `ANTHROPIC_API_KEY` or the OS keychain (`@napi-rs/keyring`, service `agenthotel`, account `anthropic-api-key`). `childEnv` = `{ ...base, ANTHROPIC_API_KEY: key }`. The key is held in one closure, never logged (the logger has a redaction list), never serialised into any DTO, never written to SQLite. Settings UI can *set* a key into the keychain through a POST that returns only `{ stored: true }`; the GET returns only `{ source: 'env' | 'keychain' | 'none' }`.
 
@@ -254,6 +257,8 @@ Primary sources:
 | `role_presets` | id, name, json (seeded from `packages/shared/presets/*.json`, editable) |
 | `settings` | key, value (json) — auth mode, flags, concurrency, caps, sound |
 | `usage_daily` | date, agent_id, cost_usd, input_tokens, output_tokens |
+
+Migrations are hand-written, idempotent `CREATE TABLE IF NOT EXISTS` statements run on open (`apps/server/src/db/client.ts`); Drizzle is used for typed queries only. Documents (agents, tasks, rooms, settings) are stored as validated JSON with a few lifted columns for filtering.
 
 Session transcripts stay where the SDK writes them (`~/.claude/projects/`); we store only `session_id`.
 
