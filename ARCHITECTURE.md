@@ -268,6 +268,14 @@ Session transcripts stay where the SDK writes them (`~/.claude/projects/`); we s
 
 `TaskService` (server) owns the Kanban state machine. Assigning sends `# Task: <title>\n\n<prompt>` into the agent's session tagged with the task id; every `AgentEvent` carrying that id moves the card: `status working` → In progress, `permission_requested` / AskUserQuestion / ExitPlanMode → Needs input, `turn_completed ok` → Review (result summary = the SDK result or the last assistant text, cost added, files from `git diff --numstat` + untracked), failed turn → Needs input. On boot, queued (`assigned`) tasks are re-dispatched because their prompt never reached a model turn, while mid-turn tasks are flagged for a human nudge (the resumed session already has their context). Drag-and-drop onto an avatar resolves the drop target through the Pixi world (`screenToTile` → `getAvatarAt`).
 
+## 7.2 Manager delegation and interns
+
+A Manager is an ordinary agent whose preset has `manager: true`. Its session gets one extra MCP server, created in-process with `createSdkMcpServer` + `tool()` (`apps/server/src/manager/tools.ts`): `list_agents`, `create_task`, `assign_task`, `task_status`. The tools call `TaskService` directly, so delegated work appears on the board like any other task and is subject to the same budgets and permissions. Delegation is flat by construction: the tools refuse managers as assignees and employees never receive the server. Every agent runs with `strictMcpConfig: true`, so the user's global MCP connectors never load into an agent. Interns are the SDK's own subagents (the `Agent`/`Task` tool): `SubagentStart`/`SubagentStop` hooks become `subagent_started/stopped` events and the world shows a temporary avatar that enters from the door and leaves on stop.
+
+## 7.3 Budgets, cap, idle timeout, kill switch
+
+`BudgetGuard` runs before every dispatched prompt: per-agent `budget.dailyCapUsd` and the global `settings.dailyCapUsd` compare against today's `usage_daily` totals (SDK cost estimates). A refusal turns the task into Needs input with the reason. SDK-side `maxTurns`/`maxBudgetUsd` still apply per session (`maxBudgetUsd` is cumulative for the session, verified: once exceeded every later turn returns `error_max_budget_usd` immediately). The concurrency cap counts busy agents; `idleTimeoutMinutes` stops processes that sat idle (default 15 min) while keeping `session_id`. The kill switch interrupts, ends input streams, aborts after a grace period, and refuses new work until reset.
+
 ## 8. Front-end structure
 
 - `src/game/` — Pixi scene: `iso.ts` (tile ↔ screen maths, 64×32), `pathfinding.ts` (A\*), `Avatar.ts`, `Furniture.ts`, `Room.ts`, `WorldController.ts` (subscribes to the store, applies behaviours, tweens with the Pixi ticker, depth-sorts by `x+y` then `y`), `bubbles.ts`, `emotes.ts`, `sound.ts` (WebAudio), `assets/manifest.ts` (+ placeholder renderer).

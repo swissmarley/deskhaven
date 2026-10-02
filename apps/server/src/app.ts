@@ -4,6 +4,7 @@ import {
   ClientMessageSchema,
   DEFAULT_MANAGER_MODEL,
   DEFAULT_MODEL,
+  DEFAULT_ROOM_ID,
   defaultRoom,
   type RolePreset,
   type Room,
@@ -11,6 +12,7 @@ import {
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
+import { createBudgetGuard } from './agent/budget.js';
 import { AgentManager } from './agent/manager.js';
 import { PermissionBroker } from './agent/permission-broker.js';
 import { AgentService } from './agents/service.js';
@@ -29,7 +31,9 @@ import { EventStore } from './events/store.js';
 import { registerRoutes } from './http/routes.js';
 import { registerSampleRoutes } from './http/sample.js';
 import { loggerOptions } from './logger.js';
+import { createManagerMcpServer } from './manager/tools.js';
 import { PresetService } from './presets/service.js';
+import { RoomService } from './rooms/service.js';
 import { SettingsService, SUBSCRIPTION_MODE_FEATURE_FLAG } from './settings/service.js';
 import { TaskService } from './tasks/service.js';
 import { UsageService } from './usage/service.js';
@@ -50,6 +54,7 @@ export interface AppContext {
   manager: AgentManager;
   usage: UsageService;
   room: () => Room;
+  rooms: RoomService;
   presets: () => RolePreset[];
   presetService: PresetService;
   worktrees: WorktreeService;
@@ -122,7 +127,6 @@ export async function buildApp(
     auth = next;
   };
 
-  const room = () => defaultRoom(0);
   const events = new EventStore(db, hub);
   PermissionBroker.reconcileOnBoot(db);
   const broker = new PermissionBroker({
@@ -132,7 +136,10 @@ export async function buildApp(
   });
   const presetService = new PresetService(db);
   const worktrees = new WorktreeService(config.dataDir);
-  const agents = new AgentService(db, hub, settings, room, (id) => presetService.get(id));
+  let agents: AgentService;
+  const roomService = new RoomService(db, hub, () => agents);
+  const room = () => roomService.get(DEFAULT_ROOM_ID) ?? defaultRoom();
+  agents = new AgentService(db, hub, settings, room, (id) => presetService.get(id));
   // Agents from a previous process are not running anymore.
   for (const a of agents.list())
     if (a.status !== 'stopped')
@@ -151,11 +158,18 @@ export async function buildApp(
     if (last) usage.observe(last);
   }
 
+  let tasks: TaskService;
   manager = new AgentManager({
     agents,
     hub,
     concurrencyCap: () => settings.get().concurrencyCap,
+    budgetCheck: createBudgetGuard(agents, () => settings.get()),
+    idleTimeoutMs: () => settings.get().idleTimeoutMinutes * 60_000,
     runtimeDeps: {
+      mcpServers: (agent) =>
+        presetService.get(agent.rolePresetId)?.manager
+          ? { agenthotel: createManagerMcpServer({ agents, tasks, selfId: agent.id }) }
+          : undefined,
       auth: () => auth,
       events,
       broker,
@@ -170,7 +184,7 @@ export async function buildApp(
     },
   });
 
-  const tasks = new TaskService(db, hub, { manager, agents, events, worktrees, log: app.log });
+  tasks = new TaskService(db, hub, { manager, agents, events, worktrees, log: app.log });
   events.onEvent((e) => tasks.onEvent(e));
   tasks.reconcileOnBoot();
 
@@ -188,6 +202,7 @@ export async function buildApp(
     manager,
     usage,
     room,
+    rooms: roomService,
     presets: () => presetService.list(),
     presetService,
     worktrees,
@@ -219,7 +234,7 @@ export async function buildApp(
           version: APP_VERSION,
           agents: agents.list(),
           tasks: tasks.list(),
-          rooms: [room()],
+          rooms: roomService.list(),
           settings: settings.get(),
           pendingPermissions: broker.listPending(),
           usage: usage.snapshot(),
@@ -239,7 +254,15 @@ export async function buildApp(
     });
   }
 
+  const idleSweep = setInterval(() => {
+    void manager.sweepIdle().then((n) => {
+      if (n) app.log.info({ stopped: n }, 'stopped idle agent processes');
+    });
+  }, 60_000);
+  idleSweep.unref();
+
   app.addHook('onClose', async () => {
+    clearInterval(idleSweep);
     await manager.shutdown();
   });
 

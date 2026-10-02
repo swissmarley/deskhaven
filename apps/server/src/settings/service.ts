@@ -25,6 +25,7 @@ export function defaultSettings(over: Partial<Settings> = {}): Settings {
     concurrencyCap: 2,
     dailyCapUsd: 20,
     permissionTimeoutMs: 10 * 60 * 1000,
+    idleTimeoutMinutes: 15,
     soundEnabled: true,
     policyCheckedAt: POLICY_CHECKED_AT,
     onboarded: false,

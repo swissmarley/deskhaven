@@ -288,6 +288,63 @@ describe('normalizeSdkMessage', () => {
     expect(results[1]).toMatchObject({ type: 'tool_failed', toolUseId: 't2', error: 'boom' });
   });
 
+  it('replaces SDK diagnostic strings with readable reasons', () => {
+    const usage = { input_tokens: 1, output_tokens: 1 };
+    const [bad] = norm(
+      msg({
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        duration_ms: 1,
+        duration_api_ms: 1,
+        num_turns: 0,
+        stop_reason: null,
+        total_cost_usd: 0,
+        usage,
+        modelUsage: {},
+        permission_denials: [],
+        errors: ['[ede_diagnostic] result_type=user stop_reason=null'],
+        terminal_reason: 'aborted_streaming',
+      }),
+    );
+    expect(bad).toMatchObject({ type: 'turn_completed', ok: false, errors: ['Turn interrupted'] });
+    const [maxed] = norm(
+      msg({
+        type: 'result',
+        subtype: 'error_max_budget_usd',
+        is_error: true,
+        duration_ms: 1,
+        duration_api_ms: 1,
+        num_turns: 1,
+        stop_reason: null,
+        total_cost_usd: 0.1,
+        usage,
+        modelUsage: {},
+        permission_denials: [],
+        errors: ['Reached maximum budget ($0.001)'],
+      }),
+    );
+    expect(maxed).toMatchObject({ errors: ['Reached maximum budget ($0.001)'] });
+    const [weird] = norm(
+      msg({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        duration_ms: 1,
+        duration_api_ms: 1,
+        num_turns: 1,
+        result: '[ede_diagnostic] result_type=user',
+        stop_reason: null,
+        total_cost_usd: 0,
+        usage,
+        modelUsage: {},
+        permission_denials: [],
+      }),
+    );
+    expect(weird).toMatchObject({ type: 'turn_completed', ok: true });
+    expect((weird as { result?: string }).result).toBeUndefined();
+  });
+
   it('never throws on unknown message types', () => {
     expect(norm(msg({ type: 'something_new', subtype: 'x' }))[0]).toMatchObject({
       type: 'unknown',

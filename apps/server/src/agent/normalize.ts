@@ -49,6 +49,31 @@ export function errorKindFromStatus(status: number | null | undefined): ErrorKin
   return 'other';
 }
 
+/** The CLI emits `[ede_diagnostic] …` strings for aborted turns; they are not for humans. */
+export function isSdkDiagnostic(text: string | undefined | null): boolean {
+  return typeof text === 'string' && /^\[\w*diagnostic\]/.test(text.trim());
+}
+
+/** Human-readable reasons for a failed turn, with diagnostics replaced by the subtype's meaning. */
+export function cleanTurnErrors(
+  subtype: string,
+  errors: string[] | undefined,
+  interrupted = false,
+): string[] {
+  const readable = (errors ?? []).filter((e) => e && !isSdkDiagnostic(e));
+  if (readable.length) return readable;
+  switch (subtype) {
+    case 'error_max_turns':
+      return ['Stopped: the maximum number of turns for this session was reached'];
+    case 'error_max_budget_usd':
+      return ['Stopped: the session budget (maxBudgetUsd) was reached'];
+    case 'error_during_execution':
+      return [interrupted ? 'Turn interrupted' : 'Turn ended with an error'];
+    default:
+      return [`Turn ended: ${subtype}`];
+  }
+}
+
 function stringifyOutput(value: unknown, max = 2000): string {
   if (typeof value === 'string') return truncate(value, max);
   try {
@@ -220,9 +245,25 @@ export function normalizeSdkMessage(m: SDKMessage, ctx: NormalizeContext): Agent
             message: truncate(m.result, 300),
           });
         }
-        out.push({ ...b(), type: 'turn_completed', ok: !m.is_error, result: m.result, ...common });
+        const result = isSdkDiagnostic(m.result) ? undefined : m.result;
+        out.push({
+          ...b(),
+          type: 'turn_completed',
+          ok: !m.is_error,
+          ...(result !== undefined ? { result } : {}),
+          ...(m.is_error ? { errors: cleanTurnErrors(m.subtype, [m.result]) } : {}),
+          ...common,
+        });
       } else {
-        out.push({ ...b(), type: 'turn_completed', ok: false, errors: m.errors, ...common });
+        const interrupted =
+          m.terminal_reason === 'aborted_streaming' || m.terminal_reason === 'aborted_tools';
+        out.push({
+          ...b(),
+          type: 'turn_completed',
+          ok: false,
+          errors: cleanTurnErrors(m.subtype, m.errors, interrupted),
+          ...common,
+        });
       }
       return out;
     }

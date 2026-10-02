@@ -124,7 +124,27 @@ export class TaskService {
       type: 'task_assigned',
       title: task.title,
     });
-    this.deps.manager.sendPrompt(agentId, buildTaskPrompt(assigned), taskId);
+    try {
+      this.deps.manager.sendPrompt(agentId, buildTaskPrompt(assigned), taskId);
+    } catch (err) {
+      // Budget cap or kill switch: keep the assignment but ask a human.
+      const message = err instanceof Error ? err.message : String(err);
+      this.write({
+        ...this.mustGet(taskId),
+        status: 'needs_input',
+        resultSummary: message,
+        updatedAt: Date.now(),
+      });
+      this.deps.events.append({
+        id: newId(),
+        ts: Date.now(),
+        agentId,
+        taskId,
+        type: 'notification',
+        kind: 'budget',
+        message,
+      });
+    }
     return this.mustGet(taskId);
   }
 

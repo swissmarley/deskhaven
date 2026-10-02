@@ -77,6 +77,7 @@ export class AgentRuntime {
   private stopping = false;
   private inTurn = false;
   private lastError: string | null = null;
+  private lastActivityAt = Date.now();
 
   constructor(
     private agent: Agent,
@@ -101,6 +102,10 @@ export class AgentRuntime {
   }
   queuedCount(): number {
     return this.queue.length;
+  }
+  /** Milliseconds since the last message, prompt or status change. */
+  idleFor(): number {
+    return Date.now() - this.lastActivityAt;
   }
 
   /** Config changes apply to the next session start. */
@@ -129,6 +134,8 @@ export class AgentRuntime {
       permissionMode: this.agent.permissionMode,
       env: auth.childEnv(this.deps.baseEnv()),
       additionalDirectories: [],
+      // Only AgentHotel's own MCP servers: the user's global connectors must not leak into agents.
+      strictMcpConfig: true,
       ...(this.sessionId ? { resume: this.sessionId } : {}),
       ...(this.agent.budget.maxTurns ? { maxTurns: this.agent.budget.maxTurns } : {}),
       ...(this.agent.budget.maxBudgetUsd ? { maxBudgetUsd: this.agent.budget.maxBudgetUsd } : {}),
@@ -273,6 +280,7 @@ export class AgentRuntime {
   private dispatchNext(): void {
     const next = this.queue.shift();
     if (!next || !this.session) return;
+    this.lastActivityAt = Date.now();
     this.currentTaskId = next.taskId;
     this.inTurn = true;
     this.setStatus('working');
@@ -300,6 +308,7 @@ export class AgentRuntime {
   }
 
   private handleMessage(m: SDKMessage): void {
+    this.lastActivityAt = Date.now();
     recordSdkMessage(m);
     for (const ev of normalizeSdkMessage(m, this.ctx())) this.process(ev);
     if (m.type === 'result') this.onTurnEnd();

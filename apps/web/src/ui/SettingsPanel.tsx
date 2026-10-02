@@ -172,6 +172,17 @@ export function SettingsPanel(): JSX.Element {
             onChange={(e) => void update({ permissionTimeoutMs: Number(e.target.value) * 60000 })}
           />
         </label>
+        <label>
+          Stop idle agent processes after (minutes, 0 = never; sessions stay resumable)
+          <input
+            type="number"
+            min={0}
+            max={1440}
+            value={settings.idleTimeoutMinutes}
+            disabled={busy}
+            onChange={(e) => void update({ idleTimeoutMinutes: Number(e.target.value) })}
+          />
+        </label>
         <label className="inline">
           <input
             type="checkbox"

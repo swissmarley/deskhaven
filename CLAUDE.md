@@ -50,6 +50,8 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` in subscription mode.
 - Omitting `permissionMode` yields the CLI's default ("auto" where available), not "ask". Always pass it.
 - `bypassPermissions` needs `allowDangerouslySkipPermissions`; we never set either.
+- `strictMcpConfig: true` is always passed: without it the user's global MCP servers (from `~/.claude.json`)
+  load into every agent, which a live run showed (a subagent listed the user's connectors).
 - `settingSources` must include `'project'` to load the target repo's `CLAUDE.md`; we default to
   `['project']` so the user's global settings cannot change agent behaviour.
 - The SDK spawns its own bundled `claude` binary (platform package), not the one on PATH. Subscription

@@ -14,6 +14,9 @@ export interface ManagerDeps {
     onApiKeySource: RuntimeDeps['onApiKeySource'];
   };
   concurrencyCap: () => number;
+  /** Returns a reason string when the agent must not spend more today, or null. */
+  budgetCheck?: (agentId: string) => string | null;
+  idleTimeoutMs?: () => number;
 }
 
 /**
@@ -122,6 +125,8 @@ export class AgentManager {
   sendPrompt(agentId: string, text: string, taskId: string | null): void {
     if (this.killSwitch) throw new Error('Kill switch is active');
     const agent = this.mustGet(agentId);
+    const over = this.deps.budgetCheck?.(agentId);
+    if (over) throw new Error(over);
     const rt = this.ensure(agent);
     const busy = rt.getStatus() === 'working' || rt.getStatus() === 'needs_input';
     if (rt.getStatus() === 'paused' || busy) {
@@ -175,6 +180,25 @@ export class AgentManager {
   resetKillSwitch(): void {
     this.killSwitch = false;
     this.deps.hub.broadcast({ type: 'kill_switch', active: false });
+  }
+
+  /** Stop processes that have been idle longer than the configured timeout (sessions stay resumable). */
+  async sweepIdle(): Promise<number> {
+    const limit = this.deps.idleTimeoutMs?.() ?? 0;
+    if (limit <= 0) return 0;
+    let n = 0;
+    for (const rt of this.runtimes.values()) {
+      if (
+        rt.isRunning() &&
+        rt.getStatus() === 'idle' &&
+        rt.queuedCount() === 0 &&
+        rt.idleFor() > limit
+      ) {
+        await rt.stop();
+        n++;
+      }
+    }
+    return n;
   }
 
   async shutdown(): Promise<void> {

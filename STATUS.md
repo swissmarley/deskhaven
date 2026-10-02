@@ -31,3 +31,15 @@ One 3-line note per milestone, newest first.
 1. Kanban drawer (Backlog → Done) with dnd-kit: cards drag between columns or onto an avatar in the room to assign; task detail modal with prompt, result, files changed, cost, reassign, nudge/reply, delete. Server `TaskService` moves tasks from agent events (working → in progress, permission → needs input, turn done → review) and captures result summary, cost and `git diff --numstat` files; tasks interrupted by a restart are re-dispatched (queued) or flagged (mid-turn).
 2. Verified end to end in subscription mode: Ada fixed `mean()` (Edit diff recorded, `npm test` approved in the modal, 3/3 tests pass in the repo), Bob reviewed, Cy ran the tests with a second approval; all three landed in Review with summaries; a card was dragged to Done. 113 tests green (2 canvas-only tests skip under Node).
 3. Next: M5 room editor + saved layouts.
+
+## M5 — room editor, interaction points, saved layouts (2026-10-02)
+
+1. Pure room-editing operations in shared (`placeFurniture`, `moveFurniture`, `rotateFurniture`, `removeFurniture`, `paintFloor`, `paintWall`, `validateRoom`, `resizeRoom`; 6 tests) drive a Room tab in the UI: click to place or paint, drag furniture to move, R rotates, Delete removes, ghost preview turns red when a placement would block another piece's access tile; layouts are validated and saved to SQLite (`RoomService`, PUT/reset/export/import), and desks that disappear clear the owning agent's desk. Game subagent added editor mode, drag/paint events, ghost rendering, furniture highlight, five floor and three wall styles, and `setRoom` re-settling (11 tests).
+2. Verified in the browser: a plant placed on the rug, an invalid bookshelf move rejected with the reason, a valid move saved on the server, and Bob's next Read walked him to the bookshelf's new spot by the west wall.
+3. Next: M6 manager, interns, budgets, kill switch (mostly landed with this batch).
+
+## M6 — manager delegation, interns, budgets, kill switch, concurrency cap (2026-10-02)
+
+1. Manager preset gets an in-process MCP server (`list_agents`, `create_task`, `assign_task`, `task_status`; flat delegation enforced, 3 tests); interns appear from `SubagentStart/Stop` hooks; per-agent and global daily caps (`BudgetGuard`, 3 tests) turn an assignment into Needs input with the reason; idle processes stop after a configurable timeout (sessions resumable); `strictMcpConfig` keeps the user's global MCP connectors out of agents.
+2. Verified live: Max (Manager on Sonnet) called `list_agents` and `create_task` twice, Ada implemented `median()` with tests (9/9 pass) and Cy re-ran the suite; a $0.01 cap refused an assignment with a readable message; Ada's Explore subagent produced intern enter/leave events; the kill switch stopped a running turn in 0.8 s, refused new prompts, and left no Claude processes. 137 tests green.
+3. Next: M7 polish — sounds, emotes, replay, onboarding, README GIF.

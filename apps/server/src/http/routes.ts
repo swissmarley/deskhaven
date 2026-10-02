@@ -240,7 +240,31 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     return ok ? { ok: true } : reply.code(404).send({ error: 'not_pending' });
   });
 
-  app.get('/api/rooms', async () => [ctx.room()]);
+  app.get('/api/rooms', async () => ctx.rooms.list());
+  app.get('/api/rooms/:id', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    if (!p) return;
+    return ctx.rooms.get(p.id) ?? reply.code(404).send({ error: 'not_found' });
+  });
+  app.put('/api/rooms/:id', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    if (!p) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      return ctx.rooms.save({ ...body, id: p.id });
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+  app.post('/api/rooms/:id/reset', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    if (!p) return;
+    try {
+      return ctx.rooms.reset(p.id);
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
   app.get('/api/usage', async () => ctx.usage.snapshot());
   app.get('/api/presets', async () => ctx.presets());
   app.put('/api/presets/:id', async (req, reply) => {
