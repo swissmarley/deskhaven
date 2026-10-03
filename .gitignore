@@ -11,3 +11,7 @@ coverage/
 *.db-shm
 .deskhaven/
 /tmp/
+*.tsbuildinfo
+.vite/
+.claude/settings.local.json
+.claude/worktrees/

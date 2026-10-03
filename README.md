@@ -11,10 +11,15 @@ your permission. Results, diffs and costs land back on the board.
 Built on `@anthropic-ai/claude-agent-sdk`: each employee is one SDK session in its own working directory
 or git worktree. Local-first, no cloud services besides the Anthropic API your agents talk to.
 
+**New here? Read the [setup and usage guide](docs/GUIDE.md)**: requirements, authentication, a five-minute
+first task, every panel of the UI, configuration, troubleshooting.
+
 ## Quick start
 
 ```bash
-pnpm i          # Node >= 22 and pnpm 10 (corepack enable); downloads the SDK's native claude binary (~230 MB)
+git clone <repository URL> deskhaven && cd deskhaven
+corepack enable # once, if `pnpm --version` is not 10.x
+pnpm i          # Node >= 22 and pnpm 10; downloads the SDK's native claude binary (~230 MB)
 pnpm dev        # server on http://127.0.0.1:8787, web UI on http://127.0.0.1:5173
 ```
 
@@ -51,7 +56,7 @@ Caveats worth knowing:
 
 ## What you can do
 
-- **HR desk** — create agents with a name, pixel avatar (skin, hair, outfit, accessory), role preset,
+- **HR desk** — create agents with a name, avatar (skin, hair, outfit, accessory), role preset,
   model, permission mode, working directory (or a dedicated git worktree), system prompt, tool lists and
   budgets. Lifecycle: start, pause, resume, stop, fire. Sessions persist: an agent resumes with its prior
   context after a server restart.
@@ -72,7 +77,8 @@ Caveats worth knowing:
 - **Room editor** — place, move, rotate and remove furniture, paint floors and walls; layouts are saved
   to SQLite and behaviours use the live layout (move the bookshelf and the next Read walks there).
 - **Inspector and feed** — click an avatar for its live transcript, tool calls, diffs, task and cost; the
-  global feed is a chat log of everything that happens. Replay is in M7.
+  global feed is a chat log of everything that happens. The **Replay** tab plays any time range of the logged events back through the same code path at
+  1×–64×, so you can test visual changes without running agents.
 
 ## Architecture in one paragraph
 
@@ -128,5 +134,6 @@ the Anthropic API calls your agents make. Logs redact key-like values.
 
 ## License
 
-MIT for this repository's code and generated art. The Claude Agent SDK and the bundled `claude` binary
+[MIT](LICENSE) for this repository's code and generated art; third-party models are CC0 (see
+[ASSETS.md](ASSETS.md)). Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). The Claude Agent SDK and the bundled `claude` binary
 are governed by Anthropic's terms.

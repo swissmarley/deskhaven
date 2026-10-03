@@ -6,13 +6,13 @@ verified (milestones M0–M7, see below). The next job is a **graphics overhaul:
 pixel look with 3D, high-polish characters and furniture**, without breaking anything that works.
 
 ## Where things are
-- Repo: `/Users/nakya/Documents/ClaudeProjects/Deskhaven` (git, branch `main`, one commit per milestone).
+- Repo: the repository root (git, branch `main`, one commit per milestone).
   Run with `pnpm i && pnpm dev` → server `127.0.0.1:8787`, web `127.0.0.1:5173`. Gates:
   `pnpm typecheck && pnpm lint && pnpm test && pnpm build` (151 tests green at hand-off).
 - Read first, in this order: `CLAUDE.md` (commands, conventions, gotchas), `STATUS.md` (what each
   milestone delivered and how it was verified), `ARCHITECTURE.md` §3–§4 and §8 (verified SDK facts,
   event → behaviour mapping, front-end structure), `apps/web/src/game/types.ts` (the `World` contract),
-  `ASSETS.md`, `BRIEF.md` (the original brief; its working rules still apply).
+  `ASSETS.md`, `docs/history/BRIEF.md` (the original brief; its working rules still apply).
 - Monorepo: `packages/shared` (zod schemas, pure `mapEventToBehavior`, furniture catalog, room editing),
   `apps/server` (Fastify, SQLite, the only package touching the SDK), `apps/web` (React + Zustand UI,
   PixiJS 8 renderer in `apps/web/src/game`).
