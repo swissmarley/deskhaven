@@ -1,27 +1,15 @@
-import { truncate } from '@agenthotel/shared';
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
+import {
+  bubbleFont,
+  bubblePop,
+  bubbleText,
+  BUBBLE_MAX_WIDTH as MAX_WIDTH,
+  BUBBLE_PAD_X as PAD_X,
+  BUBBLE_PAD_Y as PAD_Y,
+  BUBBLE_TAIL as TAIL,
+  BUBBLE_THEMES as THEMES,
+} from '../bubble-text.js';
 import type { BubbleKind } from '../types.js';
-
-const MAX_WIDTH = 180;
-const PAD_X = 8;
-const PAD_Y = 5;
-const TAIL = 7;
-const POP_MS = 120;
-
-interface BubbleTheme {
-  bg: number;
-  fg: number;
-  border: number;
-  mono: boolean;
-  bold: boolean;
-}
-
-const THEMES: Record<BubbleKind, BubbleTheme> = {
-  speech: { bg: 0xffffff, fg: 0x1f2328, border: 0x8a8f98, mono: false, bold: false },
-  thought: { bg: 0xeef1f5, fg: 0x5b6470, border: 0xb3bac4, mono: false, bold: false },
-  alert: { bg: 0xd62828, fg: 0xffffff, border: 0x7a0f0f, mono: false, bold: true },
-  code: { bg: 0x1b1f24, fg: 0xa6e3a1, border: 0x3b4048, mono: true, bold: false },
-};
 
 /**
  * A speech/thought/alert/code bubble anchored at its bottom-centre (the tail tip). The owner
@@ -47,19 +35,20 @@ export class Bubble extends Container {
 
   show(rawText: string, kind: BubbleKind = 'speech', durationMs = 4000): void {
     const theme = THEMES[kind];
+    const font = bubbleFont(kind);
     this.text.style = new TextStyle({
       fontFamily: theme.mono
         ? 'ui-monospace, Menlo, Consolas, monospace'
         : 'system-ui, -apple-system, Segoe UI, sans-serif',
-      fontSize: theme.mono ? 10 : 11,
+      fontSize: font.size,
       fontWeight: theme.bold ? 'bold' : 'normal',
       fill: theme.fg,
       wordWrap: true,
       wordWrapWidth: MAX_WIDTH - PAD_X * 2,
       breakWords: true,
-      lineHeight: theme.mono ? 13 : 14,
+      lineHeight: font.lineHeight,
     });
-    this.text.text = truncate(rawText, kind === 'alert' ? 40 : 80) || ' ';
+    this.text.text = bubbleText(rawText, kind);
     const w = Math.min(MAX_WIDTH, Math.ceil(this.text.width) + PAD_X * 2);
     const h = Math.ceil(this.text.height) + PAD_Y * 2;
     // Box sits above the tail; local origin = tail tip.
@@ -103,9 +92,8 @@ export class Bubble extends Container {
       this.hide();
       return;
     }
-    const pop = Math.min(1, this.age / POP_MS);
-    const s = 0.6 + 0.4 * (1 - (1 - pop) * (1 - pop));
-    this.scale.set(s);
-    this.alpha = Math.min(1, this.remaining / 250);
+    const { scale, alpha } = bubblePop(this.age, this.remaining);
+    this.scale.set(scale);
+    this.alpha = alpha;
   }
 }

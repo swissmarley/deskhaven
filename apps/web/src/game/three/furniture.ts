@@ -1,9 +1,16 @@
-import { type Furniture, type FurnitureKind, type Room, rotatedSize } from '@agenthotel/shared';
+import {
+  type Furniture,
+  type FurnitureKind,
+  interactionTiles,
+  type Room,
+  rotatedSize,
+} from '@agenthotel/shared';
 import {
   Box3,
   Group,
   type Material,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   type Object3D,
   type Raycaster,
@@ -11,7 +18,9 @@ import {
 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { GHOST_ALPHA, ghostTint } from '../editor.js';
+import { tileKey } from '../grid.js';
 import type { Ghost, TilePoint } from '../types.js';
+import { screenFlicker } from './emote-math.js';
 import {
   BOOKCASE_SHELVES,
   BOOKCASE_SLOTS,
@@ -52,6 +61,13 @@ export const HIGHLIGHT_MIN = 0.15;
 export const HIGHLIGHT_MAX = 0.45;
 export const HIGHLIGHT_HZ = 1.2;
 export const DRAG_OPACITY = 0.5;
+/** Monitor glow while someone types at the desk: emissive on the screen panel, Pixi's `0x9fd8ff`. */
+export const SCREEN_GLOW_COLOR = 0x9fd8ff;
+export const SCREEN_GLOW_BASE_COLOR = 0xdff4ff;
+export const SCREEN_GLOW_INTENSITY = 1.6;
+/** Model whose `metal` material is the screen panel (see `models.ts` SCREEN). */
+const SCREEN_MODEL = 'computerScreen';
+const SCREEN_PANEL_MATERIAL = 'metal';
 
 // ---- model cache ----------------------------------------------------------------------------------
 
@@ -164,6 +180,7 @@ async function buildModelPart(
     return { object: built.group, top: built.top };
   }
   const clone = model.group.clone();
+  if (part.model === SCREEN_MODEL) clone.userData = { ...clone.userData, screen: true };
   const s = partScale(part, model.size, w, h);
   clone.scale.set(s.x, s.y, s.z);
   clone.rotation.y = part.yawOffset ?? 0;
@@ -277,8 +294,11 @@ interface PieceNode {
   gen: number;
   /** Original materials of meshes whose materials were cloned for an effect. */
   overrides: Map<Mesh, Material | Material[]> | null;
+  /** Cloned screen-panel materials while any effect is on (driven by the glow flicker). */
+  panels: MeshStandardMaterial[];
   highlighted: boolean;
   dimmed: boolean;
+  glowing: boolean;
 }
 
 interface GhostNode {
@@ -286,8 +306,22 @@ interface GhostNode {
   rotation: number;
   group: Group;
   res: Resources;
-  material: MeshStandardMaterial;
+  /** Unlit so `GHOST_VALID` / `GHOST_INVALID` show as drawn (lit, the green read as dark olive). */
+  material: MeshBasicMaterial;
   gen: number;
+}
+
+/** Whether a mesh is a computer screen panel (inside a screen model, with the panel material). */
+function isScreenPanel(mesh: Mesh): boolean {
+  const m = mesh.material;
+  const name = Array.isArray(m) ? m[0]?.name : m.name;
+  if (name !== SCREEN_PANEL_MATERIAL) return false;
+  let node: Object3D | null = mesh;
+  while (node) {
+    if (node.userData.screen === true) return true;
+    node = node.parent;
+  }
+  return false;
 }
 
 /** Furniture pieces of one room plus the editor ghost, under one parent. */
@@ -298,6 +332,10 @@ export class FurnitureLayer {
   private gen = 0;
   private highlightedId: string | null = null;
   private clock = 0;
+  /** Interaction tile → id of a piece with a screen (desks, library PCs), for the monitor glow. */
+  private screenSeats = new Map<string, string>();
+  private readonly glowIds = new Set<string>();
+  private lastGlowTiles: Iterable<string> = [];
 
   constructor(private readonly parent: Object3D) {
     this.group.name = 'furniture';
@@ -325,6 +363,43 @@ export class FurnitureLayer {
       if (seen.has(id)) continue;
       this.removeNode(node);
       this.nodes.delete(id);
+    }
+    this.screenSeats = new Map();
+    for (const piece of room.furniture) {
+      if (!hasScreen(piece.kind)) continue;
+      for (const t of interactionTiles(piece.kind, piece.x, piece.y, piece.rotation))
+        this.screenSeats.set(tileKey(t.x, t.y), piece.id);
+    }
+    this.setGlowTiles(this.lastGlowTiles);
+  }
+
+  /**
+   * Monitor glow: the screens of the pieces whose interaction tile is in `tiles` (tile keys of the
+   * avatars currently typing) flicker; every other screen is dark. Idempotent per frame.
+   */
+  setGlowTiles(tiles: Iterable<string>): void {
+    this.lastGlowTiles = tiles;
+    const want = new Set<string>();
+    for (const key of tiles) {
+      const id = this.screenSeats.get(key);
+      if (id) want.add(id);
+    }
+    for (const id of this.glowIds) {
+      if (want.has(id)) continue;
+      this.glowIds.delete(id);
+      const node = this.nodes.get(id);
+      if (node) {
+        node.glowing = false;
+        this.applyEffects(node);
+      }
+    }
+    for (const id of want) {
+      if (this.glowIds.has(id)) continue;
+      const node = this.nodes.get(id);
+      if (!node) continue;
+      this.glowIds.add(id);
+      node.glowing = true;
+      this.applyEffects(node);
     }
   }
 
@@ -389,13 +464,22 @@ export class FurnitureLayer {
   update(dtMs: number): void {
     this.clock += dtMs / 1000;
     const node = this.highlightedId ? this.nodes.get(this.highlightedId) : undefined;
-    if (!node?.overrides) return;
-    const t = (Math.sin(this.clock * HIGHLIGHT_HZ * 2 * Math.PI) + 1) / 2;
-    const intensity = HIGHLIGHT_MIN + (HIGHLIGHT_MAX - HIGHLIGHT_MIN) * t;
-    for (const mesh of node.overrides.keys())
-      forEachMaterial(mesh.material, (m) => {
-        if (m instanceof MeshStandardMaterial) m.emissiveIntensity = intensity;
-      });
+    if (node?.overrides) {
+      const t = (Math.sin(this.clock * HIGHLIGHT_HZ * 2 * Math.PI) + 1) / 2;
+      const intensity = HIGHLIGHT_MIN + (HIGHLIGHT_MAX - HIGHLIGHT_MIN) * t;
+      for (const mesh of node.overrides.keys())
+        forEachMaterial(mesh.material, (m) => {
+          if (m instanceof MeshStandardMaterial) m.emissiveIntensity = intensity;
+        });
+    }
+    if (this.glowIds.size > 0) {
+      const flicker = SCREEN_GLOW_INTENSITY * screenFlicker(this.clock);
+      for (const id of this.glowIds) {
+        const glow = this.nodes.get(id);
+        if (!glow) continue;
+        for (const m of glow.panels) m.emissiveIntensity = flicker;
+      }
+    }
   }
 
   dispose(): void {
@@ -417,8 +501,10 @@ export class FurnitureLayer {
       res: new Resources(),
       gen: ++this.gen,
       overrides: null,
+      panels: [],
       highlighted: piece.id === this.highlightedId,
       dimmed: false,
+      glowing: this.glowIds.has(piece.id),
     };
     group.rotation.y = placement(piece.kind, piece.x, piece.y, piece.rotation).yaw;
     this.moveTo(node, piece.x, piece.y);
@@ -451,12 +537,13 @@ export class FurnitureLayer {
   }
 
   /**
-   * Highlight (emissive pulse) and dim (drag preview) share one mechanism: the piece's meshes get
-   * cloned materials while any effect is on (the cached model materials are shared between clones
-   * and must never be tinted) and the originals back when both are off.
+   * Highlight (emissive pulse), dim (drag preview) and the monitor glow share one mechanism: the
+   * piece's meshes get cloned materials while any effect is on (the cached model materials are
+   * shared between clones and must never be tinted) and the originals back when all are off. Also
+   * called as parts drop in, so a late-loading screen joins an active glow.
    */
   private applyEffects(node: PieceNode): void {
-    if (!node.highlighted && !node.dimmed) {
+    if (!node.highlighted && !node.dimmed && !node.glowing) {
       this.restoreMaterials(node);
       return;
     }
@@ -467,19 +554,30 @@ export class FurnitureLayer {
       overrides.set(o, o.material);
       o.material = mapMaterial(o.material, (m) => m.clone());
     });
-    for (const mesh of overrides.keys())
+    node.panels = [];
+    for (const mesh of overrides.keys()) {
+      const panel = node.glowing && isScreenPanel(mesh);
       forEachMaterial(mesh.material, (m) => {
         m.transparent = node.dimmed;
         m.opacity = node.dimmed ? DRAG_OPACITY : 1;
         if (m instanceof MeshStandardMaterial) {
-          m.emissive.setHex(node.highlighted ? HIGHLIGHT_COLOR : 0x000000);
-          m.emissiveIntensity = node.highlighted ? HIGHLIGHT_MIN : 0;
+          if (panel) {
+            m.color.setHex(SCREEN_GLOW_BASE_COLOR);
+            m.emissive.setHex(SCREEN_GLOW_COLOR);
+            m.emissiveIntensity = SCREEN_GLOW_INTENSITY * 0.5;
+            node.panels.push(m);
+          } else {
+            m.emissive.setHex(node.highlighted ? HIGHLIGHT_COLOR : 0x000000);
+            m.emissiveIntensity = node.highlighted ? HIGHLIGHT_MIN : 0;
+          }
         }
         m.needsUpdate = true;
       });
+    }
   }
 
   private restoreMaterials(node: PieceNode): void {
+    node.panels = [];
     const overrides = node.overrides;
     if (!overrides) return;
     for (const [mesh, original] of overrides) {
@@ -498,12 +596,12 @@ export class FurnitureLayer {
     group.rotation.y = placement(ghost.kind, ghost.x, ghost.y, ghost.rotation).yaw;
     const res = new Resources();
     const material = res.material(
-      new MeshStandardMaterial({
+      new MeshBasicMaterial({
         color: ghostTint(ghost.valid),
         transparent: true,
         opacity: GHOST_ALPHA,
         depthWrite: false,
-        roughness: 0.8,
+        toneMapped: false,
       }),
     );
     const node: GhostNode = {
@@ -545,6 +643,13 @@ export class FurnitureLayer {
     this.group.remove(g.group);
     g.res.dispose();
   }
+}
+
+/** Kinds whose manifest includes a computer screen (their seats light the monitor when typed at). */
+function hasScreen(kind: FurnitureKind): boolean {
+  const spec = MODEL_MANIFEST[kind];
+  const parts = [...spec.parts, ...(spec.variants ?? []).flat()];
+  return parts.some((p) => p.kind === 'gltf' && p.model === SCREEN_MODEL);
 }
 
 /** Walk up from a hit mesh to the piece group carrying the furniture id. */

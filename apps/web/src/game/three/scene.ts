@@ -18,14 +18,26 @@ import type { BubbleKind, Ghost, TilePoint } from '../types.js';
 import { AvatarMeshes } from './avatars.js';
 import { IsoCamera } from './camera.js';
 import { FurnitureLayer } from './furniture.js';
-import { createLights, type Lights } from './lights.js';
+import { createLights, type Lights, SHADOWS_ENABLED } from './lights.js';
 import { canvasToNdc } from './math.js';
+import { WorldOverlay } from './overlay.js';
+import { DEGRADE_FPS, DEGRADE_HOLD_MS, DegradeMonitor, FpsMeter } from './perf.js';
 import { RoomMeshes } from './room.js';
+import { StatsOverlay, statsRequested } from './stats.js';
 import { disposeTextures } from './textures.js';
 
 /** Same background as the Pixi scene. */
 const BACKGROUND = 0x1d2229;
-const MAX_PIXEL_RATIO = 2;
+
+/**
+ * Degrade switches (ARCHITECTURE §11.6). The defaults are the full-quality path; after the rolling
+ * fps has stayed under `DEGRADE_FPS` for `DEGRADE_HOLD_MS` the scene drops to the degraded values
+ * once (one `console.info`) and never re-upgrades in the session. `SHADOWS_ENABLED` and
+ * `SHADOW_MAP_SIZE` live in `lights.ts`.
+ */
+export const MAX_PIXEL_RATIO = 2;
+export const DEGRADED_PIXEL_RATIO = 1.5;
+
 /** Hover and highlight quads sit above the grid (`GRID_Y`) and the lifted rug so they stay visible. */
 const HOVER_Y = 0.025;
 const HIGHLIGHT_Y = 0.027;
@@ -39,8 +51,9 @@ export function createThreeScene(): Scene {
 
 /**
  * Three.js backend behind the `Scene` port: room (floor, walls, grid), glTF furniture with the
- * editor affordances (ghost, highlight pulse, drag preview), capsule avatars (rigged characters
- * arrive in G2) and raycast picking. Bubbles and name labels are G3 and stay no-ops here.
+ * editor affordances (ghost, highlight pulse, drag preview, monitor glow), rigged characters with
+ * in-scene emotes, raycast picking, a DOM overlay for name labels and bubbles (`overlay.ts`), and
+ * the optional stats overlay with the automatic one-step degrade.
  */
 export class ThreeScene implements Scene {
   private renderer: WebGLRenderer | null = null;
@@ -49,6 +62,13 @@ export class ThreeScene implements Scene {
   private furniture: FurnitureLayer | null = null;
   private avatars: AvatarMeshes | null = null;
   private lights: Lights | null = null;
+  private overlay: WorldOverlay | null = null;
+  private stats: StatsOverlay | null = null;
+  private readonly fps = new FpsMeter();
+  private readonly degradeMonitor = new DegradeMonitor();
+  private degraded = false;
+  private avatarCount = 0;
+  private readonly typingTiles = new Set<string>();
   private readonly iso = new IsoCamera();
   readonly cameraView: CameraView = this.iso;
   private host: SceneHost | null = null;
@@ -73,7 +93,7 @@ export class ThreeScene implements Scene {
   mount(container: HTMLElement, host: SceneHost): Promise<void> {
     const renderer = new WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
-    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.enabled = SHADOWS_ENABLED;
     renderer.shadowMap.type = PCFShadowMap;
     renderer.toneMapping = ACESFilmicToneMapping;
     renderer.outputColorSpace = SRGBColorSpace;
@@ -82,6 +102,8 @@ export class ThreeScene implements Scene {
     this.renderer = renderer;
     this.container = container;
     this.host = host;
+    this.overlay = new WorldOverlay(container);
+    if (statsRequested()) this.stats = new StatsOverlay(container);
 
     const graph = new ThreeSceneGraph();
     this.graph = graph;
@@ -123,6 +145,10 @@ export class ThreeScene implements Scene {
     this.roomMeshes = null;
     this.lights?.dispose();
     this.lights = null;
+    this.overlay?.destroy();
+    this.overlay = null;
+    this.stats?.destroy();
+    this.stats = null;
     for (const quad of [this.hoverQuad, this.highlightQuad]) {
       if (!quad) continue;
       quad.removeFromParent();
@@ -202,18 +228,23 @@ export class ThreeScene implements Scene {
 
   addAvatar(init: SceneAvatarInit): void {
     this.avatars?.add(init);
+    this.overlay?.add(init.id, init.name, init.isIntern);
+    this.avatarCount = this.overlay?.size ?? 0;
   }
 
   removeAvatar(id: string): void {
     this.avatars?.remove(id);
+    this.overlay?.remove(id);
+    this.avatarCount = this.overlay?.size ?? 0;
   }
 
-  setAvatarName(_id: string, _name: string): void {
-    // G3: DOM name labels.
+  setAvatarName(id: string, name: string): void {
+    this.overlay?.setName(id, name);
   }
 
   setAvatarAppearance(id: string, avatar: Avatar, isIntern: boolean): void {
     this.avatars?.setAppearance(id, avatar, isIntern);
+    this.overlay?.setIntern(id, isIntern);
   }
 
   setAvatarPose(id: string, pose: Pose): void {
@@ -244,17 +275,31 @@ export class ThreeScene implements Scene {
     return this.avatars?.isFinished(id) ?? false;
   }
 
-  showBubble(_id: string, _text: string, _kind: BubbleKind, _durationMs: number): void {
-    // G3: DOM overlay bubbles.
+  showBubble(id: string, text: string, kind: BubbleKind, durationMs: number): void {
+    this.overlay?.showBubble(id, text, kind, durationMs);
   }
 
-  hideBubble(_id: string): void {}
+  hideBubble(id: string): void {
+    this.overlay?.hideBubble(id);
+  }
 
   // ---- frame --------------------------------------------------------------------------------------
 
   update(dtMs: number): void {
-    this.avatars?.update(dtMs);
-    this.furniture?.update(dtMs);
+    const avatars = this.avatars;
+    const furniture = this.furniture;
+    const overlay = this.overlay;
+    if (avatars) {
+      avatars.update(dtMs, this.iso.camera.quaternion);
+      furniture?.setGlowTiles(avatars.typingTiles(this.typingTiles));
+      if (overlay) {
+        avatars.headAnchors((id, point) => {
+          overlay.setAnchor(id, this.iso.project(point));
+        });
+      }
+    }
+    furniture?.update(dtMs);
+    overlay?.update(dtMs);
     this.updateCursor();
   }
 
@@ -274,13 +319,51 @@ export class ThreeScene implements Scene {
     const renderer = this.renderer;
     const graph = this.graph;
     if (!renderer || !graph) return;
-    // No `document.hidden` gate: the desktop browser pane reports hidden while on screen, and
-    // browsers already throttle the animation loop for hidden tabs (the core clamps dt).
+    // Pause only while the canvas is out of the document. No `document.hidden` gate: the desktop
+    // browser pane reports hidden while on screen, and browsers already throttle the animation
+    // loop for hidden tabs (the core clamps dt).
+    if (!renderer.domElement.isConnected) {
+      this.lastTime = null;
+      return;
+    }
     const dt = this.lastTime === null ? 0 : time - this.lastTime;
     this.lastTime = time;
     this.host?.onFrame(dt);
     renderer.render(graph, this.iso.camera);
+    this.afterRender(renderer, dt);
   };
+
+  /** Rolling fps, the stats overlay and the one-shot degrade (read `renderer.info` of this frame). */
+  private afterRender(renderer: WebGLRenderer, dtMs: number): void {
+    if (dtMs <= 0) return;
+    this.fps.push(dtMs);
+    if (!this.degraded && this.degradeMonitor.sample(this.fps.fps, dtMs, this.fps.warm))
+      this.degrade();
+    if (this.stats) {
+      const info = renderer.info.render;
+      this.stats.update(dtMs, {
+        fps: this.fps.fps,
+        calls: info.calls,
+        triangles: info.triangles,
+        avatars: this.avatarCount,
+        degraded: this.degraded,
+      });
+    }
+  }
+
+  /** One step down: smaller shadow map, lower pixel ratio. Never reversed in the session. */
+  private degrade(): void {
+    const renderer = this.renderer;
+    if (!renderer || this.degraded) return;
+    this.degraded = true;
+    this.lights?.degrade();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, DEGRADED_PIXEL_RATIO));
+    renderer.setSize(this.width, this.height);
+    console.info(
+      `[three] fps under ${DEGRADE_FPS} for ${DEGRADE_HOLD_MS / 1000} s: ` +
+        `shadow map 1024², pixel ratio ≤ ${DEGRADED_PIXEL_RATIO} for the rest of the session`,
+    );
+  }
 
   /** Paint one frame now so the first paint (and a resize) never waits for the loop. */
   private renderNow(): void {
@@ -295,6 +378,7 @@ export class ThreeScene implements Scene {
     this.height = Math.max(1, container.clientHeight);
     renderer.setSize(this.width, this.height);
     this.iso.setScreen(this.width, this.height);
+    this.overlay?.setScreen(this.width, this.height);
     this.host?.onResize(this.width, this.height);
     this.renderNow();
   }

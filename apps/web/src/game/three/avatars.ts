@@ -8,17 +8,22 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   type Object3D,
+  type Quaternion,
   type Raycaster,
   SphereGeometry,
   TorusGeometry,
+  Vector3,
 } from 'three';
 import { internTint, parseHex } from '../color.js';
+import { tileKey } from '../grid.js';
 import { facing8FromDelta, yawFor8 } from '../iso.js';
 import type { Pose } from '../pose.js';
 import { hashString } from '../rng.js';
 import type { SceneAvatarInit } from '../scene.js';
 import type { AvatarBody } from './body.js';
-import { type CharacterAsset, CharacterRig, loadCharacter } from './character.js';
+import { applyTint, type CharacterAsset, CharacterRig, loadCharacter } from './character.js';
+import { screenSide } from './emote-math.js';
+import { AvatarEmotes, EmoteResources } from './emotes.js';
 import { approachYaw, facingYaw } from './math.js';
 import { OutfitResources } from './outfit.js';
 
@@ -29,7 +34,9 @@ export { internTint } from '../color.js';
  * group (intern / poof scale, seat offset) that contains an `AvatarBody`: the G1b capsule until
  * `loadCharacter()` resolves, then a `CharacterRig` swapped in place (the capsule stays, with one
  * warning from the loader, when the GLB fails). The owner also keeps an invisible hit cylinder per
- * avatar for picking, the highlight ring, the leave fade and the 8-way yaw smoothing.
+ * avatar for picking, the highlight ring, the leave fade, the 8-way yaw smoothing and the emotes
+ * (`emotes.ts`, a sibling group that follows the root without rotating), and reports the head top
+ * (`headAnchors`) for the DOM labels and the typing tiles for the monitor glow.
  *
  * Facing: the core sends 4-way `Facing`s (stations, arrival) and per-frame fractional positions.
  * While the pose is `walk` the yaw target comes from the position delta (8 directions, steps under
@@ -66,6 +73,7 @@ interface AvatarNode {
   hit: Mesh;
   ring: Mesh;
   ringMaterial: MeshStandardMaterial;
+  emotes: AvatarEmotes;
   avatar: Avatar;
   intern: boolean;
   pose: Pose;
@@ -114,6 +122,7 @@ export class CapsuleBody implements AvatarBody {
   private readonly inner = new Group();
   private pose: Pose = 'idle';
   private clock = 0;
+  private tinted = false;
 
   constructor(geo: CapsuleGeometries, avatar: Avatar, isIntern: boolean) {
     const capsule = new Mesh(geo.body, this.shirt);
@@ -160,6 +169,17 @@ export class CapsuleBody implements AvatarBody {
     }
   }
 
+  setTint(on: boolean): void {
+    if (on === this.tinted) return;
+    this.tinted = on;
+    for (const m of [this.shirt, this.pants, this.skin]) applyTint(m, on);
+  }
+
+  headTop(out: Vector3): Vector3 {
+    this.object.updateWorldMatrix(true, false);
+    return this.object.localToWorld(out.set(0, this.hitHeight, 0));
+  }
+
   update(dt: number): void {
     this.clock += dt;
     this.inner.position.y =
@@ -189,6 +209,8 @@ export class AvatarMeshes {
   private readonly hitGeometry = new CylinderGeometry(1, 1, 1, 10, 1);
   private readonly hitMaterial = new MeshBasicMaterial({ visible: false });
   private readonly hitVolumes: Mesh[] = [];
+  private readonly emoteResources = new EmoteResources();
+  private readonly tmp = new Vector3();
   private asset: CharacterAsset | null = null;
   private alive = true;
 
@@ -228,6 +250,7 @@ export class AvatarMeshes {
     ring.visible = false;
     ring.userData = { pickable: false };
     root.add(bodyGroup, ring);
+    const emotes = new AvatarEmotes(this.emoteResources);
     const yaw = facingYaw(2);
     const node: AvatarNode = {
       id: init.id,
@@ -239,6 +262,7 @@ export class AvatarMeshes {
       hit,
       ring,
       ringMaterial,
+      emotes,
       avatar: init.avatar,
       intern: init.isIntern,
       pose: 'idle',
@@ -256,7 +280,7 @@ export class AvatarMeshes {
     this.nodes.set(init.id, node);
     this.hitVolumes.push(hit);
     root.rotation.y = yaw;
-    this.group.add(root);
+    this.group.add(root, emotes.group);
     this.attachBody(node, node.body);
   }
 
@@ -268,6 +292,7 @@ export class AvatarMeshes {
     if (i >= 0) this.hitVolumes.splice(i, 1);
     this.group.remove(node.root);
     node.body.dispose();
+    node.emotes.dispose();
     node.ringMaterial.dispose();
   }
 
@@ -286,6 +311,8 @@ export class AvatarMeshes {
     if (!node) return;
     node.pose = pose;
     node.body.setPose(pose);
+    node.body.setTint(pose === 'cooldown');
+    node.emotes.setPose(pose);
     if (pose === 'leave' && node.fade === null) node.fade = LEAVE_FADE_S;
     // Standing still: the core's facing wins over the last walking direction.
     if (pose !== 'walk') node.targetYaw = node.coreYaw;
@@ -318,6 +345,7 @@ export class AvatarMeshes {
     node.y = y;
     node.placed = true;
     node.root.position.set(x, 0, y);
+    node.emotes.group.position.set(x, 0, y);
   }
 
   setHighlighted(id: string, on: boolean): void {
@@ -327,7 +355,24 @@ export class AvatarMeshes {
 
   poof(id: string): void {
     const node = this.nodes.get(id);
-    if (node) node.poof = POOF_S;
+    if (!node) return;
+    node.poof = POOF_S;
+    node.emotes.poof();
+  }
+
+  /** World position of the top of each avatar's head (after this frame's animation). */
+  headAnchors(fn: (id: string, point: Vector3, intern: boolean) => void): void {
+    for (const node of this.nodes.values()) fn(node.id, node.body.headTop(this.tmp), node.intern);
+  }
+
+  /** Tile keys of the avatars typing at a desk right now (the monitor glow). */
+  typingTiles(out: Set<string>): Set<string> {
+    out.clear();
+    for (const node of this.nodes.values()) {
+      if (node.pose !== 'typing' && node.pose !== 'working') continue;
+      out.add(tileKey(Math.round(node.x), Math.round(node.y)));
+    }
+    return out;
   }
 
   isFinished(id: string): boolean {
@@ -346,7 +391,8 @@ export class AvatarMeshes {
     return null;
   }
 
-  update(dtMs: number): void {
+  /** Advance bodies and emotes; `cameraQuaternion` billboards the instanced particle quads. */
+  update(dtMs: number, cameraQuaternion: Quaternion): void {
     const dt = dtMs / 1000;
     for (const node of this.nodes.values()) {
       node.clock += dt;
@@ -365,6 +411,12 @@ export class AvatarMeshes {
       if (node.ring.visible)
         node.ringMaterial.emissiveIntensity = 0.45 + 0.35 * (Math.sin(node.clock * 5) + 1) * 0.5;
       node.body.update(dt);
+      node.emotes.update(dt, {
+        headTop: node.body.headTop(this.tmp).y,
+        side: screenSide(node.yaw),
+        scale,
+        cameraQuaternion,
+      });
     }
   }
 
@@ -376,6 +428,7 @@ export class AvatarMeshes {
     this.hitGeometry.dispose();
     this.hitMaterial.dispose();
     this.outfitResources.dispose();
+    this.emoteResources.dispose();
     this.parent.remove(this.group);
   }
 
@@ -406,6 +459,7 @@ export class AvatarMeshes {
     node.bodyGroup.add(body.object);
     body.setScale(node.intern ? INTERN_SCALE : 1);
     body.setPose(node.pose);
+    body.setTint(node.pose === 'cooldown');
     body.setSeated(node.seated);
     if (node.fade !== null) body.setOpacity(Math.max(0, node.fade) / LEAVE_FADE_S);
     node.hit.scale.set(body.hitRadius, body.hitHeight, body.hitRadius);

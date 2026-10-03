@@ -7,6 +7,9 @@ import {
 import { Box3, InstancedMesh, type Object3D } from 'three';
 import { describe, expect, it } from 'vitest';
 import {
+  BOOKCASE_SHELVES,
+  BOOKCASE_SLOTS,
+  BOOKS_PER_CASE,
   FIT_MARGIN,
   fillFootprint,
   fitToFootprint,
@@ -63,8 +66,29 @@ describe('MODEL_MANIFEST', () => {
       if (first?.kind === 'gltf') seen.add(first.model);
       expect(partsFor('plant', `plant-${i}`)).toEqual(parts);
     }
-    expect(seen).toEqual(new Set(['pottedPlant', 'plantSmall1']));
+    expect(seen).toEqual(new Set(['pottedPlant', 'plantSmall1', 'plantSmall2']));
     expect(variantIndex('x', 1)).toBe(0);
+  });
+
+  it('builds the bookshelf from one wide bookcase that fits the 2×1 footprint, with books', () => {
+    const spec = MODEL_MANIFEST.bookshelf;
+    expect(spec.parts).toHaveLength(1);
+    const part = spec.parts[0];
+    if (part?.kind !== 'gltf') throw new Error('bookshelf part');
+    expect(part.model).toBe('bookcaseClosedWide');
+    expect(spec.books).toBe(true);
+    // Measured GLB size 8 × 7.9 × 2.5 Kenney units at the manifest scale.
+    const s = partScale(part, { x: 8, y: 7.9, z: 2.5 }, 2, 1);
+    expect(8 * s.x).toBeLessThanOrEqual(2 - FIT_MARGIN);
+    expect(2.5 * s.z).toBeLessThanOrEqual(1 - FIT_MARGIN);
+    expect(7.9 * s.y).toBeLessThan(2.5);
+    // Shelves are inside the case and the book slots stay within its inner width.
+    for (const shelf of BOOKCASE_SHELVES) {
+      expect(shelf).toBeGreaterThan(0);
+      expect(shelf).toBeLessThan(7.9);
+    }
+    for (const slot of BOOKCASE_SLOTS) expect(Math.abs(slot) + 0.75).toBeLessThanOrEqual(3.8);
+    expect(BOOKS_PER_CASE).toBeLessThanOrEqual(BOOKCASE_SHELVES.length * BOOKCASE_SLOTS.length);
   });
 
   it('uses the GLB catalogue only (no stray model names)', () => {

@@ -335,7 +335,8 @@ fallback if the frame budget fails.
 The renderer is selected at build time with `VITE_RENDERER=pixi|three` and overridden at runtime by
 `localStorage['agenthotel.renderer']` (Settings toggle, G3). `createWorld()` returns a `LazyWorld`
 that queues every call until the chosen backend module is dynamically imported in `mount()`, so the
-Pixi bundle never contains Three and vice versa. The default is `pixi` until the G3 parity commit.
+Pixi bundle never contains Three and vice versa. `three` has been the default since the G3 parity
+commit; `VITE_RENDERER=pixi` or the selector restores the pixel-art path.
 
 **One simulation, two scene backends** (G1): `world.ts` is split into a renderer-agnostic
 `WorldCore` (tiles, A\*, motions, stations, behaviour → pose, editor pointer state machine, pre-mount
@@ -387,8 +388,9 @@ meshes per body part, `handslot.l/.r` bones for props, 76 embedded clips. Each a
 `SkeletonUtils.clone` with its own `AnimationMixer` (0.2 s cross-fades). Outfit: the `Avatar` DTO's
 skin/hair/shirt/pants colours become flat materials on the body-part meshes (the pack's gradient
 atlas is not used); hair styles and accessories are procedural meshes attached to the `head` and `chest`
-bones (the rig has no neck bone); interns are scaled 0.8 and desaturated. Facing: 8 yaws with turn smoothing; the
-station targets keep the 4-way `Facing`. Poses: a pure state machine (`three/anim.ts`) maps the
+bones (the rig has no neck bone); interns are scaled 0.8 and desaturated. Facing: 8 yaws from the motion deltas with shortest-arc turn smoothing; the station targets keep
+the 4-way `Facing`. Walking plays `Walking_A` up to 1.6× and switches to `Running_A` (0.8 s cycle,
+1.2-unit stride) above that, so feet stay planted at the 2.5 tiles/s walk speed. Poses: a pure state machine (`three/anim.ts`) maps the
 existing `Pose` union to a base clip plus overlays and props, e.g. `typing` = `Sit_Chair_Idle` + arm
 oscillation at the desk's own keyboard + monitor glow; `reading` = idle/sit + book prop + head tilt; `raise_hand`
 = idle + additive arm raise (or `Spellcast_Raise`); `thinking` = idle + head-scratch overlay; `nap` =
@@ -405,14 +407,18 @@ then the ground plane → tile; `getAvatarAt` stays tile-based in the core, so t
 `screenToTile → getAvatarAt` chain is unchanged. Editor: grid as line segments, hover tile as a
 translucent quad, ghost as a tinted translucent clone (green/red by `valid`), highlight as an
 emissive pulse, drag preview moves the clone. Bubbles and name labels are a DOM overlay positioned
-from the projected head anchor each frame (same texts and durations as the Pixi path); emotes are
-in-scene sprites/points so they are lit and occluded correctly.
+from the projected head anchor each frame (same texts, truncation rules and durations as the Pixi
+path, shared through `bubble-text.ts`; overlay text keeps a fixed CSS size instead of scaling with
+the zoom); emotes are in-scene sprites and instanced particles so they are occluded correctly.
 
 ### 11.6 Performance budget and out of scope
 
-≤ 150 draw calls, one shadow map, ≤ 2× pixel ratio, continuous `requestAnimationFrame` with the
-100 ms dt clamp, rendering paused while the tab is hidden, `?stats=1` overlay (fps, draw calls,
-triangles). Acceptance: ≥ 60 fps for 10 s with 6 agents + 2 interns on the MacBook Air; degrade
+≤ 150 draw calls in the main pass (the `renderer.info` number includes the shadow pass, so the
+stats overlay shows roughly double), one shadow map, ≤ 2× pixel ratio, continuous
+`requestAnimationFrame` with the 100 ms dt clamp, the loop paused only while the canvas is detached
+(never on `document.hidden`, see CLAUDE.md), `?stats=1` overlay (fps, draw calls, triangles,
+avatars) and a one-way auto-degrade (shadow map 1024², pixel ratio 1.5) when the rolling fps
+stays below 45 for 3 s. Acceptance: ≥ 60 fps for 10 s with 6 agents + 2 interns on the MacBook Air; degrade
 switches (1024² shadow map, pixel ratio 1) are one constant each. Out of scope: rotating camera,
 multiple rooms in the UI, WebGPU, SSAO, Mixamo or any non-CC0 source.
 

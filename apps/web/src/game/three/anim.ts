@@ -31,12 +31,13 @@ import type { Pose } from '../pose.js';
  * as long as the behaviour lasts, which is what a permission prompt needs.
  */
 
-export type ClipName = 'Idle' | 'Walking_A' | 'Sit_Chair_Idle' | 'Interact' | 'Cheer';
+export type ClipName = 'Idle' | 'Walking_A' | 'Running_A' | 'Sit_Chair_Idle' | 'Interact' | 'Cheer';
 
 /** Every clip the rig keeps an action for; anything else in the GLB is ignored (and can be stripped). */
 export const USED_CLIPS: readonly ClipName[] = [
   'Idle',
   'Walking_A',
+  'Running_A',
   'Sit_Chair_Idle',
   'Interact',
   'Cheer',
@@ -103,33 +104,74 @@ export const ALL_POSES: readonly Pose[] = [
   'coffee',
 ];
 
-// ---- walk speed -----------------------------------------------------------------------------------
+// ---- gait -----------------------------------------------------------------------------------------
 
 /**
  * `Walking_A` is an in-place cycle of two steps; each foot travels 0.40 model units peak to peak
  * (measured: foot bone z from −0.241 to +0.160), so one cycle covers 0.80 model units.
+ * `Running_A` (measured the same way for G3: foot z −0.262 … +0.338, 0.8 s) covers 1.20 per cycle.
  */
 export const WALK_STRIDE_MODEL_UNITS = 0.8;
-/** Duration of `Walking_A` (and `Idle`) in the GLB. */
+export const RUN_STRIDE_MODEL_UNITS = 1.2;
+/** Durations of `Walking_A` (and `Idle`) and `Running_A` in the GLB. */
 export const WALK_CLIP_SECONDS = 1.0667;
+export const RUN_CLIP_SECONDS = 0.8;
 /**
  * Playback rate caps. The avatars walk 2.5 tiles/s for a 1.45-unit body (≈ 1.7 body heights per
- * second, twice a brisk human walk), which would need a 5× cycle; above ~2.2× the legs blur into a
- * cartoon scurry, so the cap trades some foot slide for a believable cadence.
+ * second, twice a brisk human walk), which would need a 5× `Walking_A`; above ~2.2× the legs blur
+ * into a cartoon scurry. Hence the gait switch: once the walk would need more than
+ * `RUN_SWITCH_TIME_SCALE`, the rig cross-fades to `Running_A`, whose longer stride and shorter cycle
+ * need only ≈ 2.5× at full speed (feet close to planted). `Walking_A` stays for slow approaches.
  */
 export const MIN_WALK_TIME_SCALE = 0.5;
 export const MAX_WALK_TIME_SCALE = 2.2;
+export const RUN_SWITCH_TIME_SCALE = 1.6;
+export const MIN_RUN_TIME_SCALE = 0.8;
+export const MAX_RUN_TIME_SCALE = 2.6;
 
-/** Time scale that makes the feet cover `tilesPerSecond` with a `strideTilesPerCycle` stride. */
+/** Uncapped time scale that makes the feet cover `tilesPerSecond` with a `strideTilesPerCycle`. */
+export function rawTimeScale(
+  tilesPerSecond: number,
+  strideTilesPerCycle: number,
+  cycleSeconds: number,
+): number | null {
+  if (!(strideTilesPerCycle > 0) || !(cycleSeconds > 0) || !Number.isFinite(tilesPerSecond))
+    return null;
+  return (Math.abs(tilesPerSecond) / strideTilesPerCycle) * cycleSeconds;
+}
+
+/** Time scale for `Walking_A` at `tilesPerSecond` with a `strideTilesPerCycle` stride, capped. */
 export function walkTimeScale(
   tilesPerSecond: number,
   strideTilesPerCycle: number,
   cycleSeconds = WALK_CLIP_SECONDS,
 ): number {
-  if (!(strideTilesPerCycle > 0) || !(cycleSeconds > 0) || !Number.isFinite(tilesPerSecond))
-    return 1;
-  const raw = (Math.abs(tilesPerSecond) / strideTilesPerCycle) * cycleSeconds;
+  const raw = rawTimeScale(tilesPerSecond, strideTilesPerCycle, cycleSeconds);
+  if (raw === null) return 1;
   return Math.min(MAX_WALK_TIME_SCALE, Math.max(MIN_WALK_TIME_SCALE, raw));
+}
+
+export interface Gait {
+  clip: 'Walking_A' | 'Running_A';
+  timeScale: number;
+}
+
+/**
+ * Which locomotion clip plays at `tilesPerSecond`, given the walk stride in tiles per cycle (the
+ * run stride follows from the measured ratio): walk while the walk cycle would stay at or under
+ * `RUN_SWITCH_TIME_SCALE`, run (with its own caps) above it.
+ */
+export function gaitFor(tilesPerSecond: number, walkStrideTilesPerCycle: number): Gait {
+  const raw = rawTimeScale(tilesPerSecond, walkStrideTilesPerCycle, WALK_CLIP_SECONDS);
+  if (raw === null) return { clip: 'Walking_A', timeScale: 1 };
+  if (raw <= RUN_SWITCH_TIME_SCALE)
+    return { clip: 'Walking_A', timeScale: Math.max(MIN_WALK_TIME_SCALE, raw) };
+  const runStride = walkStrideTilesPerCycle * (RUN_STRIDE_MODEL_UNITS / WALK_STRIDE_MODEL_UNITS);
+  const run = rawTimeScale(tilesPerSecond, runStride, RUN_CLIP_SECONDS) ?? 1;
+  return {
+    clip: 'Running_A',
+    timeScale: Math.min(MAX_RUN_TIME_SCALE, Math.max(MIN_RUN_TIME_SCALE, run)),
+  };
 }
 
 // ---- pose table -----------------------------------------------------------------------------------
@@ -151,15 +193,11 @@ function spec(
 export function animationFor(pose: Pose, ctx: AnimationContext): AnimationSpec {
   const base: ClipName = ctx.seated ? 'Sit_Chair_Idle' : 'Idle';
   switch (pose) {
-    case 'walk':
-      return spec(
-        'Walking_A',
-        null,
-        null,
-        ctx.strideTilesPerCycle === undefined
-          ? 1
-          : walkTimeScale(SPEED_TILES_PER_S, ctx.strideTilesPerCycle),
-      );
+    case 'walk': {
+      if (ctx.strideTilesPerCycle === undefined) return spec('Walking_A');
+      const gait = gaitFor(SPEED_TILES_PER_S, ctx.strideTilesPerCycle);
+      return spec(gait.clip, null, null, gait.timeScale);
+    }
     case 'leave':
       // Standing at the door while fading out: keep walking out of the room.
       return spec('Walking_A');

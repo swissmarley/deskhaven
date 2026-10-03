@@ -34,6 +34,7 @@ import {
   WALK_STRIDE_MODEL_UNITS,
 } from './anim.js';
 import type { AvatarBody } from './body.js';
+import { COOLDOWN_EMISSIVE, COOLDOWN_EMISSIVE_INTENSITY } from './emote-math.js';
 import {
   accessoryBone,
   accessoryMesh,
@@ -95,6 +96,8 @@ export const SEAT_LIFT = 0.19;
 export const HIT_RADIUS = 0.36;
 export const CROSSFADE_S = 0.2;
 export const OVERLAY_FADE_S = 0.25;
+/** Top of the skull above the `head` bone in model units (measured, see `outfit.ts`). */
+export const HEAD_TOP_ABOVE_BONE = 0.95;
 
 /** Sanitised GLB node names of the bones the overlays and props use. */
 export const BONE_NODES: Record<OverlayBone | 'handSlotL' | 'handSlotR', string> = {
@@ -266,6 +269,7 @@ export class CharacterRig implements AvatarBody {
   private intern: boolean;
   private clock: number;
   private opacity = 1;
+  private tinted = false;
   private disposed = false;
 
   constructor(
@@ -338,6 +342,24 @@ export class CharacterRig implements AvatarBody {
     if (o === this.opacity) return;
     this.opacity = o;
     for (const m of this.fadeMaterials) applyOpacity(m, o);
+  }
+
+  setTint(on: boolean): void {
+    if (on === this.tinted) return;
+    this.tinted = on;
+    for (const m of [this.outfit.skin, this.outfit.shirt, this.outfit.pants]) applyTint(m, on);
+    if (this.hair) for (const m of collectMaterials(this.hair)) applyTint(m, on);
+  }
+
+  /** The head bone's world position plus the skull height (scaled); the model top if no bone. */
+  headTop(out: Vector3): Vector3 {
+    const head = this.bones.head;
+    if (head) {
+      head.getWorldPosition(out);
+      out.y += HEAD_TOP_ABOVE_BONE * this.asset.modelScale * this.scale;
+      return out;
+    }
+    return this.object.localToWorld(out.set(0, this.asset.modelHeight, 0));
   }
 
   update(dt: number): void {
@@ -533,6 +555,7 @@ export class CharacterRig implements AvatarBody {
       );
       head.add(this.hair);
       this.track(this.hair);
+      if (this.tinted) for (const m of collectMaterials(this.hair)) applyTint(m, true);
     }
     const boneKey = accessoryBone(this.avatar.accessory);
     const bone = boneKey ? this.bones[boneKey] : undefined;
@@ -555,6 +578,17 @@ export class CharacterRig implements AvatarBody {
     disposeMaterials(group);
     group.removeFromParent();
   }
+}
+
+/** The cooldown cast: a weak blue emissive on a standard material (no-op for other materials). */
+export function applyTint(m: Material, on: boolean): void {
+  if (!('emissive' in m) || !('emissiveIntensity' in m)) return;
+  const std = m as Material & {
+    emissive: { setHex(hex: number): unknown };
+    emissiveIntensity: number;
+  };
+  std.emissive.setHex(on ? COOLDOWN_EMISSIVE : 0x000000);
+  std.emissiveIntensity = on ? COOLDOWN_EMISSIVE_INTENSITY : 0;
 }
 
 function applyOpacity(m: Material, opacity: number): void {

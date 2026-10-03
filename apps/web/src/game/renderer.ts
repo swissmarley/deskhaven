@@ -15,9 +15,12 @@ function isRendererKind(v: unknown): v is RendererKind {
   return typeof v === 'string' && (KINDS as readonly string[]).includes(v);
 }
 
+/** The renderer used when neither the stored override nor `VITE_RENDERER` picks one (G3: Three). */
+export const DEFAULT_RENDERER: RendererKind = 'three';
+
 /**
  * Which renderer to load: the stored override when valid, else the build-time `VITE_RENDERER`
- * when valid, else Pixi. Pure so it can be tested without a browser.
+ * when valid, else `DEFAULT_RENDERER`. Pure so it can be tested without a browser.
  */
 export function resolveRendererKind(
   stored: string | null | undefined,
@@ -25,7 +28,7 @@ export function resolveRendererKind(
 ): RendererKind {
   if (isRendererKind(stored)) return stored;
   if (isRendererKind(env)) return env;
-  return 'pixi';
+  return DEFAULT_RENDERER;
 }
 
 export function rendererKind(): RendererKind {

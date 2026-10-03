@@ -5,12 +5,18 @@ import {
   ALL_POSES,
   animationFor,
   evaluateOverlay,
+  gaitFor,
+  MAX_RUN_TIME_SCALE,
   MAX_WALK_TIME_SCALE,
+  MIN_RUN_TIME_SCALE,
   MIN_WALK_TIME_SCALE,
   maxOverlayAngle,
   OVERLAY_BONES,
   OVERLAY_KINDS,
   OVERLAY_PERIOD_S,
+  RUN_CLIP_SECONDS,
+  RUN_STRIDE_MODEL_UNITS,
+  RUN_SWITCH_TIME_SCALE,
   sipPhase,
   USED_CLIPS,
   WALK_CLIP_SECONDS,
@@ -70,14 +76,17 @@ describe('animationFor', () => {
     }
   });
 
-  it('walks with Walking_A at a positive finite time scale from the stride', () => {
+  it('runs with Running_A at full speed (the walk cycle would need 5×), capped', () => {
     const spec = animationFor('walk', { seated: false, moving: true, strideTilesPerCycle: 0.53 });
-    expect(spec.clip).toBe('Walking_A');
-    expect(spec.timeScale).toBeGreaterThan(0);
+    expect(spec.clip).toBe('Running_A');
+    expect(spec.timeScale).toBeGreaterThan(RUN_SWITCH_TIME_SCALE);
     expect(Number.isFinite(spec.timeScale)).toBe(true);
-    expect(spec.timeScale).toBeLessThanOrEqual(MAX_WALK_TIME_SCALE);
+    expect(spec.timeScale).toBeLessThanOrEqual(MAX_RUN_TIME_SCALE);
     // Without a stride the clip plays at its authored speed.
-    expect(animationFor('walk', { seated: false, moving: true }).timeScale).toBe(1);
+    expect(animationFor('walk', { seated: false, moving: true })).toMatchObject({
+      clip: 'Walking_A',
+      timeScale: 1,
+    });
   });
 
   it('attaches the book to reading and the mug to coffee, nothing else', () => {
@@ -107,6 +116,38 @@ describe('animationFor', () => {
     expect(standing('coffee')).toMatchObject({ clip: 'Idle', overlay: 'sip', prop: 'mug' });
     expect(standing('leave')).toMatchObject({ clip: 'Walking_A' });
     expect(standing('wait')).toMatchObject({ clip: 'Idle', overlay: null });
+  });
+});
+
+describe('gaitFor', () => {
+  it('keeps Walking_A for slow approaches and switches to Running_A above the threshold', () => {
+    // A stride of 0.53 tiles per 1.0667 s cycle: 0.79 tiles/s is the switch point.
+    const slow = gaitFor(0.5, 0.53);
+    expect(slow.clip).toBe('Walking_A');
+    expect(slow.timeScale).toBeCloseTo((0.5 / 0.53) * WALK_CLIP_SECONDS, 9);
+    const edge = gaitFor((RUN_SWITCH_TIME_SCALE * 0.53) / WALK_CLIP_SECONDS, 0.53);
+    expect(edge.clip).toBe('Walking_A');
+    expect(edge.timeScale).toBeCloseTo(RUN_SWITCH_TIME_SCALE, 6);
+    const fast = gaitFor(SPEED_TILES_PER_S, 0.53);
+    expect(fast.clip).toBe('Running_A');
+    // Run stride = 0.53 × 1.2 / 0.8 = 0.795 tiles per 0.8 s cycle → 2.5 / 0.795 × 0.8 ≈ 2.52×.
+    const runStride = 0.53 * (RUN_STRIDE_MODEL_UNITS / WALK_STRIDE_MODEL_UNITS);
+    expect(fast.timeScale).toBeCloseTo(
+      Math.min(MAX_RUN_TIME_SCALE, (SPEED_TILES_PER_S / runStride) * RUN_CLIP_SECONDS),
+      9,
+    );
+    expect(fast.timeScale).toBeLessThanOrEqual(MAX_RUN_TIME_SCALE);
+    expect(fast.timeScale).toBeGreaterThanOrEqual(MIN_RUN_TIME_SCALE);
+    // Interns (smaller stride) run too, within the caps.
+    const intern = gaitFor(SPEED_TILES_PER_S, 0.53 * 0.8);
+    expect(intern.clip).toBe('Running_A');
+    expect(intern.timeScale).toBe(MAX_RUN_TIME_SCALE);
+  });
+
+  it('falls back to a plain walk for degenerate input', () => {
+    expect(gaitFor(2.5, 0)).toEqual({ clip: 'Walking_A', timeScale: 1 });
+    expect(gaitFor(Number.NaN, 0.5)).toEqual({ clip: 'Walking_A', timeScale: 1 });
+    expect(USED_CLIPS).toContain('Running_A');
   });
 });
 

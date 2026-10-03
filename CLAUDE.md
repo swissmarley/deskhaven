@@ -89,8 +89,9 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
 
 - Two renderers behind the same `World` contract: `VITE_RENDERER=pixi|three` at build/dev time,
   `localStorage['agenthotel.renderer']` overrides it at runtime. `createWorld()` returns a `LazyWorld`
-  that queues calls until the backend is dynamically imported in `mount()`; Pixi stays the default
-  until the G3 parity commit. See ARCHITECTURE.md §11.
+  that queues calls until the backend is dynamically imported in `mount()`; `three` is the default
+  since G3, `VITE_RENDERER=pixi` or the Settings selector brings the pixel-art path back. `?stats=1`
+  shows fps / draw calls / triangles in the Three renderer. See ARCHITECTURE.md §11.
 - 3D models live in `apps/web/public/models/` (CC0, licences in `models/licenses/`, one ASSETS.md row
   per file). Inspect any glb/gltf with `node scripts/inspect-gltf.mjs file.glb` (nodes, meshes,
   materials, skins, clip names). Kenney furniture was converted with `npx obj2gltf -i x.obj -o x.glb`.

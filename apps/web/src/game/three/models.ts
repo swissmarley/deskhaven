@@ -51,8 +51,10 @@ export type ModelName =
   | 'doorway'
   | 'pottedPlant'
   | 'plantSmall1'
+  | 'plantSmall2'
   | 'loungeSofa'
   | 'bookcaseOpen'
+  | 'bookcaseClosedWide'
   | 'rugRectangle'
   | 'books';
 
@@ -148,11 +150,9 @@ export const MODEL_MANIFEST: Record<FurnitureKind, KindModel> = {
     parts: [{ kind: 'gltf', model: 'chairDesk', fit: 'none', scale: KENNEY_METRIC, yawOffset: 0 }],
   },
   bookshelf: {
-    // One Kenney bookcase is 0.8 m wide: two side by side fill the 2×1 footprint.
-    parts: [
-      { kind: 'gltf', model: 'bookcaseOpen', fit: 'none', scale: 0.235, x: -0.47 },
-      { kind: 'gltf', model: 'bookcaseOpen', fit: 'none', scale: 0.235, x: 0.47 },
-    ],
+    // The wide closed-back bookcase is 8 Kenney units wide: at 0.235 it spans 1.88 of the 2×1
+    // footprint in one model (G1b used two open bookcases; this halves the draw calls).
+    parts: [{ kind: 'gltf', model: 'bookcaseClosedWide', fit: 'none', scale: 0.235 }],
     books: true,
   },
   server_rack: { parts: [{ kind: 'procedural', shape: 'server_rack' }] },
@@ -179,6 +179,7 @@ export const MODEL_MANIFEST: Record<FurnitureKind, KindModel> = {
     variants: [
       [{ kind: 'gltf', model: 'pottedPlant', fit: 'none', scale: 0.25 }],
       [{ kind: 'gltf', model: 'plantSmall1', fit: 'none', scale: 0.7 }],
+      [{ kind: 'gltf', model: 'plantSmall2', fit: 'none', scale: 0.7 }],
     ],
   },
   whiteboard: { parts: [{ kind: 'procedural', shape: 'whiteboard' }] },
@@ -211,12 +212,15 @@ export const MODEL_MANIFEST: Record<FurnitureKind, KindModel> = {
   },
 };
 
-/** Bookcase shelf tops in Kenney units (from the GLB: horizontal faces at these heights). */
-export const BOOKCASE_SHELVES = [1.3, 3.7, 6.1] as const;
-/** Book-set centres on a shelf, in Kenney units from the bookcase centre. */
-export const BOOKCASE_SLOTS = [-0.85, 0.85] as const;
-/** Book sets placed per bookcase (keeps the bookshelf under 20 draw calls). */
-export const BOOKS_PER_CASE = 2;
+/**
+ * `bookcaseClosedWide` shelf tops in Kenney units (up-facing faces of the GLB at these heights,
+ * spanning the full 8-unit width; the top board is at 7.9).
+ */
+export const BOOKCASE_SHELVES = [0.7, 3.1, 5.5] as const;
+/** Book-set centres on a shelf, in Kenney units from the bookcase centre (a set is 1.5 wide). */
+export const BOOKCASE_SLOTS = [-2.9, -1.0, 1.0, 2.9] as const;
+/** Book sets placed per bookcase (4 sets × 4 materials keeps the bookshelf under 20 draw calls). */
+export const BOOKS_PER_CASE = 4;
 
 /** Stable variant choice for a piece id (same hash as `rng.ts`' FNV-style mixing, inlined). */
 export function variantIndex(id: string, count: number): number {

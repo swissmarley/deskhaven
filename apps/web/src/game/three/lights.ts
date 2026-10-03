@@ -9,7 +9,10 @@ export const SUN_INTENSITY = 1.6;
 /** Direction from the room centre towards the sun (up-left-front), normalised on use. */
 export const SUN_DIR = new Vector3(-0.6, 1.0, 0.35).normalize();
 export const SUN_DISTANCE = 20;
+/** Degrade switches (see `three/scene.ts`): the default shadow map and the one-step fallback. */
+export const SHADOWS_ENABLED = true;
 export const SHADOW_MAP_SIZE = 2048;
+export const DEGRADED_SHADOW_MAP_SIZE = 1024;
 export const SHADOW_BIAS = -0.0005;
 export const SHADOW_NORMAL_BIAS = 0.02;
 export const SHADOW_RADIUS = 4;
@@ -21,13 +24,15 @@ export interface Lights {
   readonly sun: DirectionalLight;
   /** Re-aim the sun and refit its shadow frustum to a room of this size (tiles). */
   fit(width: number, height: number): void;
+  /** Drop the shadow map to `DEGRADED_SHADOW_MAP_SIZE` (the render target is re-created). */
+  degrade(): void;
   dispose(): void;
 }
 
 export function createLights(parent: Object3D): Lights {
   const hemi = new HemisphereLight(HEMI_SKY, HEMI_GROUND, HEMI_INTENSITY);
   const sun = new DirectionalLight(SUN_COLOR, SUN_INTENSITY);
-  sun.castShadow = true;
+  sun.castShadow = SHADOWS_ENABLED;
   sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
   sun.shadow.bias = SHADOW_BIAS;
   sun.shadow.normalBias = SHADOW_NORMAL_BIAS;
@@ -52,6 +57,13 @@ export function createLights(parent: Object3D): Lights {
       cam.bottom = -extent;
       cam.updateProjectionMatrix();
       sun.target.updateMatrixWorld();
+    },
+    degrade() {
+      sun.shadow.mapSize.set(DEGRADED_SHADOW_MAP_SIZE, DEGRADED_SHADOW_MAP_SIZE);
+      // The renderer allocates the shadow target lazily from `mapSize`; drop the old one.
+      sun.shadow.map?.dispose();
+      sun.shadow.map = null;
+      sun.shadow.needsUpdate = true;
     },
     dispose() {
       parent.remove(hemi, sun, sun.target);
