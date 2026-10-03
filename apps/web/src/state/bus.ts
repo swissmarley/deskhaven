@@ -1,4 +1,4 @@
-import type { AgentEvent, Behavior } from '@agenthotel/shared';
+import type { AgentEvent, Behavior } from '@deskhaven/shared';
 
 export interface WorldSignal {
   event: AgentEvent;

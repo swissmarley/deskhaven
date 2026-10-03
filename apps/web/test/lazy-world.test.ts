@@ -1,4 +1,4 @@
-import { defaultRoom } from '@agenthotel/shared';
+import { defaultRoom } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { LazyWorld } from '../src/game/lazy-world.js';
 import type { TilePoint, World, WorldAvatarInput } from '../src/game/types.js';

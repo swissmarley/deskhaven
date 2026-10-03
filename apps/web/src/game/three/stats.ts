@@ -2,7 +2,7 @@ import { formatStats, STATS_STORAGE_KEY, statsEnabled } from './perf.js';
 
 /**
  * Small fixed stats overlay (fps, draw calls, triangles, avatars) for the Three scene, shown when
- * `?stats=1` is in the page URL or `localStorage['agenthotel.stats'] === '1'`. Pure DOM; the numbers
+ * `?stats=1` is in the page URL or `localStorage['deskhaven.stats'] === '1'`. Pure DOM; the numbers
  * come from `perf.ts` and `renderer.info`.
  */
 

@@ -1,4 +1,4 @@
-import type { FurnitureKind } from '@agenthotel/shared';
+import type { FurnitureKind } from '@deskhaven/shared';
 
 /**
  * Asset manifest. Every drawable thing has an entry; `placeholder` means "draw coloured iso boxes",

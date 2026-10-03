@@ -1,4 +1,4 @@
-import type { Avatar } from '@agenthotel/shared';
+import type { Avatar } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import {
   frameFor,

@@ -13,7 +13,7 @@ pnpm typecheck         # tsc --noEmit in every package
 pnpm lint              # biome check .   (pnpm lint:fix / pnpm format to auto-fix)
 pnpm test              # vitest run in every package
 pnpm build             # typecheck + vite build for the web app
-pnpm start             # production server (serves apps/web/dist when AGENTHOTEL_WEB_DIST is set)
+pnpm start             # production server (serves apps/web/dist when DESKHAVEN_WEB_DIST is set)
 ```
 
 Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
@@ -64,9 +64,9 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   fixes it. `packageManager` is pinned in the root `package.json`.
 - pnpm 10 blocks lifecycle scripts; `better-sqlite3` and `esbuild` are allow-listed in
   `pnpm.onlyBuiltDependencies`.
-- Record real SDK traffic for fixtures with `AGENTHOTEL_RECORD_SDK=/path/to/file.jsonl pnpm dev`; the
+- Record real SDK traffic for fixtures with `DESKHAVEN_RECORD_SDK=/path/to/file.jsonl pnpm dev`; the
   normaliser test replays every `apps/server/test/fixtures/*.jsonl` file.
-- The sample repo (`examples/sample-repo`) is copied to `~/.agenthotel/sample-repo` by `POST /api/sample/init`;
+- The sample repo (`examples/sample-repo`) is copied to `~/.deskhaven/sample-repo` by `POST /api/sample/init`;
   its tests run with Node's `--experimental-strip-types` and a quoted glob (`--test 'test/*.test.ts'`).
 - `pnpm dev` runs the server under `tsx watch`: **editing any server file restarts it and kills every live
   agent process** (sessions stay resumable; queued tasks re-dispatch, mid-turn tasks go to Needs input).
@@ -88,7 +88,7 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
 ## Graphics phase (G0–G4) notes
 
 - Two renderers behind the same `World` contract: `VITE_RENDERER=pixi|three` at build/dev time,
-  `localStorage['agenthotel.renderer']` overrides it at runtime. `createWorld()` returns a `LazyWorld`
+  `localStorage['deskhaven.renderer']` overrides it at runtime. `createWorld()` returns a `LazyWorld`
   that queues calls until the backend is dynamically imported in `mount()`; `three` is the default
   since G3, `VITE_RENDERER=pixi` or the Settings selector brings the pixel-art path back. `?stats=1`
   shows fps / draw calls / triangles in the Three renderer. See ARCHITECTURE.md §11.
@@ -127,3 +127,9 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   `game/preview.ts`): Rollup then merges the two graphs and 190 Pixi modules land in the entry chunk
   (416 kB → 658 kB). Import the lazy wrappers statically; only the wrappers themselves `import()`
   the Three modules. Check `pnpm build`: entry ≈ 416 kB, Three core in a lazy `lights-*.js` chunk.
+- Rename compatibility (AgentHotel → Deskhaven, 2026-10-03): env vars are read as `DESKHAVEN_*` with
+  `AGENTHOTEL_*` as fallback (`envVar()` in `apps/server/src/config.ts`); the data dir defaults to
+  `~/.deskhaven` but an existing `~/.agenthotel` (and its `agenthotel.db`) keeps being used until the
+  new one exists, because worktree paths in the DB are absolute; browser storage reads
+  `deskhaven.*` then `agenthotel.*`. The manager MCP tools are now `mcp__deskhaven__*`; the recorded
+  fixture still contains the old tool names on purpose.

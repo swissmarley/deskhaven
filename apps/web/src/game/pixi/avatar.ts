@@ -1,4 +1,4 @@
-import type { Avatar, Facing } from '@agenthotel/shared';
+import type { Avatar, Facing } from '@deskhaven/shared';
 import { Container, Graphics, Rectangle, Sprite, Text, TextStyle, Texture } from 'pixi.js';
 import type { AvatarPalette, AvatarSheetTextures, Painters } from '../assets/index.js';
 import { parseHex } from '../color.js';

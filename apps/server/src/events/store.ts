@@ -1,4 +1,4 @@
-import { type AgentEvent, AgentEventSchema } from '@agenthotel/shared';
+import { type AgentEvent, AgentEventSchema } from '@deskhaven/shared';
 import { and, asc, count, desc, eq, gt, gte, inArray, lte } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { events as eventsTable } from '../db/schema.js';

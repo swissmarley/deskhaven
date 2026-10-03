@@ -1,4 +1,4 @@
-import { defaultRoom } from '@agenthotel/shared';
+import { defaultRoom } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import {
   buildGrid,

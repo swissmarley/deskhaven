@@ -1,4 +1,4 @@
-import { APP_VERSION } from '@agenthotel/shared';
+import { APP_VERSION } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 
 describe('web smoke', () => {

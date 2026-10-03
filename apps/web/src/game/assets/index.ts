@@ -1,4 +1,4 @@
-import type { Avatar, Facing, FurnitureKind } from '@agenthotel/shared';
+import type { Avatar, Facing, FurnitureKind } from '@deskhaven/shared';
 import type { Graphics } from 'pixi.js';
 import type { AvatarSheetTextures } from './generated.js';
 import { ASSET_MANIFEST, type AssetKey } from './manifest.js';

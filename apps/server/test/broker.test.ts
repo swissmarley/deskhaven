@@ -1,4 +1,4 @@
-import type { PermissionRequest } from '@agenthotel/shared';
+import type { PermissionRequest } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { PermissionBroker, sessionScoped } from '../src/agent/permission-broker.js';
 import { openDb } from '../src/db/client.js';

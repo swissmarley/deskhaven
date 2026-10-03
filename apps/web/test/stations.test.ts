@@ -1,4 +1,4 @@
-import { type Behavior, defaultRoom } from '@agenthotel/shared';
+import { type Behavior, defaultRoom } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { buildGrid, isWalkable, tileKey } from '../src/game/grid.js';
 import { mulberry32 } from '../src/game/rng.js';

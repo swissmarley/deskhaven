@@ -4,7 +4,7 @@ import {
   type Room,
   RoomSchema,
   validateRoom,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import { eq } from 'drizzle-orm';
 import type { AgentService } from '../agents/service.js';
 import type { Db } from '../db/client.js';

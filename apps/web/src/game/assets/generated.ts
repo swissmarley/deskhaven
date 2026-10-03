@@ -1,4 +1,4 @@
-import type { Avatar } from '@agenthotel/shared';
+import type { Avatar } from '@deskhaven/shared';
 import { Rectangle, Texture } from 'pixi.js';
 import { generateAvatarSheet, SHEET_SCALE } from '../sprites.js';
 

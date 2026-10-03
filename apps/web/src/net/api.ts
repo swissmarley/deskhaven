@@ -12,7 +12,7 @@ import type {
   UpdateAgent,
   UpdateTask,
   UsageSnapshot,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 
 async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {

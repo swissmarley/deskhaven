@@ -4,7 +4,7 @@ import {
   interactionTiles,
   type Room,
   rotatedSize,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import {
   Box3,
   Group,

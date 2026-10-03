@@ -1,4 +1,4 @@
-import { BUILTIN_PRESETS, type RolePreset, RolePresetSchema } from '@agenthotel/shared';
+import { BUILTIN_PRESETS, type RolePreset, RolePresetSchema } from '@deskhaven/shared';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { rolePresets } from '../db/schema.js';

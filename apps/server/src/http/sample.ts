@@ -29,7 +29,7 @@ export function ensureSampleRepo(dataDir: string, source = bundledSamplePath()):
         '-c',
         'user.name=Deskhaven',
         '-c',
-        'user.email=agenthotel@localhost',
+        'user.email=deskhaven@localhost',
         'commit',
         '-q',
         '-m',

@@ -88,7 +88,7 @@ describe('tool classification', () => {
     expect(classifyTool('Bash')).toBe('bash');
     expect(classifyTool('WebFetch')).toBe('web');
     expect(classifyTool('Task')).toBe('subagent');
-    expect(classifyTool('mcp__agenthotel__create_task')).toBe('mcp');
+    expect(classifyTool('mcp__deskhaven__create_task')).toBe('mcp');
     expect(classifyTool('Something')).toBe('other');
     expect(isDangerousTool('Bash')).toBe(true);
     expect(isDangerousTool('Read')).toBe(false);

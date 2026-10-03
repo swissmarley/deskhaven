@@ -14,7 +14,7 @@ import {
   type RolePreset,
   type Room,
   type UpdateAgent,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import { and, eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { agents as agentsTable, usageDaily } from '../db/schema.js';

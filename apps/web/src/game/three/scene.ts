@@ -1,4 +1,4 @@
-import type { Avatar, Facing, Room } from '@agenthotel/shared';
+import type { Avatar, Facing, Room } from '@deskhaven/shared';
 import {
   ACESFilmicToneMapping,
   Mesh,

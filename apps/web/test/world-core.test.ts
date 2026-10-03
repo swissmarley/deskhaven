@@ -1,4 +1,4 @@
-import { type Behavior, defaultRoom, type Furniture, type Room } from '@agenthotel/shared';
+import { type Behavior, defaultRoom, type Furniture, type Room } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import type { InputBinder } from '../src/game/core/dom-input.js';
 import { WorldCore } from '../src/game/core/world-core.js';

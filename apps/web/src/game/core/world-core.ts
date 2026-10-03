@@ -4,7 +4,7 @@ import {
   type Facing,
   type Room,
   stationForBehavior,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import { Camera, type CameraView } from '../camera.js';
 import {
   beginFurnitureDrag,

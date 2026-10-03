@@ -10,10 +10,10 @@
     "Glob",
     "LS",
     "TodoWrite",
-    "mcp__agenthotel__list_agents",
-    "mcp__agenthotel__create_task",
-    "mcp__agenthotel__assign_task",
-    "mcp__agenthotel__task_status"
+    "mcp__deskhaven__list_agents",
+    "mcp__deskhaven__create_task",
+    "mcp__deskhaven__assign_task",
+    "mcp__deskhaven__task_status"
   ],
   "allowedTools": [
     "Read",
@@ -21,10 +21,10 @@
     "Glob",
     "LS",
     "TodoWrite",
-    "mcp__agenthotel__list_agents",
-    "mcp__agenthotel__create_task",
-    "mcp__agenthotel__assign_task",
-    "mcp__agenthotel__task_status"
+    "mcp__deskhaven__list_agents",
+    "mcp__deskhaven__create_task",
+    "mcp__deskhaven__assign_task",
+    "mcp__deskhaven__task_status"
   ],
   "permissionMode": "default",
   "manager": true

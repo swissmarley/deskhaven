@@ -1,4 +1,4 @@
-import { type ServerMessage, ServerMessageSchema } from '@agenthotel/shared';
+import { type ServerMessage, ServerMessageSchema } from '@deskhaven/shared';
 import type { WebSocket } from 'ws';
 
 /** Fan-out of validated server messages to every connected browser. */

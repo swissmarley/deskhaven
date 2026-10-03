@@ -1,4 +1,4 @@
-import { type ClientMessage, type ServerMessage, ServerMessageSchema } from '@agenthotel/shared';
+import { type ClientMessage, type ServerMessage, ServerMessageSchema } from '@deskhaven/shared';
 
 export type ConnectionState = 'connecting' | 'open' | 'closed';
 

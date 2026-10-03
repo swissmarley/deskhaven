@@ -1,4 +1,4 @@
-import type { AgentEvent } from '@agenthotel/shared';
+import type { AgentEvent } from '@deskhaven/shared';
 
 export function fmtTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], {

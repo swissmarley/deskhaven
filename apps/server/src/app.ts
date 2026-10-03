@@ -8,7 +8,7 @@ import {
   defaultRoom,
   type RolePreset,
   type Room,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
@@ -168,7 +168,7 @@ export async function buildApp(
     runtimeDeps: {
       mcpServers: (agent) =>
         presetService.get(agent.rolePresetId)?.manager
-          ? { agenthotel: createManagerMcpServer({ agents, tasks, selfId: agent.id }) }
+          ? { deskhaven: createManagerMcpServer({ agents, tasks, selfId: agent.id }) }
           : undefined,
       auth: () => auth,
       events,

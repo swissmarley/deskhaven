@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { FileDiff } from '@agenthotel/shared';
+import type { FileDiff } from '@deskhaven/shared';
 import { createTwoFilesPatch } from 'diff';
 
 const MAX_SNAPSHOT_BYTES = 512 * 1024;

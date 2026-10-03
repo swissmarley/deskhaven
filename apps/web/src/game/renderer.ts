@@ -7,7 +7,9 @@ import type { WorldExtras } from './world-extras.js';
 export type RendererKind = 'pixi' | 'three';
 
 /** `localStorage` key that overrides the build-time renderer choice (handy for A/B in the browser). */
-export const RENDERER_STORAGE_KEY = 'agenthotel.renderer';
+export const RENDERER_STORAGE_KEY = 'deskhaven.renderer';
+/** Key used before the rename; read as a fallback so the user's choice survives the upgrade. */
+export const LEGACY_RENDERER_STORAGE_KEY = 'agenthotel.renderer';
 
 const KINDS: readonly RendererKind[] = ['pixi', 'three'];
 
@@ -34,7 +36,9 @@ export function resolveRendererKind(
 export function rendererKind(): RendererKind {
   let stored: string | null | undefined;
   try {
-    stored = globalThis.localStorage?.getItem(RENDERER_STORAGE_KEY);
+    stored =
+      globalThis.localStorage?.getItem(RENDERER_STORAGE_KEY) ??
+      globalThis.localStorage?.getItem(LEGACY_RENDERER_STORAGE_KEY);
   } catch {
     stored = undefined;
   }

@@ -1,4 +1,4 @@
-import { type Agent, AgentSchema, emptyUsage } from '@agenthotel/shared';
+import { type Agent, AgentSchema, emptyUsage } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { PermissionBroker } from '../src/agent/permission-broker.js';
 import { AgentRuntime, type RuntimeDeps } from '../src/agent/runtime.js';

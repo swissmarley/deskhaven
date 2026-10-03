@@ -1,4 +1,4 @@
-import type { AuthMode, AuthStatus } from '@agenthotel/shared';
+import type { AuthMode, AuthStatus } from '@deskhaven/shared';
 import type { ChildEnv } from './env.js';
 
 export interface AuthConstraints {

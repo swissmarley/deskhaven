@@ -1,4 +1,4 @@
-import type { RolePreset } from '@agenthotel/shared';
+import type { RolePreset } from '@deskhaven/shared';
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';

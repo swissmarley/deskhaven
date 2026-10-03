@@ -7,7 +7,7 @@ import {
   type TaskStatus,
   truncate,
   type UpdateTask,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import { eq } from 'drizzle-orm';
 import type { AgentManager } from '../agent/manager.js';
 import type { AgentService } from '../agents/service.js';

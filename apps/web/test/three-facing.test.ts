@@ -1,4 +1,4 @@
-import type { Facing } from '@agenthotel/shared';
+import type { Facing } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { type Facing8, facing8FromDelta, facing8Of, yawFor8 } from '../src/game/iso.js';
 import {

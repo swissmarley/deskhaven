@@ -213,7 +213,7 @@ describe('throttling and voice cap (pure)', () => {
 });
 
 describe('persistence', () => {
-  it('writes toggles and volume under agenthotel.sound and reads them back', () => {
+  it('writes toggles and volume under deskhaven.sound and reads them back', () => {
     const store = new MemoryStorage();
     vi.stubGlobal('localStorage', store);
     reloadSoundPrefs();

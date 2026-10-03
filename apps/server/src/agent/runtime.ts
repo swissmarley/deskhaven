@@ -8,9 +8,10 @@ import {
   classifyTool,
   newId,
   type Settings,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import type { ChildEnv } from '../auth/env.js';
 import type { AuthProvider } from '../auth/types.js';
+import { envVar } from '../config.js';
 import type { EventStore } from '../events/store.js';
 import { scrubSecrets } from '../logger.js';
 import { DiffTracker, isInside } from './diff-tracker.js';
@@ -467,10 +468,10 @@ export class AgentRuntime {
 }
 
 /**
- * Dev aid: when AGENTHOTEL_RECORD_SDK points at a file, every raw SDK message is appended as JSONL so
+ * Dev aid: when DESKHAVEN_RECORD_SDK points at a file, every raw SDK message is appended as JSONL so
  * real sessions can become normaliser fixtures (`apps/server/test/fixtures`). Off by default.
  */
-export function recordSdkMessage(m: SDKMessage, file = process.env.AGENTHOTEL_RECORD_SDK): void {
+export function recordSdkMessage(m: SDKMessage, file = envVar(process.env, 'RECORD_SDK')): void {
   if (!file) return;
   try {
     fs.appendFileSync(file, `${JSON.stringify(m)}\n`);

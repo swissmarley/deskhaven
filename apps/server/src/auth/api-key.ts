@@ -1,8 +1,8 @@
-import type { AuthStatus } from '@agenthotel/shared';
+import type { AuthStatus } from '@deskhaven/shared';
 import { type ChildEnv, scrubAuthEnv } from './env.js';
 import type { AuthConstraints, AuthProvider } from './types.js';
 
-export const KEYCHAIN_SERVICE = 'agenthotel';
+export const KEYCHAIN_SERVICE = 'deskhaven';
 export const KEYCHAIN_ACCOUNT = 'anthropic-api-key';
 
 export interface KeyStore {

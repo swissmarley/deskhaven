@@ -1,5 +1,5 @@
 {
-  "name": "agenthotel",
+  "name": "deskhaven",
   "version": "0.1.0",
   "private": true,
   "description": "Isometric office where every avatar is a real Claude Code agent",
@@ -15,7 +15,7 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "test": "pnpm -r run test",
-    "start": "pnpm --filter @agenthotel/server start",
+    "start": "pnpm --filter @deskhaven/server start",
     "clean": "rm -rf apps/*/dist packages/*/dist node_modules apps/*/node_modules packages/*/node_modules"
   },
   "devDependencies": {

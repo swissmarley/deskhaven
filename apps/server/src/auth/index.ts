@@ -1,4 +1,4 @@
-import type { Settings } from '@agenthotel/shared';
+import type { Settings } from '@deskhaven/shared';
 import { ApiKeyAuthProvider, type KeyStore } from './api-key.js';
 import type { ChildEnv } from './env.js';
 import { ClaudeSubscriptionAuthProvider } from './subscription.js';

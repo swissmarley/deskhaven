@@ -1,4 +1,4 @@
-import type { Facing } from '@agenthotel/shared';
+import type { Facing } from '@deskhaven/shared';
 import { Plane, Raycaster, Vector2, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { internTint } from '../src/game/color.js';

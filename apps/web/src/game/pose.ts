@@ -1,4 +1,4 @@
-import type { Behavior } from '@agenthotel/shared';
+import type { Behavior } from '@deskhaven/shared';
 
 /**
  * Visual poses an avatar can show. Behaviours map onto these through `poseFor`; `coffee` is the

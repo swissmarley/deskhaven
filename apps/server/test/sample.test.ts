@@ -6,7 +6,7 @@ import { bundledSamplePath, ensureSampleRepo } from '../src/http/sample.js';
 
 describe('sample repo', () => {
   it('copies the bundled sample and initialises git once', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agenthotel-sample-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-sample-'));
     const target = ensureSampleRepo(dir);
     expect(fs.existsSync(path.join(target, 'package.json'))).toBe(true);
     expect(fs.existsSync(path.join(target, 'src/stats.ts'))).toBe(true);

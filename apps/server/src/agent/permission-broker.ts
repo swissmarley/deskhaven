@@ -3,7 +3,7 @@ import {
   type PermissionDecision,
   type PermissionRequest,
   PermissionRequestSchema,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { permissionRequests } from '../db/schema.js';

@@ -58,7 +58,7 @@ Acceptance: both modes probe correctly on this machine; a prompt such as "read t
 
 ## M3 — Multi-agent, HR desk, persistence, resume (2 days)
 
-1. Drizzle schema + migrations for all tables in ARCHITECTURE §7; `AGENTHOTEL_DATA_DIR`.
+1. Drizzle schema + migrations for all tables in ARCHITECTURE §7; `DESKHAVEN_DATA_DIR`.
 2. HR desk UI: create/edit agent (name, palette/outfit picker, role preset, system prompt, model from `supportedModels()`, tools, permission mode, workdir or repo + "use a git worktree").
 3. Role presets as editable JSON (`packages/shared/presets/*.json`, seeded into SQLite): Architect (read-only, plan), Engineer (edit + bash asks), Reviewer (read-only), Researcher (web + read), QA (bash + tests).
 4. `AgentManager`: semaphore for the concurrency cap, lifecycle spawn / pause / resume / stop / delete, `session_id` persisted, `resume` on restart, worktree service (`git worktree add`, dirty check on removal).
@@ -119,15 +119,15 @@ Rule: schema changes in `packages/shared` go through the lead first; consumers a
 
 ## Sample repo
 
-`examples/sample-repo/`: a tiny TypeScript CLI (3–4 files, a README, a test, two planted TODOs and one bug) copied into `~/.agenthotel/sample` on first run and `git init`-ed, so the Definition-of-Done scenario works out of the box. Any other path can be used instead.
+`examples/sample-repo/`: a tiny TypeScript CLI (3–4 files, a README, a test, two planted TODOs and one bug) copied into `~/.deskhaven/sample` on first run and `git init`-ed, so the Definition-of-Done scenario works out of the box. Any other path can be used instead.
 
 ## Decisions taken without asking (recorded, reversible)
 
-- Biome instead of ESLint + Prettier; TypeScript 5.9 instead of 7.x; `@napi-rs/keyring` instead of `keytar`; WebAudio-synthesised sounds; own A\*; manager delegation via in-process MCP tools; data in `~/.agenthotel`; server binds loopback in both modes by default; `settingSources: ['project']` by default; `bypassPermissions` never exposed.
+- Biome instead of ESLint + Prettier; TypeScript 5.9 instead of 7.x; `@napi-rs/keyring` instead of `keytar`; WebAudio-synthesised sounds; own A\*; manager delegation via in-process MCP tools; data in `~/.deskhaven`; server binds loopback in both modes by default; `settingSources: ['project']` by default; `bypassPermissions` never exposed.
 
 ## Resolved questions (answered 2026-10-02)
 
-1. **Sample repo** — bundle `examples/sample-repo`, a tiny TypeScript CLI, copied into `~/.agenthotel/sample` on first run.
+1. **Sample repo** — bundle `examples/sample-repo`, a tiny TypeScript CLI, copied into `~/.deskhaven/sample` on first run.
 2. **Default models** — employees `claude-sonnet-5-5`, Manager `claude-opus-5-5`; selectable per agent from `supportedModels()`.
 3. **Auth mode** — API_KEY stays the documented product default, but subscription mode must **always** be available to the user: the feature flag defaults on, Settings always lists both modes, and the first-run wizard preselects subscription when the probe says "logged in" and no API key exists (the only mode that works on such a machine). The policy notice and check date are shown next to the switch.
 4. **Permission ceiling** — `bypassPermissions` is never exposed; the maximum is `acceptEdits` plus per-role `allowedTools`. Engineer preset auto-allows Edit/Write and asks for Bash.
@@ -145,7 +145,7 @@ Graphics work uses the Replay tab (≈290 logged events) instead of live agents.
 - Docs: ARCHITECTURE §11, this plan, STATUS, CLAUDE.md gotchas, ASSETS.md licence table.
 - Deps: `three@0.186.1` + `@types/three@0.186.0` (pinned minor), `three/addons/*` verified.
 - `createWorld()` → `LazyWorld`: queues calls until the backend chosen by `VITE_RENDERER`
-  (or the `agenthotel.renderer` localStorage override) is dynamically imported in `mount()`.
+  (or the `deskhaven.renderer` localStorage override) is dynamically imported in `mount()`.
 - Assets downloaded from official CC0 sources, inspected with `scripts/inspect-gltf.mjs`, the used
   files committed under `apps/web/public/models/` (see ASSETS.md); server returns 404 for missing
   files instead of the SPA shell.

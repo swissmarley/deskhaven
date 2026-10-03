@@ -1,4 +1,4 @@
-import type { Task, TaskStatus } from '@agenthotel/shared';
+import type { Task, TaskStatus } from '@deskhaven/shared';
 import {
   DndContext,
   type DragEndEvent,

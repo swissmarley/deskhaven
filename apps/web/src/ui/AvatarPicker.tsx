@@ -1,4 +1,4 @@
-import type { Avatar } from '@agenthotel/shared';
+import type { Avatar } from '@deskhaven/shared';
 import { type JSX, useEffect, useState } from 'react';
 import { renderAvatarPreview3d } from '../game/preview.js';
 import { rendererKind } from '../game/renderer.js';

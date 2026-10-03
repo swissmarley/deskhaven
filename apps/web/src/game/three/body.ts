@@ -1,4 +1,4 @@
-import type { Avatar } from '@agenthotel/shared';
+import type { Avatar } from '@deskhaven/shared';
 import type { Object3D, Vector3 } from 'three';
 import type { Pose } from '../pose.js';
 

@@ -1,4 +1,4 @@
-import type { AuthStatus } from '@agenthotel/shared';
+import type { AuthStatus } from '@deskhaven/shared';
 import { type JSX, useEffect, useState } from 'react';
 import { api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
@@ -186,7 +186,7 @@ export function Onboarding(): JSX.Element | null {
               {samplePath ? <code className="small">{samplePath}</code> : null}
             </div>
             <p className="muted small">
-              Everything Deskhaven stores lives under ~/.agenthotel (database, worktrees, sample
+              Everything Deskhaven stores lives under ~/.deskhaven (database, worktrees, sample
               repo).
             </p>
             <div className="row">

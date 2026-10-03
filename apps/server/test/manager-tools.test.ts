@@ -1,4 +1,4 @@
-import type { Agent, Task } from '@agenthotel/shared';
+import type { Agent, Task } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import type { AgentService } from '../src/agents/service.js';
 import { managerActions, managerToolNames } from '../src/manager/tools.js';
@@ -61,7 +61,7 @@ describe('manager delegation tools', () => {
         .listAgents()
         .map((a) => a.id),
     ).toEqual(['eng', 'qa']);
-    expect(managerToolNames()).toContain('mcp__agenthotel__create_task');
+    expect(managerToolNames()).toContain('mcp__deskhaven__create_task');
   });
   it('creates and assigns tasks and reports status', () => {
     const a = setup();

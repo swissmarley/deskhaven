@@ -1,4 +1,4 @@
-import type { AuthStatus } from '@agenthotel/shared';
+import type { AuthStatus } from '@deskhaven/shared';
 import { type CliAuthStatus, cliAuthStatus } from './cli-path.js';
 import { type ChildEnv, scrubAuthEnv } from './env.js';
 import type { AuthConstraints, AuthProvider } from './types.js';

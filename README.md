@@ -19,10 +19,10 @@ pnpm dev        # server on http://127.0.0.1:8787, web UI on http://127.0.0.1:51
 ```
 
 Open http://127.0.0.1:5173. On first run the app picks an authentication mode (below), prepares a small
-sample repository under `~/.agenthotel/sample-repo`, and lets you hire your first agent.
+sample repository under `~/.deskhaven/sample-repo`, and lets you hire your first agent.
 
 Other commands: `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, `pnpm start` (production
-server; set `AGENTHOTEL_WEB_DIST=apps/web/dist` to serve the built UI from the same port).
+server; set `DESKHAVEN_WEB_DIST=apps/web/dist` to serve the built UI from the same port).
 
 ## Authentication: two modes
 
@@ -42,7 +42,7 @@ Caveats worth knowing:
   UI, never reads, copies or stores OAuth tokens or credential files, and never proxies requests for other
   users. Anthropic's policy on Agent SDK usage with Pro/Max plans changed several times in 2026; the
   current findings and date are in [ARCHITECTURE.md §5.1](ARCHITECTURE.md). The strategy sits behind one
-  feature flag (`AGENTHOTEL_ENABLE_SUBSCRIPTION_MODE=0` disables it).
+  feature flag (`DESKHAVEN_ENABLE_SUBSCRIPTION_MODE=0` disables it).
 - **An API key in the environment silently wins.** If `ANTHROPIC_API_KEY` is set and you choose
   subscription mode, the app strips it for agents; the first session then verifies `apiKeySource === 'none'`
   and stops the agent with an error if a key still reached the process.
@@ -122,7 +122,7 @@ accessories; furniture comes from the CC0 Kenney Furniture Kit; licences in [ASS
 
 ## Data and privacy
 
-Everything lives under `~/.agenthotel/` (SQLite database, worktrees, the sample repo). Session
+Everything lives under `~/.deskhaven/` (SQLite database, worktrees, the sample repo). Session
 transcripts are written by Claude Code itself under `~/.claude/projects/`. Nothing is sent anywhere except
 the Anthropic API calls your agents make. Logs redact key-like values.
 

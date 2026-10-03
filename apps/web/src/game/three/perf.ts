@@ -9,7 +9,7 @@ export const FPS_WINDOW_MS = 1000;
 export const DEGRADE_FPS = 45;
 export const DEGRADE_HOLD_MS = 3000;
 /** `localStorage` key that turns the stats overlay on (`'1'`), besides `?stats=1`. */
-export const STATS_STORAGE_KEY = 'agenthotel.stats';
+export const STATS_STORAGE_KEY = 'deskhaven.stats';
 
 /** Rolling frame counter: fps over the last `FPS_WINDOW_MS` of frames. */
 export class FpsMeter {

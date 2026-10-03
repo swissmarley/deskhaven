@@ -9,5 +9,5 @@ coverage/
 *.db-journal
 *.db-wal
 *.db-shm
-.agenthotel/
+.deskhaven/
 /tmp/

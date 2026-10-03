@@ -1,4 +1,4 @@
-import type { Agent, AgentStatus } from '@agenthotel/shared';
+import type { Agent, AgentStatus } from '@deskhaven/shared';
 import type { AgentService } from '../agents/service.js';
 import type { WsHub } from '../ws/hub.js';
 import { AgentRuntime, type RuntimeDeps } from './runtime.js';

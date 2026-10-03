@@ -1,4 +1,4 @@
-import type { Avatar, Facing } from '@agenthotel/shared';
+import type { Avatar, Facing } from '@deskhaven/shared';
 
 /**
  * Pure helpers for the offscreen 3D avatar preview (`three/preview.ts`): the cache key, the LRU

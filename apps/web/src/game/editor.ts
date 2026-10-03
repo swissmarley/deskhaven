@@ -1,5 +1,5 @@
-import type { FurnitureKind } from '@agenthotel/shared';
-import { rotatedSize } from '@agenthotel/shared';
+import type { FurnitureKind } from '@deskhaven/shared';
+import { rotatedSize } from '@deskhaven/shared';
 import type { TilePoint } from './types.js';
 
 /**

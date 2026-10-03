@@ -1,4 +1,4 @@
-import { FURNITURE_CATALOG, type FurnitureKind } from '@agenthotel/shared';
+import { FURNITURE_CATALOG, type FurnitureKind } from '@deskhaven/shared';
 import {
   BoxGeometry,
   type BufferGeometry,

@@ -1,4 +1,4 @@
-import { AgentEventSchema } from '@agenthotel/shared';
+import { AgentEventSchema } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import {
   errorKindFromSdk,

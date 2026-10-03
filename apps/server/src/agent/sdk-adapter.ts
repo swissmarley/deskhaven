@@ -8,7 +8,6 @@
  * - `hooks` take `HookCallbackMatcher[]` per event; callbacks receive `(input, toolUseID, { signal })`.
  */
 
-import type { PermissionMode } from '@agenthotel/shared';
 import {
   type CanUseTool,
   type HookCallback,
@@ -22,6 +21,7 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { PermissionMode } from '@deskhaven/shared';
 
 export type {
   CanUseTool,

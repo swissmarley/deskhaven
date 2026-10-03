@@ -6,7 +6,7 @@ import {
   UpdateAgentSchema,
   UpdateSettingsSchema,
   UpdateTaskSchema,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.js';

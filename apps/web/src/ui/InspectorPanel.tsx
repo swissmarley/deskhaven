@@ -1,4 +1,4 @@
-import type { AgentEvent } from '@agenthotel/shared';
+import type { AgentEvent } from '@deskhaven/shared';
 import { type JSX, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { api } from '../net/api.js';

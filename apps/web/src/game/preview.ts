@@ -1,4 +1,4 @@
-import type { Avatar } from '@agenthotel/shared';
+import type { Avatar } from '@deskhaven/shared';
 import type { PreviewOptions } from './three/preview-math.js';
 
 export type { PreviewOptions } from './three/preview-math.js';

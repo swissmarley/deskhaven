@@ -1,4 +1,4 @@
-import type { Room } from '@agenthotel/shared';
+import type { Room } from '@deskhaven/shared';
 import {
   BoxGeometry,
   BufferGeometry,

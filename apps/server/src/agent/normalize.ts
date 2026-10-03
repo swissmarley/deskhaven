@@ -4,7 +4,7 @@ import {
   type ErrorKind,
   summarizeToolInput,
   truncate,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import type { HookInput, SDKMessage } from './sdk-adapter.js';
 
 export interface NormalizeContext {

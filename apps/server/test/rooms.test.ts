@@ -1,4 +1,4 @@
-import { DEFAULT_ROOM_ID, defaultRoom } from '@agenthotel/shared';
+import { DEFAULT_ROOM_ID, defaultRoom } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import type { AgentService } from '../src/agents/service.js';
 import { openDb } from '../src/db/client.js';

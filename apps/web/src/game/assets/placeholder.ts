@@ -1,9 +1,4 @@
-import {
-  type Facing,
-  FURNITURE_CATALOG,
-  type FurnitureKind,
-  rotatedSize,
-} from '@agenthotel/shared';
+import { type Facing, FURNITURE_CATALOG, type FurnitureKind, rotatedSize } from '@deskhaven/shared';
 import type { Graphics } from 'pixi.js';
 import { shade } from '../color.js';
 import {

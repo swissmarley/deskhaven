@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { AgentEventSchema } from '@agenthotel/shared';
+import { AgentEventSchema } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { normalizeSdkMessage } from '../src/agent/normalize.js';
 import type { SDKMessage } from '../src/agent/sdk-adapter.js';
 
 /**
- * Replays recorded SDK sessions (see AGENTHOTEL_RECORD_SDK) through the normaliser. Every recorded
+ * Replays recorded SDK sessions (see DESKHAVEN_RECORD_SDK) through the normaliser. Every recorded
  * message must produce only valid AgentEvents, and the message types we claim to handle must never
  * fall through to `unknown`.
  */

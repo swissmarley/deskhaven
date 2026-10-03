@@ -1,4 +1,4 @@
-import { truncate } from '@agenthotel/shared';
+import { truncate } from '@deskhaven/shared';
 import type { BubbleKind } from './types.js';
 
 /**

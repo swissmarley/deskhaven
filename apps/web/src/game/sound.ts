@@ -1,7 +1,7 @@
 /**
  * Synthesised WebAudio sound set: short motifs (≤ 400 ms) built from oscillators and filtered
  * noise, no audio files. Preferences (per-sound toggles + master volume) persist in localStorage
- * under `agenthotel.sound`. Everything degrades to a no-op where WebAudio or storage is missing
+ * under `deskhaven.sound`. Everything degrades to a no-op where WebAudio or storage is missing
  * (Node tests, SSR, locked-down browsers) and `playSound` never throws.
  *
  * The pure parts — preference (de)serialisation, throttling, the voice cap — are exported so they
@@ -44,7 +44,9 @@ export const SOUND_LABELS: Record<SoundKind, string> = {
   click: 'UI click',
 };
 
-export const SOUND_STORAGE_KEY = 'agenthotel.sound';
+export const SOUND_STORAGE_KEY = 'deskhaven.sound';
+/** Key used before the rename; read as a fallback. */
+export const LEGACY_SOUND_STORAGE_KEY = 'agenthotel.sound';
 export const DEFAULT_MASTER_VOLUME = 0.7;
 /** Simultaneous motifs; a burst of events beyond this is dropped rather than stacked. */
 export const MAX_VOICES = 6;
@@ -152,7 +154,8 @@ function storage(): Storage | null {
 function loadPrefs(): SoundPrefs {
   let json: string | null = null;
   try {
-    json = storage()?.getItem(SOUND_STORAGE_KEY) ?? null;
+    json =
+      storage()?.getItem(SOUND_STORAGE_KEY) ?? storage()?.getItem(LEGACY_SOUND_STORAGE_KEY) ?? null;
   } catch {
     json = null;
   }

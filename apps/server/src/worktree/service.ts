@@ -38,7 +38,7 @@ export class WorktreeService {
     if (!(await this.isGitRepo(repoDir)))
       throw new Error(`${repoDir} is not a git repository; worktrees need git`);
     const slug = `${slugify(agentName)}-${agentId.slice(0, 6)}`;
-    const branch = `agenthotel/${slug}`;
+    const branch = `deskhaven/${slug}`;
     const target = path.join(this.root(), slug);
     fs.mkdirSync(this.root(), { recursive: true });
     if (fs.existsSync(target)) throw new Error(`worktree path already exists: ${target}`);

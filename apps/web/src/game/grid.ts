@@ -1,5 +1,5 @@
-import type { Room } from '@agenthotel/shared';
-import { FURNITURE_CATALOG, footprintTiles, interactionTiles } from '@agenthotel/shared';
+import type { Room } from '@deskhaven/shared';
+import { FURNITURE_CATALOG, footprintTiles, interactionTiles } from '@deskhaven/shared';
 import type { TilePoint } from './types.js';
 
 /**

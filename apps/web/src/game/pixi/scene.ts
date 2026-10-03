@@ -1,4 +1,4 @@
-import type { Avatar, Facing, Room } from '@agenthotel/shared';
+import type { Avatar, Facing, Room } from '@deskhaven/shared';
 import { Application, Container, type Ticker } from 'pixi.js';
 import { loadPainters, type Painters } from '../assets/index.js';
 import type { CameraView } from '../camera.js';

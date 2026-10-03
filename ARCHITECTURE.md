@@ -25,7 +25,7 @@ risk list. The milestone plan and open questions live in [PLAN.md](PLAN.md).
 | Art | Placeholder (coloured iso boxes + labels) first; then procedurally generated 16×28 pixel sprite sheets (4 facings × 7 poses) from the `Avatar` DTO; single `assets/manifest.ts` with `placeholder` / `generated` / `sheet` kinds | Brief requirement; lets the game loop ship in M1 |
 | Pathfinding | Own A\* on the tile grid (8-dir, no corner cutting), ~80 lines, unit-tested | Grid is ≤ 30×30; a dependency would be heavier than the code |
 | Delegation | Manager agent gets an **in-process MCP server** (`createSdkMcpServer` + `tool()`) with `create_task`/`assign_task`/`list_agents`/`task_status`; employees never get these tools | Structured, flat, one level — no text parsing, and the SDK can't nest subagents beyond its own limits anyway |
-| Data dir | `~/.agenthotel/` (SQLite db, git worktrees, logs); override with `AGENTHOTEL_DATA_DIR` | Keeps the repo clean and makes "delete everything" one command |
+| Data dir | `~/.deskhaven/` (SQLite db, git worktrees, logs); override with `DESKHAVEN_DATA_DIR` | Keeps the repo clean and makes "delete everything" one command |
 | Models | Employees default to `claude-sonnet-5-5`, Manager to `claude-opus-5-5`; per-agent override from `supportedModels()` | Agreed 2026-10-02; balances plan usage against delegation quality |
 | Ports | server `127.0.0.1:8787` (REST + `/ws`), web `5173` with Vite proxy to the server | Single origin in dev, no CORS; prod build is served by the server |
 
@@ -185,9 +185,9 @@ interface AuthProvider {
 
 **First run.** API_KEY is the product default. When the machine has no API key but `claude auth status` reports a claude.ai login, the server preselects subscription mode on first start (and the onboarding wizard shows the choice), so the app is usable immediately; the user can switch at any time in Settings.
 
-**API_KEY mode (default).** Key from `ANTHROPIC_API_KEY` or the OS keychain (`@napi-rs/keyring`, service `agenthotel`, account `anthropic-api-key`). `childEnv` = `{ ...base, ANTHROPIC_API_KEY: key }`. The key is held in one closure, never logged (the logger has a redaction list), never serialised into any DTO, never written to SQLite. Settings UI can *set* a key into the keychain through a POST that returns only `{ stored: true }`; the GET returns only `{ source: 'env' | 'keychain' | 'none' }`.
+**API_KEY mode (default).** Key from `ANTHROPIC_API_KEY` or the OS keychain (`@napi-rs/keyring`, service `deskhaven`, account `anthropic-api-key`). `childEnv` = `{ ...base, ANTHROPIC_API_KEY: key }`. The key is held in one closure, never logged (the logger has a redaction list), never serialised into any DTO, never written to SQLite. Settings UI can *set* a key into the keychain through a POST that returns only `{ stored: true }`; the GET returns only `{ source: 'env' | 'keychain' | 'none' }`.
 
-**CLAUDE_SUBSCRIPTION mode (feature flag `AGENTHOTEL_ENABLE_SUBSCRIPTION_MODE`, default on; one constant to disable).** The mode is always selectable while the flag is on; the first-run wizard preselects it when the probe reports a login and no API key is present (agreed 2026-10-02).
+**CLAUDE_SUBSCRIPTION mode (feature flag `DESKHAVEN_ENABLE_SUBSCRIPTION_MODE`, default on; one constant to disable).** The mode is always selectable while the flag is on; the first-run wizard preselects it when the probe reports a login and no API key is present (agreed 2026-10-02).
 
 - No login UI. The user runs `claude login` in their own terminal (or `/login` inside Claude Code).
 - Probe = run the SDK's **bundled** `claude` binary with `auth status`, which prints JSON (`loggedIn`, `authMethod`, `subscriptionType`, `apiProvider`, `email`). Verified on this machine with CLI 2.1.280 (user is logged in via `claude.ai`, plan `max`). We read stdout only; we never open `~/.claude/.credentials.json` or the keychain entry Claude Code uses. Fallback probe: the `apiKeySource`/`accountInfo()` of a real session.
@@ -237,14 +237,14 @@ Primary sources:
 - **Permission mode default `'default'`** (ask) for every preset except where stated; `canUseTool` routes to the in-game modal. Decisions: allow once, allow for this session (echo `suggestions` as `updatedPermissions` with `destination: 'session'`), deny with message. Unanswered requests time out (default 10 min, configurable) → deny, and the task moves to *Needs Input*.
 - **Dangerous tools.** `Bash` and any write outside the agent's cwd always prompt unless the role preset lists them in `allowedTools`. A `PreToolUse` hook adds defence in depth: `Edit`/`Write`/`NotebookEdit` paths are resolved and must be inside `cwd` (or the role's `additionalDirectories`) else `permissionDecision: 'deny'`.
 - **`bypassPermissions` is not reachable from the UI or presets.** `allowDangerouslySkipPermissions` is never set.
-- **Sandboxing.** Each agent's `cwd` is its working directory or a dedicated git worktree (`~/.agenthotel/worktrees/<agentId>`, branch `agenthotel/<agent-slug>`). Worktrees are removed only through an explicit UI action that first checks for uncommitted changes.
+- **Sandboxing.** Each agent's `cwd` is its working directory or a dedicated git worktree (`~/.deskhaven/worktrees/<agentId>`, branch `deskhaven/<agent-slug>`). Worktrees are removed only through an explicit UI action that first checks for uncommitted changes.
 - **Budgets.** Per agent: `maxTurns`, `maxBudgetUsd` (SDK-enforced, yields `error_max_turns` / `error_max_budget_usd`), and a per-day cost cap enforced by `BudgetGuard` before each prompt is sent (sums today's `turn_completed.costUsd`). Global per-day cap as well.
 - **Kill switch.** One button/endpoint: aborts every `AbortController`, calls `interrupt()` first for a graceful stop, sets a `killed` flag that refuses new spawns until cleared, and emits a global event.
 - **Concurrency cap.** `AgentManager` counts *busy* agents (in a turn or waiting on a permission); an agent whose prompt would exceed the cap keeps the prompt queued with status `waiting` ("waiting for a desk") and starts as soon as another agent goes idle. Idle processes stay alive so sessions resume instantly; they do not count against the cap (memory is bounded by the idle-timeout in M6).
 
 ---
 
-## 7. Data model (SQLite via Drizzle; one DB file at `~/.agenthotel/agenthotel.db`)
+## 7. Data model (SQLite via Drizzle; one DB file at `~/.deskhaven/deskhaven.db`)
 
 | Table | Columns (abridged) |
 |---|---|
@@ -333,7 +333,7 @@ the editor's style changes nor the `Avatar` DTO customisation would reach the ar
 fallback if the frame budget fails.
 
 The renderer is selected at build time with `VITE_RENDERER=pixi|three` and overridden at runtime by
-`localStorage['agenthotel.renderer']` (Settings toggle, G3). `createWorld()` returns a `LazyWorld`
+`localStorage['deskhaven.renderer']` (Settings toggle, G3). `createWorld()` returns a `LazyWorld`
 that queues every call until the chosen backend module is dynamically imported in `mount()`, so the
 Pixi bundle never contains Three and vice versa. `three` has been the default since the G3 parity
 commit; `VITE_RENDERER=pixi` or the selector restores the pixel-art path.

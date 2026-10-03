@@ -4,17 +4,18 @@ import {
   type Settings,
   SettingsSchema,
   type UpdateSettingsSchema,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import { eq } from 'drizzle-orm';
 import type { z } from 'zod';
+import { envVar } from '../config.js';
 import type { Db } from '../db/client.js';
 import { settings as settingsTable } from '../db/schema.js';
 
 export const POLICY_CHECKED_AT = '2026-10-02';
 
-/** One place to disable the subscription strategy. Env override: AGENTHOTEL_ENABLE_SUBSCRIPTION_MODE=0 */
+/** One place to disable the subscription strategy. Env override: DESKHAVEN_ENABLE_SUBSCRIPTION_MODE=0 */
 export const SUBSCRIPTION_MODE_FEATURE_FLAG =
-  (process.env.AGENTHOTEL_ENABLE_SUBSCRIPTION_MODE ?? '1') !== '0';
+  (envVar(process.env, 'ENABLE_SUBSCRIPTION_MODE') ?? '1') !== '0';
 
 const KEY = 'app';
 

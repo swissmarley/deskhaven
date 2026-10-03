@@ -1,4 +1,4 @@
-import { type Furniture, interactionTiles, rotatedSize } from '@agenthotel/shared';
+import { type Furniture, interactionTiles, rotatedSize } from '@deskhaven/shared';
 
 /**
  * Door animation maths (pure, Node-testable). The `doorway.glb` leaf (`door 3` in the Kenney GLB,

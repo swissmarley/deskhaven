@@ -1,4 +1,4 @@
-import type { Avatar, Facing } from '@agenthotel/shared';
+import type { Avatar, Facing } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { contrastColor, hslToRgb, rgbToHsl, toHex } from '../src/game/color.js';
 import {

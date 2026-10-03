@@ -4,7 +4,7 @@ import type { AgentService } from '../agents/service.js';
 import type { TaskService } from '../tasks/service.js';
 
 /** The Manager's delegation tools, served in-process over MCP. Flat: employees never receive these. */
-export const MANAGER_MCP_SERVER = 'agenthotel';
+export const MANAGER_MCP_SERVER = 'deskhaven';
 
 export interface ManagerToolDeps {
   agents: AgentService;

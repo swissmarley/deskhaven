@@ -1,4 +1,4 @@
-import type { Avatar } from '@agenthotel/shared';
+import type { Avatar } from '@deskhaven/shared';
 import { type JSX, useEffect, useRef } from 'react';
 import { createWorld, playSound, unlockAudio } from '../game/index.js';
 import type { World } from '../game/types.js';
@@ -131,9 +131,9 @@ export function GameCanvas(): JSX.Element {
           },
         });
       installDefaultEvents();
-      window.addEventListener('agenthotel:editor-closed', installDefaultEvents);
+      window.addEventListener('deskhaven:editor-closed', installDefaultEvents);
       unsubs.push(() =>
-        window.removeEventListener('agenthotel:editor-closed', installDefaultEvents),
+        window.removeEventListener('deskhaven:editor-closed', installDefaultEvents),
       );
     });
 

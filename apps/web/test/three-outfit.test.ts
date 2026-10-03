@@ -1,4 +1,4 @@
-import type { Avatar } from '@agenthotel/shared';
+import type { Avatar } from '@deskhaven/shared';
 import { Box3, Mesh, MeshStandardMaterial, type Object3D, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { contrastColor, internTint, parseHex } from '../src/game/color.js';

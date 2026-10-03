@@ -30,7 +30,7 @@ import {
  * hidden elements get `display: none`, bubble pop/fade touch only `opacity` and a scale transform.
  */
 
-const STYLE_ID = 'agenthotel-world-overlay-style';
+const STYLE_ID = 'deskhaven-world-overlay-style';
 
 interface Entry {
   label: HTMLDivElement;

@@ -1,4 +1,4 @@
-import type { Avatar, Facing, Room } from '@agenthotel/shared';
+import type { Avatar, Facing, Room } from '@deskhaven/shared';
 import type { CameraView } from '../../src/game/camera.js';
 import type { Pose } from '../../src/game/pose.js';
 import type { Scene, SceneAvatarInit, SceneHit, SceneHost } from '../../src/game/scene.js';

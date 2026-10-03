@@ -1,4 +1,4 @@
-import type { Facing } from '@agenthotel/shared';
+import type { Facing } from '@deskhaven/shared';
 
 /**
  * Small pure conversions shared by picking and the avatars (three core only, Node-testable).

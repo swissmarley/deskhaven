@@ -1,4 +1,4 @@
-import { FURNITURE_CATALOG, type FurnitureKind, rotatedSize } from '@agenthotel/shared';
+import { FURNITURE_CATALOG, type FurnitureKind, rotatedSize } from '@deskhaven/shared';
 import { PX_PER_HEIGHT_UNIT } from './camera.js';
 
 /**

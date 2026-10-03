@@ -1,4 +1,4 @@
-import type { Avatar, Facing } from '@agenthotel/shared';
+import type { Avatar, Facing } from '@deskhaven/shared';
 import {
   CapsuleGeometry,
   ConeGeometry,

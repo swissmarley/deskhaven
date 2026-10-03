@@ -1,4 +1,4 @@
-import type { Avatar, Facing, Room } from '@agenthotel/shared';
+import type { Avatar, Facing, Room } from '@deskhaven/shared';
 import type { CameraView } from './camera.js';
 import type { Pose } from './pose.js';
 import type { BubbleKind, Ghost, TilePoint } from './types.js';

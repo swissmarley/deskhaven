@@ -10,7 +10,7 @@ import {
   type Settings,
   type Task,
   type UsageSnapshot,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import { create } from 'zustand';
 import type { ConnectionState } from '../net/ws.js';
 import { worldBus } from './bus.js';

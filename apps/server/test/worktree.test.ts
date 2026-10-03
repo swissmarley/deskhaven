@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { slugify, WorktreeService } from '../src/worktree/service.js';
 
 function tmpRepo(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agenthotel-wt-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-wt-'));
   const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   git('init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'hello\n');
@@ -18,12 +18,12 @@ function tmpRepo(): string {
 describe('WorktreeService', () => {
   it('creates, detects dirt, refuses dirty removal, then force-removes', async () => {
     const repo = tmpRepo();
-    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'agenthotel-data-'));
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
     const svc = new WorktreeService(data);
     expect(await svc.isGitRepo(repo)).toBe(true);
     expect(await svc.isGitRepo(os.tmpdir())).toBe(false);
     const wt = await svc.create(repo, 'abcdef123456', 'Ada Lovelace');
-    expect(wt.branch).toBe('agenthotel/ada-lovelace-abcdef');
+    expect(wt.branch).toBe('deskhaven/ada-lovelace-abcdef');
     expect(fs.existsSync(path.join(wt.path, 'a.txt'))).toBe(true);
     expect(await svc.isDirty(wt.path)).toBe(false);
     fs.writeFileSync(path.join(wt.path, 'b.txt'), 'new\n');

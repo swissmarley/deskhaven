@@ -3,7 +3,7 @@ import {
   emptyUsage,
   type UsageSnapshot,
   type UsageTotals,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import type { AgentService } from '../agents/service.js';
 
 type RateWindow = UsageSnapshot['rateLimits'][number];

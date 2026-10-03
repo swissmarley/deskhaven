@@ -8,10 +8,10 @@ let app: Awaited<ReturnType<typeof buildApp>>['app'];
 beforeAll(async () => {
   ({ app } = await buildApp(
     loadConfig({
-      AGENTHOTEL_DATA_DIR: '/tmp/agenthotel-test',
-      AGENTHOTEL_DB: ':memory:',
-      AGENTHOTEL_KEYSTORE: 'memory',
-      AGENTHOTEL_PROBE_ON_BOOT: '0',
+      DESKHAVEN_DATA_DIR: '/tmp/deskhaven-test',
+      DESKHAVEN_DB: ':memory:',
+      DESKHAVEN_KEYSTORE: 'memory',
+      DESKHAVEN_PROBE_ON_BOOT: '0',
     }),
   ));
 });

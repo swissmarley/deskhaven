@@ -1,5 +1,5 @@
-import type { Behavior, Facing, Room, Station } from '@agenthotel/shared';
-import { FURNITURE_CATALOG, interactionTiles, stationForBehavior } from '@agenthotel/shared';
+import type { Behavior, Facing, Room, Station } from '@deskhaven/shared';
+import { FURNITURE_CATALOG, interactionTiles, stationForBehavior } from '@deskhaven/shared';
 import { buildGrid, type Grid, isWalkable, randomWalkable, tileKey } from './grid.js';
 import { chebyshev, octile } from './iso.js';
 import type { TilePoint } from './types.js';

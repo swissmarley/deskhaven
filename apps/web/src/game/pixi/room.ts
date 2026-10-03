@@ -4,7 +4,7 @@ import {
   interactionTiles,
   type Room,
   rotatedSize,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import { Container, Graphics, Polygon, Text, TextStyle } from 'pixi.js';
 import type { Painters } from '../assets/index.js';
 import { GHOST_ALPHA, ghostTint } from '../editor.js';

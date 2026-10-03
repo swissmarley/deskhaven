@@ -1,4 +1,4 @@
-import type { Behavior, Room } from '@agenthotel/shared';
+import type { Behavior, Room } from '@deskhaven/shared';
 import type {
   BubbleKind,
   Ghost,

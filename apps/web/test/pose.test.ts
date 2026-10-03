@@ -1,4 +1,4 @@
-import type { Behavior, BehaviorKind } from '@agenthotel/shared';
+import type { Behavior, BehaviorKind } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { type Pose, poseFor } from '../src/game/pose.js';
 

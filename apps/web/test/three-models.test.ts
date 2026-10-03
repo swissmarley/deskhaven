@@ -3,7 +3,7 @@ import {
   type FurnitureKind,
   interactionTiles,
   rotatedSize,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import { Box3, InstancedMesh, type Object3D } from 'three';
 import { describe, expect, it } from 'vitest';
 import {

@@ -12,7 +12,7 @@ import {
   removeFurniture,
   rotateFurniture,
   validateRoom,
-} from '@agenthotel/shared';
+} from '@deskhaven/shared';
 import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
@@ -209,7 +209,7 @@ export function EditorPanel(): JSX.Element {
       world.setGhost(null);
       world.setHighlight(null);
       // GameCanvas re-installs the default handlers when the editor closes.
-      window.dispatchEvent(new CustomEvent('agenthotel:editor-closed'));
+      window.dispatchEvent(new CustomEvent('deskhaven:editor-closed'));
     };
   }, [apply, fail]);
 

@@ -8,15 +8,15 @@ import { loadConfig } from '../src/config.js';
 let app: Awaited<ReturnType<typeof buildApp>>['app'];
 
 beforeAll(async () => {
-  const dist = mkdtempSync(path.join(tmpdir(), 'agenthotel-dist-'));
+  const dist = mkdtempSync(path.join(tmpdir(), 'deskhaven-dist-'));
   writeFileSync(path.join(dist, 'index.html'), '<!doctype html><title>shell</title>');
   ({ app } = await buildApp(
     loadConfig({
-      AGENTHOTEL_DATA_DIR: mkdtempSync(path.join(tmpdir(), 'agenthotel-data-')),
-      AGENTHOTEL_DB: ':memory:',
-      AGENTHOTEL_KEYSTORE: 'memory',
-      AGENTHOTEL_PROBE_ON_BOOT: '0',
-      AGENTHOTEL_WEB_DIST: dist,
+      DESKHAVEN_DATA_DIR: mkdtempSync(path.join(tmpdir(), 'deskhaven-data-')),
+      DESKHAVEN_DB: ':memory:',
+      DESKHAVEN_KEYSTORE: 'memory',
+      DESKHAVEN_PROBE_ON_BOOT: '0',
+      DESKHAVEN_WEB_DIST: dist,
     }),
   ));
 });

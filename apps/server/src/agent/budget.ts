@@ -1,4 +1,4 @@
-import type { Settings } from '@agenthotel/shared';
+import type { Settings } from '@deskhaven/shared';
 import type { AgentService } from '../agents/service.js';
 
 /**

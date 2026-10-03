@@ -1,4 +1,4 @@
-import { defaultRoom, type Room } from '@agenthotel/shared';
+import { defaultRoom, type Room } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { buildGrid, isWalkable } from '../src/game/grid.js';
 import { findPath } from '../src/game/pathfinding.js';

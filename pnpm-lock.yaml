@@ -17,12 +17,12 @@ importers:
 
   apps/server:
     dependencies:
-      '@agenthotel/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.287
         version: 0.3.287(@anthropic-ai/sdk@0.131.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.32.0(zod@4.6.5))(zod@4.6.5)
+      '@deskhaven/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@fastify/static':
         specifier: ^9.0.0
         version: 9.3.0
@@ -75,7 +75,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@agenthotel/shared':
+      '@deskhaven/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@dnd-kit/core':

@@ -1,4 +1,4 @@
-import { type Agent, type AgentEvent, AgentSchema, emptyUsage } from '@agenthotel/shared';
+import { type Agent, type AgentEvent, AgentSchema, emptyUsage } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import type { AgentManager } from '../src/agent/manager.js';
 import type { AgentService } from '../src/agents/service.js';

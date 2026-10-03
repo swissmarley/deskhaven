@@ -1,4 +1,4 @@
-import type { Avatar, Behavior, FurnitureKind, Room } from '@agenthotel/shared';
+import type { Avatar, Behavior, FurnitureKind, Room } from '@deskhaven/shared';
 
 /**
  * Contract between the UI (React, Zustand) and the PixiJS world. The UI never touches Pixi objects;
