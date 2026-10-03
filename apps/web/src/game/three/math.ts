@@ -47,3 +47,21 @@ export function yawDelta(from: number, to: number): number {
   if (d <= -Math.PI) d += 2 * Math.PI;
   return d;
 }
+
+/** Default turn smoothing rate (1/s): the remaining angle shrinks by this factor per second. */
+export const TURN_RATE = 12;
+
+/** Wrap a yaw into (−π, π]. */
+export function normalizeYaw(yaw: number): number {
+  return yawDelta(0, yaw);
+}
+
+/**
+ * Move `current` towards `target` along the shortest arc by the fraction `rate × dt` of the
+ * remaining angle (clamped to 1), so it converges exponentially and never overshoots.
+ */
+export function approachYaw(current: number, target: number, dt: number, rate = TURN_RATE): number {
+  const d = yawDelta(current, target);
+  const k = Math.min(1, Math.max(0, rate * dt));
+  return normalizeYaw(current + d * k);
+}

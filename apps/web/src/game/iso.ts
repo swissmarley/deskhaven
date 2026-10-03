@@ -104,6 +104,33 @@ export function facingFromDelta(dx: number, dy: number): 0 | 1 | 2 | 3 {
   return dy > 0 ? 2 : 0;
 }
 
+/**
+ * Eight-way facing, clockwise from north: 0 N (−y), 1 NE, 2 E (+x), 3 SE, 4 S (+y), 5 SW, 6 W (−x),
+ * 7 NW. Odd values are the diagonals. A zero delta yields 4 (south, the default `Facing` 2).
+ */
+export type Facing8 = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+export function facing8FromDelta(dx: number, dy: number): Facing8 {
+  if (dx === 0 && dy === 0) return 4;
+  // Angle clockwise from north: north is −y, east is +x.
+  const angle = Math.atan2(dx, -dy);
+  const step = Math.round(angle / (Math.PI / 4));
+  return (((step % 8) + 8) % 8) as Facing8;
+}
+
+/** The 8-way facing of a 4-way one (N, E, S, W → 0, 2, 4, 6). */
+export function facing8Of(facing: 0 | 1 | 2 | 3): Facing8 {
+  return (facing * 2) as Facing8;
+}
+
+/**
+ * Yaw (radians about +Y) that turns a local +Z front onto an 8-way facing's world direction; the
+ * 4-way version is `facingYaw` in `three/math.ts`: `(2 − facing) × 90°`, so here `(4 − f8) × 45°`.
+ */
+export function yawFor8(f8: Facing8): number {
+  return (4 - f8) * (Math.PI / 4);
+}
+
 export function octile(ax: number, ay: number, bx: number, by: number): number {
   const dx = Math.abs(ax - bx);
   const dy = Math.abs(ay - by);

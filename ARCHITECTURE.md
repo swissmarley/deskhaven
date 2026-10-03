@@ -386,11 +386,11 @@ Base body: KayKit Adventurers `Rogue.glb` (CC0, see ASSETS.md): 41-joint rig, se
 meshes per body part, `handslot.l/.r` bones for props, 76 embedded clips. Each avatar is a
 `SkeletonUtils.clone` with its own `AnimationMixer` (0.2 s cross-fades). Outfit: the `Avatar` DTO's
 skin/hair/shirt/pants colours become flat materials on the body-part meshes (the pack's gradient
-atlas is not used); hair styles and accessories are procedural meshes attached to the `head`, `neck`
-and `chest` bones; interns are scaled 0.8 and desaturated. Facing: 8 yaws with turn smoothing; the
+atlas is not used); hair styles and accessories are procedural meshes attached to the `head` and `chest`
+bones (the rig has no neck bone); interns are scaled 0.8 and desaturated. Facing: 8 yaws with turn smoothing; the
 station targets keep the 4-way `Facing`. Poses: a pure state machine (`three/anim.ts`) maps the
 existing `Pose` union to a base clip plus overlays and props, e.g. `typing` = `Sit_Chair_Idle` + arm
-oscillation + laptop prop + monitor glow; `reading` = idle/sit + book prop + head tilt; `raise_hand`
+oscillation at the desk's own keyboard + monitor glow; `reading` = idle/sit + book prop + head tilt; `raise_hand`
 = idle + additive arm raise (or `Spellcast_Raise`); `thinking` = idle + head-scratch overlay; `nap` =
 `Lie_Idle` or seated head droop + zzz; `celebrate` = `Cheer` + confetti; `sweat`/`cooldown` = idle +
 emote. No CC0 pack ships office clips, so this hybrid is the approved deliverable.

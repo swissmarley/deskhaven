@@ -1,8 +1,8 @@
 import type { Facing } from '@agenthotel/shared';
 import { Plane, Raycaster, Vector2, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
+import { internTint } from '../src/game/color.js';
 import { FACING_DIR } from '../src/game/iso.js';
-import { internTint } from '../src/game/three/avatars.js';
 import { IsoCamera } from '../src/game/three/camera.js';
 import { canvasToNdc, facingDirection, facingYaw, yawDelta } from '../src/game/three/math.js';
 

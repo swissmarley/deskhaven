@@ -72,3 +72,9 @@ export function contrastColor(color: number): number {
   const lightness = l > 0.5 ? (neutral ? 0.25 : 0.35) : neutral ? 0.75 : 0.6;
   return hslToRgb((h + 0.5) % 1, Math.max(0.55, s), lightness);
 }
+
+/** Wash a colour out for interns: half the saturation, lighter. */
+export function internTint(color: number): number {
+  const [h, s, l] = rgbToHsl(color);
+  return hslToRgb(h, s * 0.5, Math.min(0.9, l + 0.18));
+}
