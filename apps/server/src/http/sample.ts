@@ -27,7 +27,7 @@ export function ensureSampleRepo(dataDir: string, source = bundledSamplePath()):
       git('add', '-A');
       git(
         '-c',
-        'user.name=AgentHotel',
+        'user.name=Deskhaven',
         '-c',
         'user.email=agenthotel@localhost',
         'commit',

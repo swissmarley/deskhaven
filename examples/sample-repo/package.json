@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Tiny TypeScript CLI used as the AgentHotel demo workspace. Zero dependencies: Node 22 strips the types.",
+  "description": "Tiny TypeScript CLI used as the Deskhaven demo workspace. Zero dependencies: Node 22 strips the types.",
   "scripts": {
     "start": "node --experimental-strip-types src/index.ts",
     "test": "node --experimental-strip-types --test 'test/*.test.ts'"

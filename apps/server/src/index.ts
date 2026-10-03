@@ -16,7 +16,7 @@ async function main(): Promise<void> {
       keySource: status.keySource,
       loggedIn: status.loggedIn,
     },
-    'AgentHotel server ready',
+    'Deskhaven server ready',
   );
 
   let closing = false;

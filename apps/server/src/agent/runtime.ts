@@ -134,7 +134,7 @@ export class AgentRuntime {
       permissionMode: this.agent.permissionMode,
       env: auth.childEnv(this.deps.baseEnv()),
       additionalDirectories: [],
-      // Only AgentHotel's own MCP servers: the user's global connectors must not leak into agents.
+      // Only Deskhaven's own MCP servers: the user's global connectors must not leak into agents.
       strictMcpConfig: true,
       ...(this.sessionId ? { resume: this.sessionId } : {}),
       ...(this.agent.budget.maxTurns ? { maxTurns: this.agent.budget.maxTurns } : {}),
@@ -444,7 +444,7 @@ export class AgentRuntime {
     if (!p) return null;
     const abs = path.isAbsolute(p) ? p : path.join(this.cwd(), p);
     if (isInside(this.cwd(), abs)) return null;
-    return `AgentHotel: writing outside the agent's working directory is not allowed (${abs}). Work inside ${this.cwd()}.`;
+    return `Deskhaven: writing outside the agent's working directory is not allowed (${abs}). Work inside ${this.cwd()}.`;
   }
 
   private setStatus(status: AgentStatus): void {

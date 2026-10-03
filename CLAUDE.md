@@ -1,4 +1,4 @@
-# AgentHotel — working notes for Claude Code
+# Deskhaven — working notes for Claude Code
 
 Isometric pixel-art office where every avatar is a real Claude Code agent driven through
 `@anthropic-ai/claude-agent-sdk`. Read [ARCHITECTURE.md](ARCHITECTURE.md) for decisions and

@@ -1,11 +1,12 @@
-# AgentHotel
+# Deskhaven
 
-An isometric pixel-art office where every avatar is a **real Claude Code agent**. Hire agents at the HR
+An isometric office in stylised low-poly 3D (the original pixel-art renderer is one setting away) where
+every avatar is a **real Claude Code agent**. Hire agents at the HR
 desk, drop tasks on them from a Kanban board, and watch them walk to the bookshelf when they read, sit at
 their desk when they edit, go to the server rack when they run commands, and raise a hand when they need
 your permission. Results, diffs and costs land back on the board.
 
-![AgentHotel demo](docs/demo.gif)
+![Deskhaven demo](docs/demo.gif)
 
 Built on `@anthropic-ai/claude-agent-sdk`: each employee is one SDK session in its own working directory
 or git worktree. Local-first, no cloud services besides the Anthropic API your agents talk to.
@@ -37,7 +38,7 @@ Caveats worth knowing:
 - **The HUD cost is an estimate.** It is the SDK's API-equivalent price (`total_cost_usd`) and includes
   prompt-cache writes, so a tiny read-only turn shows tens of cents. In subscription mode nothing is
   billed per token; the number helps you compare agents and set caps.
-- **Subscription mode is only for your own login on your own machine.** AgentHotel never builds a login
+- **Subscription mode is only for your own login on your own machine.** Deskhaven never builds a login
   UI, never reads, copies or stores OAuth tokens or credential files, and never proxies requests for other
   users. Anthropic's policy on Agent SDK usage with Pro/Max plans changed several times in 2026; the
   current findings and date are in [ARCHITECTURE.md §5.1](ARCHITECTURE.md). The strategy sits behind one
@@ -78,10 +79,23 @@ Caveats worth knowing:
 `apps/server` (Fastify, SQLite via better-sqlite3 + Drizzle) is the only process that touches the SDK or
 credentials. One `AgentRuntime` per agent drives `query()` in streaming-input mode with hooks and
 `canUseTool`; every SDK message and hook is normalised into one typed `AgentEvent` (zod, in
-`packages/shared`), appended to an event log and broadcast over WebSocket. `apps/web` (React, Zustand,
-PixiJS) maps events to avatar behaviours with a single pure, unit-tested function `mapEventToBehavior`
-and renders the room; UI panels are plain React. Decisions, verified SDK facts and risks:
+`packages/shared`), appended to an event log and broadcast over WebSocket. `apps/web` (React, Zustand)
+maps events to avatar behaviours with a single pure, unit-tested function `mapEventToBehavior`; one
+renderer-agnostic simulation core (`apps/web/src/game/core`) drives a small `Scene` port implemented
+twice, by Three.js (rigged glTF characters, glTF furniture, soft shadows, DOM bubbles; the default) and
+by PixiJS (procedural pixel art). UI panels are plain React. Decisions, verified SDK facts and risks:
 [ARCHITECTURE.md](ARCHITECTURE.md). Milestones: [PLAN.md](PLAN.md). Progress: [STATUS.md](STATUS.md).
+
+## Renderers
+
+`three` (3D) is the default. `VITE_RENDERER=pixi pnpm dev` builds with the pixel-art default, and
+Settings → Renderer switches either way at runtime (stored in `localStorage`, takes effect on reload).
+Both renderers sit behind the same `World` contract, so the editor, the board's drag-and-drop, replay
+and the tests do not care which one is mounted; each is a lazily loaded chunk. Add `?stats=1` to the
+URL for fps, draw calls and triangles; the Three renderer targets 60 fps with eight animated characters
+on a MacBook Air and degrades its shadow map and pixel ratio once if it cannot keep 45. Characters are a
+CC0 rigged body (KayKit) recoloured from the avatar you pick at the HR desk, with procedural hair and
+accessories; furniture comes from the CC0 Kenney Furniture Kit; licences in [ASSETS.md](ASSETS.md).
 
 ## Extending
 
@@ -92,14 +106,19 @@ and renders the room; UI panels are plain React. Decisions, verified SDK facts a
   optional `model`, `manager: true` for the delegation tools.
 - **Add furniture**: add a kind to `FurnitureKindSchema` in `packages/shared/src/dto.ts` and its spec
   (footprint, `blocks`, `station`, interaction points, placeholder colour/height) to `FURNITURE_CATALOG` in
-  `furniture.ts`. The editor, the catalog tests and the placeholder renderer pick it up; give it a
-  `station` and map a behaviour to it in `stationForBehavior`.
+  `furniture.ts`. The editor, the catalog tests and the Pixi placeholder renderer pick it up; give it a
+  `station` and map a behaviour to it in `stationForBehavior`. For the 3D look add a row to
+  `MODEL_MANIFEST` in `apps/web/src/game/three/models.ts` (a glTF under `apps/web/public/models/` or a
+  procedural builder in `three/procedural.ts`).
 - **Add a behaviour**: extend the `Behavior` union and `mapEventToBehavior` in
   `packages/shared/src/behavior.ts` (with a test in `packages/shared/test/behavior.test.ts`), then teach
-  the world a pose for it in `apps/web/src/game/world.ts` / `avatar.ts`. Tool names are classified in
-  `tools.ts`, so a new tool only needs a category.
-- **Swap the art**: `apps/web/src/game/assets/manifest.ts` selects `placeholder`, `generated` (default
-  pixel sprites) or `sheet` per asset; see [ASSETS.md](ASSETS.md).
+  the world a pose for it in `apps/web/src/game/pose.ts`, a clip/overlay in `three/anim.ts` and a sprite
+  pose in `pixi/avatar.ts`. Tool names are classified in `tools.ts`, so a new tool only needs a category.
+- **Swap the art**: 3D models live under `apps/web/public/models/` and are mapped in
+  `three/models.ts` (`node scripts/inspect-gltf.mjs file.glb` prints a model's nodes and clips;
+  `scripts/strip-character.mjs` trims a character file). The Pixi path keeps its manifest in
+  `apps/web/src/game/assets/manifest.ts` (`placeholder`, `generated` pixel sprites or `sheet`). Record
+  every file and licence in [ASSETS.md](ASSETS.md).
 
 ## Data and privacy
 

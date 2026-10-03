@@ -1,5 +1,5 @@
 /**
- * The ONLY file that imports types from the Agent SDK. Everything else works with AgentHotel's own
+ * The ONLY file that imports types from the Agent SDK. Everything else works with Deskhaven's own
  * types, so an SDK upgrade touches this file and the normaliser.
  *
  * Facts this relies on (verified against sdk.d.ts 0.3.287, see ARCHITECTURE.md §3):

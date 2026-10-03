@@ -29,7 +29,7 @@ export function TopBar(): JSX.Element {
 
   return (
     <header className="topbar">
-      <span className="brand">AgentHotel</span>
+      <span className="brand">Deskhaven</span>
       <span className="status">
         <span
           className={`dot ${connection === 'open' ? 'ok' : connection === 'closed' ? 'bad' : ''}`}

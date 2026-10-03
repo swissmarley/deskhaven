@@ -127,7 +127,7 @@ export function SettingsPanel(): JSX.Element {
         ) : (
           <div className="notice">
             <p>
-              Sign in with <code>claude login</code> in your own terminal. AgentHotel never sees or
+              Sign in with <code>claude login</code> in your own terminal. Deskhaven never sees or
               stores your token; it only strips API-key variables from the agent processes so your
               plan is used.
             </p>

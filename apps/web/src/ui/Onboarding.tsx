@@ -80,10 +80,10 @@ export function Onboarding(): JSX.Element | null {
         className="modal onboarding"
         role="dialog"
         aria-modal="true"
-        aria-label="Welcome to AgentHotel"
+        aria-label="Welcome to Deskhaven"
       >
         <div className="panel-head">
-          <h3>Welcome to AgentHotel</h3>
+          <h3>Welcome to Deskhaven</h3>
           <span className="muted small">
             step {step === 'auth' ? 1 : step === 'workspace' ? 2 : 3} of 3
           </span>
@@ -186,7 +186,7 @@ export function Onboarding(): JSX.Element | null {
               {samplePath ? <code className="small">{samplePath}</code> : null}
             </div>
             <p className="muted small">
-              Everything AgentHotel stores lives under ~/.agenthotel (database, worktrees, sample
+              Everything Deskhaven stores lives under ~/.agenthotel (database, worktrees, sample
               repo).
             </p>
             <div className="row">

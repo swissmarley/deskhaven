@@ -1,8 +1,8 @@
-# AgentHotel — Architecture
+# Deskhaven — Architecture
 
 Status: **planning draft, questions resolved (see PLAN.md), awaiting "go"**. Written 2026-10-02. Nothing in `apps/` or `packages/` exists yet.
 
-AgentHotel is a local-first, browser-based isometric "office" where every avatar is a real Claude Code
+Deskhaven is a local-first, browser-based isometric "office" where every avatar is a real Claude Code
 agent driven through `@anthropic-ai/claude-agent-sdk`. This document records the decisions, the
 rationale, the facts verified against the installed SDK, the auth-policy findings, the data model, and the
 risk list. The milestone plan and open questions live in [PLAN.md](PLAN.md).
@@ -82,7 +82,7 @@ Gotchas confirmed in the type docs:
 
 1. **`env` REPLACES the subprocess environment** — it is not merged. We must spread `process.env` ourselves. This is exactly where the auth strategy injects or strips keys.
 2. **`permissionMode` omitted ≠ `'default'`.** When omitted the CLI picks `permissions.defaultMode` from loaded settings, else `'auto'` (a model classifier). We always pass an explicit mode; `'default'` is required for `canUseTool` to be consulted on dangerous tools.
-3. **`'bypassPermissions'` requires `allowDangerouslySkipPermissions: true`.** AgentHotel never sets it (see §6). The most permissive combination we expose is `acceptEdits` + role `allowedTools`.
+3. **`'bypassPermissions'` requires `allowDangerouslySkipPermissions: true`.** Deskhaven never sets it (see §6). The most permissive combination we expose is `acceptEdits` + role `allowedTools`.
 4. **`settingSources` must include `'project'` to load the target repo's `CLAUDE.md`.** Default when omitted is all sources (user + project + local). We default to `['project']` so the user's global `~/.claude/settings.json` (which may contain `apiKeyHelper`, MCP servers, permission rules) cannot silently change an agent's behaviour; configurable per agent.
 5. **`PermissionMode`** = `'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto'`.
 
@@ -223,9 +223,9 @@ Primary sources:
 6. **`--bare` gotcha.** `--bare` "never reads OAuth credentials or the system keychain", is "the recommended mode for scripted and SDK calls, and will become the default for `-p` in a future release". Verified today that `@anthropic-ai/claude-agent-sdk@0.3.287` does **not** pass `--bare` (it launches `--output-format stream-json --input-format stream-json`), so subscription credentials are read. A future SDK release could flip this and silently break subscription mode; mitigated by pinning the exact version, by the M2 check that `system/init.apiKeySource === 'none'`, and by an upgrade checklist in CLAUDE.md.
 7. **Rate limits.** Max plans have a 5-hour session window plus a weekly window across models, shared between claude.ai and Claude Code. Subscription 429s reach the SDK as `rate_limit_event` (`status: 'rejected'`, `rateLimitType`, `resetsAt`), as `system/api_retry` with `error: 'rate_limit'`, and as `assistant.error === 'rate_limit'`. The CLI retries subscription sessions since v2.1.199 (`CLAUDE_CODE_MAX_RETRIES`, default 10).
 
-**Decision for AgentHotel**
+**Decision for Deskhaven**
 
-- AgentHotel is a local, single-user tool. It offers no login, never touches tokens or credential files, binds to loopback, runs the unmodified bundled binary, and lets the user sign in through Anthropic's own `claude login`. That is the explicitly permitted case ("end user signing in to the unmodified Claude Code binary with their own subscription"), and the support article confirms such usage draws from the plan.
+- Deskhaven is a local, single-user tool. It offers no login, never touches tokens or credential files, binds to loopback, runs the unmodified bundled binary, and lets the user sign in through Anthropic's own `claude login`. That is the explicitly permitted case ("end user signing in to the unmodified Claude Code binary with their own subscription"), and the support article confirms such usage draws from the plan.
 - Because the docs still steer developers to API keys and expect "ordinary, individual usage", the subscription strategy stays **behind the feature flag**, **API_KEY remains the default**, the concurrency cap defaults to **2**, the notice is persistent, and the mode switch shows these findings with the check date.
 - Out of bounds regardless of mode: multi-user or hosted deployment, accepting or storing `CLAUDE_CODE_OAUTH_TOKEN`/`setup-token` values (we strip them rather than accept them), any login UI, and any modification of the binary.
 - Residual uncertainty: Anthropic "may take measures to enforce these restrictions ... without prior notice". If subscription sessions start failing with `oauth_org_not_allowed` or auth errors, the app shows the error, points to API_KEY mode, and the flag can be flipped off in one place.

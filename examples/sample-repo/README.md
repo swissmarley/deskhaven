@@ -1,6 +1,6 @@
 # sample-cli
 
-A tiny command-line tool that prints statistics for a list of numbers. It exists so AgentHotel agents
+A tiny command-line tool that prints statistics for a list of numbers. It exists so Deskhaven agents
 have something small and real to work on.
 
 ```bash

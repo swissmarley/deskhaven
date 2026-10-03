@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { AgentStatusSchema } from './events.js';
 
-/** Permission modes AgentHotel exposes. `bypassPermissions` is deliberately absent. */
+/** Permission modes Deskhaven exposes. `bypassPermissions` is deliberately absent. */
 export const PermissionModeSchema = z.enum(['default', 'acceptEdits', 'plan', 'dontAsk']);
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
 

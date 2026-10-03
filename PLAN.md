@@ -1,4 +1,4 @@
-# AgentHotel — Milestone plan
+# Deskhaven — Milestone plan
 
 Written 2026-10-02. Companion to [ARCHITECTURE.md](ARCHITECTURE.md). Status: **M0–M7 done (2026-10-02)**; see STATUS.md for per-milestone notes and follow-up ideas.
 
