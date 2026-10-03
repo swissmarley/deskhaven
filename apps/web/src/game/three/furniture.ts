@@ -1,0 +1,559 @@
+import { type Furniture, type FurnitureKind, type Room, rotatedSize } from '@agenthotel/shared';
+import {
+  Box3,
+  Group,
+  type Material,
+  Mesh,
+  MeshStandardMaterial,
+  type Object3D,
+  type Raycaster,
+  Vector3,
+} from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { GHOST_ALPHA, ghostTint } from '../editor.js';
+import type { Ghost, TilePoint } from '../types.js';
+import {
+  BOOKCASE_SHELVES,
+  BOOKCASE_SLOTS,
+  BOOKS_PER_CASE,
+  MODEL_MANIFEST,
+  type ModelName,
+  type ModelPart,
+  modelUrl,
+  type PiecePart,
+  partScale,
+  partsFor,
+  placement,
+  type Size3,
+  variantIndex,
+} from './models.js';
+import {
+  type Built,
+  buildCounter,
+  buildFallbackBox,
+  buildServerRack,
+  buildTable,
+  buildWhiteboard,
+  Resources,
+} from './procedural.js';
+
+/**
+ * Furniture for the Three renderer: a glTF cache (one load per url, clones per piece), the
+ * composition of pieces from `MODEL_MANIFEST`, and the editor affordances (ghost, highlight pulse,
+ * drag preview). `setRoom` is synchronous: a piece's group exists at once and its models drop in
+ * as their promises resolve, unless the piece was removed meanwhile (per-piece generation).
+ *
+ * This module imports `three/addons`, so no test may import it; the pure maths live in
+ * `models.ts` and the box builders in `procedural.ts`.
+ */
+
+export const HIGHLIGHT_COLOR = 0xffd166;
+export const HIGHLIGHT_MIN = 0.15;
+export const HIGHLIGHT_MAX = 0.45;
+export const HIGHLIGHT_HZ = 1.2;
+export const DRAG_OPACITY = 0.5;
+
+// ---- model cache ----------------------------------------------------------------------------------
+
+export interface LoadedModel {
+  /** Normalised model: XZ centre at the origin, base at y = 0. Never added to a scene; clone it. */
+  group: Group;
+  size: Size3;
+}
+
+const cache = new Map<string, Promise<LoadedModel | null>>();
+const resolved: LoadedModel[] = [];
+let loader: GLTFLoader | null = null;
+
+/** Load (once) and normalise a furniture model; resolves null after one `console.warn` on failure. */
+export function loadModel(name: ModelName): Promise<LoadedModel | null> {
+  const url = modelUrl(name);
+  let pending = cache.get(url);
+  if (!pending) {
+    pending = new Promise<LoadedModel | null>((resolve) => {
+      loader ??= new GLTFLoader();
+      loader.load(
+        url,
+        (gltf) => {
+          try {
+            const model = normalise(gltf.scene);
+            resolved.push(model);
+            resolve(model);
+          } catch (err) {
+            console.warn(`[three] model ${url} could not be prepared`, err);
+            resolve(null);
+          }
+        },
+        undefined,
+        (err) => {
+          console.warn(`[three] model ${url} failed to load`, err);
+          resolve(null);
+        },
+      );
+    });
+    cache.set(url, pending);
+  }
+  return pending;
+}
+
+/**
+ * Drop every cached model and dispose its geometries and materials. Models stay cached across
+ * scene mounts on purpose (a StrictMode re-mount would otherwise reload them); call this from tests
+ * or when the renderer is switched off for good.
+ */
+export function clearModelCache(): void {
+  for (const model of resolved) {
+    model.group.traverse((o) => {
+      if (!(o instanceof Mesh)) return;
+      o.geometry.dispose();
+      forEachMaterial(o.material, (m) => m.dispose());
+    });
+  }
+  resolved.length = 0;
+  cache.clear();
+}
+
+function normalise(scene: Group): LoadedModel {
+  const box = new Box3().setFromObject(scene);
+  const size = box.getSize(new Vector3());
+  const centre = box.getCenter(new Vector3());
+  scene.position.set(-centre.x, -box.min.y, -centre.z);
+  scene.traverse((o) => {
+    if (o instanceof Mesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+    }
+  });
+  const group = new Group();
+  group.add(scene);
+  return { group, size: { x: size.x, y: size.y, z: size.z } };
+}
+
+function forEachMaterial(m: Material | Material[], fn: (m: Material) => void): void {
+  if (Array.isArray(m)) for (const x of m) fn(x);
+  else fn(m);
+}
+
+function mapMaterial(
+  m: Material | Material[],
+  fn: (m: Material) => Material,
+): Material | Material[] {
+  return Array.isArray(m) ? m.map(fn) : fn(m);
+}
+
+// ---- piece composition ----------------------------------------------------------------------------
+
+interface PartResult {
+  object: Object3D;
+  top: number;
+}
+
+async function buildModelPart(
+  part: ModelPart,
+  kind: FurnitureKind,
+  w: number,
+  h: number,
+  top: number,
+  isBase: boolean,
+  res: Resources,
+): Promise<PartResult | null> {
+  const model = await loadModel(part.model);
+  if (!model) {
+    if (!isBase) return null;
+    const built = buildFallbackBox(kind, res);
+    return { object: built.group, top: built.top };
+  }
+  const clone = model.group.clone();
+  const s = partScale(part, model.size, w, h);
+  clone.scale.set(s.x, s.y, s.z);
+  clone.rotation.y = part.yawOffset ?? 0;
+  const baseY = part.y === 'top' ? top : (part.y ?? 0);
+  const y = baseY + (part.lift ?? 0);
+  clone.position.set(part.x ?? 0, y, part.z ?? 0);
+  if (part.castShadow === false)
+    clone.traverse((o) => {
+      if (o instanceof Mesh) o.castShadow = false;
+    });
+  return { object: clone, top: y + model.size.y * s.y };
+}
+
+function buildProceduralPart(shape: string, res: Resources): Built {
+  switch (shape) {
+    case 'server_rack':
+      return buildServerRack(res);
+    case 'whiteboard':
+      return buildWhiteboard(res);
+    case 'counter':
+      return buildCounter(res);
+    default:
+      return buildTable(res);
+  }
+}
+
+async function buildPart(
+  part: PiecePart,
+  kind: FurnitureKind,
+  w: number,
+  h: number,
+  top: number,
+  isBase: boolean,
+  res: Resources,
+): Promise<PartResult | null> {
+  if (part.kind === 'gltf') return buildModelPart(part, kind, w, h, top, isBase, res);
+  const built = buildProceduralPart(part.shape, res);
+  const y = part.y === 'top' ? top : (part.y ?? 0);
+  built.group.position.set(part.x ?? 0, y, part.z ?? 0);
+  return { object: built.group, top: y + built.top };
+}
+
+/** Books on the shelves of each bookcase part (same Kenney scale, so proportions match). */
+async function buildBooks(id: string, cases: ModelPart[]): Promise<Object3D[]> {
+  const books = await loadModel('books');
+  if (!books) return [];
+  const out: Object3D[] = [];
+  const slots = BOOKCASE_SHELVES.length * BOOKCASE_SLOTS.length;
+  cases.forEach((bookcase, caseIndex) => {
+    const s = bookcase.scale ?? 1;
+    const first = variantIndex(`${id}:${caseIndex}`, slots);
+    for (let n = 0; n < BOOKS_PER_CASE; n++) {
+      const slot = (first + n * 2 + caseIndex) % slots;
+      const shelf = BOOKCASE_SHELVES[Math.floor(slot / BOOKCASE_SLOTS.length)] ?? 0;
+      const slotX = BOOKCASE_SLOTS[slot % BOOKCASE_SLOTS.length] ?? 0;
+      const clone = books.group.clone();
+      clone.scale.setScalar(s);
+      clone.rotation.y = (slot + caseIndex) % 2 === 0 ? 0 : Math.PI;
+      clone.position.set((bookcase.x ?? 0) + slotX * s, shelf * s, bookcase.z ?? 0);
+      out.push(clone);
+    }
+  });
+  return out;
+}
+
+/**
+ * Compose a piece's parts into `target`, in order (part 0 sets `'top'` for the rest). Every part
+ * is reported through `onPart` as soon as it is added; `isLive()` false aborts the rest.
+ */
+async function buildPiece(
+  kind: FurnitureKind,
+  id: string,
+  w: number,
+  h: number,
+  res: Resources,
+  target: Group,
+  isLive: () => boolean,
+  onPart: (object: Object3D) => void,
+): Promise<void> {
+  const parts = partsFor(kind, id);
+  // Start every fetch now so a composed piece does not load its models one after the other.
+  for (const p of parts) if (p.kind === 'gltf') void loadModel(p.model);
+  let top = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (!part) continue;
+    const built = await buildPart(part, kind, w, h, top, i === 0, res);
+    if (!isLive()) return;
+    if (!built) continue;
+    target.add(built.object);
+    onPart(built.object);
+    if (i === 0) top = built.top;
+  }
+  if (MODEL_MANIFEST[kind].books) {
+    const cases = parts.filter((p): p is ModelPart => p.kind === 'gltf');
+    const books = await buildBooks(id, cases);
+    if (!isLive()) return;
+    for (const b of books) {
+      target.add(b);
+      onPart(b);
+    }
+  }
+}
+
+// ---- layer ----------------------------------------------------------------------------------------
+
+interface PieceNode {
+  piece: Furniture;
+  group: Group;
+  res: Resources;
+  gen: number;
+  /** Original materials of meshes whose materials were cloned for an effect. */
+  overrides: Map<Mesh, Material | Material[]> | null;
+  highlighted: boolean;
+  dimmed: boolean;
+}
+
+interface GhostNode {
+  kind: FurnitureKind;
+  rotation: number;
+  group: Group;
+  res: Resources;
+  material: MeshStandardMaterial;
+  gen: number;
+}
+
+/** Furniture pieces of one room plus the editor ghost, under one parent. */
+export class FurnitureLayer {
+  readonly group = new Group();
+  private readonly nodes = new Map<string, PieceNode>();
+  private ghost: GhostNode | null = null;
+  private gen = 0;
+  private highlightedId: string | null = null;
+  private clock = 0;
+
+  constructor(private readonly parent: Object3D) {
+    this.group.name = 'furniture';
+    parent.add(this.group);
+  }
+
+  setRoom(room: Room): void {
+    const seen = new Set<string>();
+    for (const piece of room.furniture) {
+      seen.add(piece.id);
+      const existing = this.nodes.get(piece.id);
+      if (
+        existing &&
+        existing.piece.kind === piece.kind &&
+        existing.piece.rotation === piece.rotation
+      ) {
+        existing.piece = piece;
+        if (!existing.dimmed) this.moveTo(existing, piece.x, piece.y);
+        continue;
+      }
+      if (existing) this.removeNode(existing);
+      this.nodes.set(piece.id, this.createNode(piece));
+    }
+    for (const [id, node] of this.nodes) {
+      if (seen.has(id)) continue;
+      this.removeNode(node);
+      this.nodes.delete(id);
+    }
+  }
+
+  /** Pickable roots, for the scene's raycaster (the ghost is not among them). */
+  get pickables(): Object3D[] {
+    const out: Object3D[] = [];
+    for (const n of this.nodes.values()) out.push(n.group);
+    return out;
+  }
+
+  /** The furniture id under a ray, or null. */
+  pick(raycaster: Raycaster): string | null {
+    const hits = raycaster.intersectObjects(this.pickables, true);
+    for (const hit of hits) {
+      const id = furnitureIdOf(hit.object);
+      if (id) return id;
+    }
+    return null;
+  }
+
+  setHighlight(id: string | null): void {
+    if (id === this.highlightedId) return;
+    const prev = this.highlightedId ? this.nodes.get(this.highlightedId) : undefined;
+    if (prev) {
+      prev.highlighted = false;
+      this.applyEffects(prev);
+    }
+    this.highlightedId = id;
+    const next = id ? this.nodes.get(id) : undefined;
+    if (next) {
+      next.highlighted = true;
+      this.applyEffects(next);
+    }
+  }
+
+  /** Drag preview: dim and move to `origin`; null restores the real origin. */
+  setPreview(id: string, origin: TilePoint | null): void {
+    const node = this.nodes.get(id);
+    if (!node) return;
+    node.dimmed = origin !== null;
+    this.applyEffects(node);
+    if (origin) this.moveTo(node, origin.x, origin.y);
+    else this.moveTo(node, node.piece.x, node.piece.y);
+  }
+
+  setGhost(ghost: Ghost | null): void {
+    if (!ghost) {
+      if (this.ghost) this.removeGhost();
+      return;
+    }
+    let g = this.ghost;
+    if (g && (g.kind !== ghost.kind || g.rotation !== ghost.rotation)) {
+      this.removeGhost();
+      g = null;
+    }
+    if (!g) g = this.createGhost(ghost);
+    g.material.color.setHex(ghostTint(ghost.valid));
+    const p = placement(ghost.kind, ghost.x, ghost.y, ghost.rotation);
+    g.group.position.set(p.x, 0, p.z);
+  }
+
+  update(dtMs: number): void {
+    this.clock += dtMs / 1000;
+    const node = this.highlightedId ? this.nodes.get(this.highlightedId) : undefined;
+    if (!node?.overrides) return;
+    const t = (Math.sin(this.clock * HIGHLIGHT_HZ * 2 * Math.PI) + 1) / 2;
+    const intensity = HIGHLIGHT_MIN + (HIGHLIGHT_MAX - HIGHLIGHT_MIN) * t;
+    for (const mesh of node.overrides.keys())
+      forEachMaterial(mesh.material, (m) => {
+        if (m instanceof MeshStandardMaterial) m.emissiveIntensity = intensity;
+      });
+  }
+
+  dispose(): void {
+    for (const node of this.nodes.values()) this.removeNode(node);
+    this.nodes.clear();
+    this.removeGhost();
+    this.parent.remove(this.group);
+  }
+
+  // ---- pieces ---------------------------------------------------------------------------------------
+
+  private createNode(piece: Furniture): PieceNode {
+    const group = new Group();
+    group.name = piece.id;
+    group.userData = { furnitureId: piece.id, kind: piece.kind };
+    const node: PieceNode = {
+      piece,
+      group,
+      res: new Resources(),
+      gen: ++this.gen,
+      overrides: null,
+      highlighted: piece.id === this.highlightedId,
+      dimmed: false,
+    };
+    group.rotation.y = placement(piece.kind, piece.x, piece.y, piece.rotation).yaw;
+    this.moveTo(node, piece.x, piece.y);
+    this.group.add(group);
+    const gen = node.gen;
+    void buildPiece(
+      piece.kind,
+      piece.id,
+      // Parts are composed in the rotation-0 frame; the group's yaw turns the whole piece.
+      rotatedSize(piece.kind, 0).w,
+      rotatedSize(piece.kind, 0).h,
+      node.res,
+      group,
+      () => node.gen === gen && this.nodes.get(piece.id) === node,
+      () => this.applyEffects(node),
+    );
+    return node;
+  }
+
+  private removeNode(node: PieceNode): void {
+    node.gen = -1;
+    this.restoreMaterials(node);
+    this.group.remove(node.group);
+    node.res.dispose();
+  }
+
+  private moveTo(node: PieceNode, x: number, y: number): void {
+    const p = placement(node.piece.kind, x, y, node.piece.rotation);
+    node.group.position.set(p.x, 0, p.z);
+  }
+
+  /**
+   * Highlight (emissive pulse) and dim (drag preview) share one mechanism: the piece's meshes get
+   * cloned materials while any effect is on (the cached model materials are shared between clones
+   * and must never be tinted) and the originals back when both are off.
+   */
+  private applyEffects(node: PieceNode): void {
+    if (!node.highlighted && !node.dimmed) {
+      this.restoreMaterials(node);
+      return;
+    }
+    node.overrides ??= new Map();
+    const overrides = node.overrides;
+    node.group.traverse((o) => {
+      if (!(o instanceof Mesh) || overrides.has(o)) return;
+      overrides.set(o, o.material);
+      o.material = mapMaterial(o.material, (m) => m.clone());
+    });
+    for (const mesh of overrides.keys())
+      forEachMaterial(mesh.material, (m) => {
+        m.transparent = node.dimmed;
+        m.opacity = node.dimmed ? DRAG_OPACITY : 1;
+        if (m instanceof MeshStandardMaterial) {
+          m.emissive.setHex(node.highlighted ? HIGHLIGHT_COLOR : 0x000000);
+          m.emissiveIntensity = node.highlighted ? HIGHLIGHT_MIN : 0;
+        }
+        m.needsUpdate = true;
+      });
+  }
+
+  private restoreMaterials(node: PieceNode): void {
+    const overrides = node.overrides;
+    if (!overrides) return;
+    for (const [mesh, original] of overrides) {
+      forEachMaterial(mesh.material, (m) => m.dispose());
+      mesh.material = original;
+    }
+    node.overrides = null;
+  }
+
+  // ---- ghost ----------------------------------------------------------------------------------------
+
+  private createGhost(ghost: Ghost): GhostNode {
+    const group = new Group();
+    group.name = 'ghost';
+    group.userData = { pickable: false };
+    group.rotation.y = placement(ghost.kind, ghost.x, ghost.y, ghost.rotation).yaw;
+    const res = new Resources();
+    const material = res.material(
+      new MeshStandardMaterial({
+        color: ghostTint(ghost.valid),
+        transparent: true,
+        opacity: GHOST_ALPHA,
+        depthWrite: false,
+        roughness: 0.8,
+      }),
+    );
+    const node: GhostNode = {
+      kind: ghost.kind,
+      rotation: ghost.rotation,
+      group,
+      res,
+      material,
+      gen: ++this.gen,
+    };
+    this.ghost = node;
+    this.group.add(group);
+    const gen = node.gen;
+    const { w, h } = rotatedSize(ghost.kind, 0);
+    void buildPiece(
+      ghost.kind,
+      'ghost',
+      w,
+      h,
+      res,
+      group,
+      () => this.ghost === node && node.gen === gen,
+      (object) =>
+        object.traverse((o) => {
+          if (!(o instanceof Mesh)) return;
+          o.material = material;
+          o.castShadow = false;
+          o.receiveShadow = false;
+        }),
+    );
+    return node;
+  }
+
+  private removeGhost(): void {
+    const g = this.ghost;
+    if (!g) return;
+    this.ghost = null;
+    g.gen = -1;
+    this.group.remove(g.group);
+    g.res.dispose();
+  }
+}
+
+/** Walk up from a hit mesh to the piece group carrying the furniture id. */
+export function furnitureIdOf(object: Object3D): string | null {
+  let node: Object3D | null = object;
+  while (node) {
+    const id: unknown = node.userData.furnitureId;
+    if (typeof id === 'string') return id;
+    node = node.parent;
+  }
+  return null;
+}

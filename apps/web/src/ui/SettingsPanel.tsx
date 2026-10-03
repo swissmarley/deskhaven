@@ -3,6 +3,7 @@ import { type JSX, useCallback, useEffect, useState } from 'react';
 import { api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
 import { PresetsEditor } from './PresetsEditor.js';
+import { RendererSettings } from './RendererSettings.js';
 import { SoundSettings } from './SoundSettings.js';
 
 export function SettingsPanel(): JSX.Element {
@@ -195,6 +196,7 @@ export function SettingsPanel(): JSX.Element {
         </label>
       </section>
       {settings.soundEnabled ? <SoundSettings /> : null}
+      <RendererSettings />
       <PresetsEditor />
     </div>
   );

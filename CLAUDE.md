@@ -109,3 +109,8 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   next `mount()` are dropped on purpose (a never-remounted world cannot leak).
 - Browser pane: if the app looks collapsed (canvas 1 px wide), the pane's responsive width shrank;
   `resize_window` to 1280×800 before screenshots and reset to `desktop` afterwards.
+- The desktop browser pane reports `document.hidden === true` whenever the pane is not frontmost
+  (screenshots still work). Never gate rendering on `document.hidden`/`visibilitychange`: the Three
+  loop did and showed a black canvas; browsers already throttle `requestAnimationFrame` when hidden.
+- Debugging the live world from the browser pane: `const w = (await import('/src/ui/worldHandle.ts')).getWorldHandle()`;
+  `w.inner` is the `WorldCore`, `w.inner.scene` the mounted scene (Three: `.renderer`, `.iso.camera`).
