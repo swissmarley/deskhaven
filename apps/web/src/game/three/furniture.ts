@@ -20,6 +20,18 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { GHOST_ALPHA, ghostTint } from '../editor.js';
 import { tileKey } from '../grid.js';
 import type { Ghost, TilePoint } from '../types.js';
+import {
+  countNearDoor,
+  DOOR_CLOSED,
+  DOOR_HINGE_NAME,
+  type DoorState,
+  doorAngle,
+  doorHinge,
+  doorState,
+  doorTiles,
+  isDoorLeafName,
+  type Point,
+} from './door-math.js';
 import { screenFlicker } from './emote-math.js';
 import {
   BOOKCASE_SHELVES,
@@ -68,6 +80,8 @@ export const SCREEN_GLOW_INTENSITY = 1.6;
 /** Model whose `metal` material is the screen panel (see `models.ts` SCREEN). */
 const SCREEN_MODEL = 'computerScreen';
 const SCREEN_PANEL_MATERIAL = 'metal';
+/** Model whose leaf swings (`door-math.ts`). */
+const DOOR_MODEL = 'doorway';
 
 // ---- model cache ----------------------------------------------------------------------------------
 
@@ -181,6 +195,7 @@ async function buildModelPart(
   }
   const clone = model.group.clone();
   if (part.model === SCREEN_MODEL) clone.userData = { ...clone.userData, screen: true };
+  if (part.model === DOOR_MODEL) hingeDoorLeaf(clone);
   const s = partScale(part, model.size, w, h);
   clone.scale.set(s.x, s.y, s.z);
   clone.rotation.y = part.yawOffset ?? 0;
@@ -285,6 +300,39 @@ async function buildPiece(
   }
 }
 
+/**
+ * Re-parent the doorway's leaf under a hinge group at its +X edge (`door-math.ts`), so the layer
+ * can swing it. Runs on the untransformed clone (identity root), so the leaf bounds are in the
+ * model frame. Quietly does nothing when the leaf cannot be found (the door then stays shut).
+ */
+function hingeDoorLeaf(root: Object3D): void {
+  const leaves: Object3D[] = [];
+  root.traverse((o) => {
+    if (o !== root && isDoorLeafName(o.name)) leaves.push(o);
+  });
+  // Traversal is parent-first, so the first match is the leaf node, not one of its primitives.
+  const found = leaves[0];
+  const parent = found?.parent;
+  if (!found || !parent) return;
+  root.updateMatrixWorld(true);
+  const box = new Box3().setFromObject(found);
+  if (box.isEmpty()) return;
+  const h = doorHinge({
+    minX: box.min.x,
+    minY: box.min.y,
+    minZ: box.min.z,
+    maxX: box.max.x,
+    maxY: box.max.y,
+    maxZ: box.max.z,
+  });
+  const hinge = new Group();
+  hinge.name = DOOR_HINGE_NAME;
+  hinge.position.copy(parent.worldToLocal(new Vector3(h.x, h.y, h.z)));
+  parent.add(hinge);
+  hinge.updateMatrixWorld(true);
+  hinge.attach(found);
+}
+
 // ---- layer ----------------------------------------------------------------------------------------
 
 interface PieceNode {
@@ -299,6 +347,8 @@ interface PieceNode {
   highlighted: boolean;
   dimmed: boolean;
   glowing: boolean;
+  /** Door pieces: the swinging leaf's hinge (once its model loaded), the tiles that open it, and the state. */
+  door: { hinge: Group | null; tiles: Point[]; state: DoorState } | null;
 }
 
 interface GhostNode {
@@ -336,6 +386,7 @@ export class FurnitureLayer {
   private screenSeats = new Map<string, string>();
   private readonly glowIds = new Set<string>();
   private lastGlowTiles: Iterable<string> = [];
+  private avatarPositions: readonly Point[] = [];
 
   constructor(private readonly parent: Object3D) {
     this.group.name = 'furniture';
@@ -354,6 +405,8 @@ export class FurnitureLayer {
       ) {
         existing.piece = piece;
         if (!existing.dimmed) this.moveTo(existing, piece.x, piece.y);
+        // A moved door opens for its new tiles (the node survives the move).
+        if (existing.door) existing.door.tiles = doorTiles(piece);
         continue;
       }
       if (existing) this.removeNode(existing);
@@ -401,6 +454,11 @@ export class FurnitureLayer {
       node.glowing = true;
       this.applyEffects(node);
     }
+  }
+
+  /** Where the avatars are this frame (fractional tiles): doors open for anyone within reach. */
+  setAvatarPositions(positions: readonly Point[]): void {
+    this.avatarPositions = positions;
   }
 
   /** Pickable roots, for the scene's raycaster (the ghost is not among them). */
@@ -480,6 +538,13 @@ export class FurnitureLayer {
         for (const m of glow.panels) m.emissiveIntensity = flicker;
       }
     }
+    const dt = dtMs / 1000;
+    for (const n of this.nodes.values()) {
+      const door = n.door;
+      if (!door) continue;
+      door.state = doorState(door.state, countNearDoor(this.avatarPositions, door.tiles), dt);
+      if (door.hinge) door.hinge.rotation.y = doorAngle(door.state.openness);
+    }
   }
 
   dispose(): void {
@@ -505,6 +570,8 @@ export class FurnitureLayer {
       highlighted: piece.id === this.highlightedId,
       dimmed: false,
       glowing: this.glowIds.has(piece.id),
+      door:
+        piece.kind === 'door' ? { hinge: null, tiles: doorTiles(piece), state: DOOR_CLOSED } : null,
     };
     group.rotation.y = placement(piece.kind, piece.x, piece.y, piece.rotation).yaw;
     this.moveTo(node, piece.x, piece.y);
@@ -519,7 +586,13 @@ export class FurnitureLayer {
       node.res,
       group,
       () => node.gen === gen && this.nodes.get(piece.id) === node,
-      () => this.applyEffects(node),
+      (object) => {
+        this.applyEffects(node);
+        if (node.door && !node.door.hinge) {
+          const hinge = object.getObjectByName(DOOR_HINGE_NAME);
+          if (hinge instanceof Group) node.door.hinge = hinge;
+        }
+      },
     );
     return node;
   }

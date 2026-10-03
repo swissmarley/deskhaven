@@ -365,6 +365,16 @@ export class AvatarMeshes {
     for (const node of this.nodes.values()) fn(node.id, node.body.headTop(this.tmp), node.intern);
   }
 
+  /** Fractional tile positions of every placed avatar (the door proximity), reusing `out`. */
+  positions(out: { x: number; y: number }[]): { x: number; y: number }[] {
+    out.length = 0;
+    for (const node of this.nodes.values()) {
+      if (!node.placed) continue;
+      out.push({ x: node.x, y: node.y });
+    }
+    return out;
+  }
+
   /** Tile keys of the avatars typing at a desk right now (the monitor glow). */
   typingTiles(out: Set<string>): Set<string> {
     out.clear();
@@ -440,11 +450,14 @@ export class AvatarMeshes {
 
   private createRigFor(id: string, avatar: Avatar, isIntern: boolean): CharacterRig {
     if (!this.asset) throw new Error('character asset not loaded');
+    const seed = hashString(id) >>> 0;
     return new CharacterRig(this.asset, this.outfitResources, {
       avatar,
       isIntern,
       // Desynchronise the idle loops: a stable per-avatar phase in [0, 1).
-      phase: (hashString(id) >>> 0) / 0x1_0000_0000,
+      phase: seed / 0x1_0000_0000,
+      // The idle flourish schedule is deterministic per avatar id.
+      seed,
     });
   }
 

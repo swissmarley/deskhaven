@@ -23,18 +23,26 @@ import {
   type AnimationSpec,
   animationFor,
   type ClipName,
+  createFlourishSchedule,
+  evaluateFlourish,
   evaluateOverlay,
+  FLOURISH_DURATION_S,
+  type FlourishKind,
+  type FlourishSchedule,
+  flourishAllowed,
   OVERLAY_BONES,
   type OverlayBone,
   type OverlayKind,
   type OverlayPose,
   type PropKind,
   type PropPlacement,
+  type ScheduledFlourish,
   USED_CLIPS,
   WALK_STRIDE_MODEL_UNITS,
 } from './anim.js';
 import type { AvatarBody } from './body.js';
 import { COOLDOWN_EMISSIVE, COOLDOWN_EMISSIVE_INTENSITY } from './emote-math.js';
+import { mergeAttachment } from './merge.js';
 import {
   accessoryBone,
   accessoryMesh,
@@ -78,8 +86,13 @@ import {
  * - `Walking_A` is in place (root motion 0): each foot travels 0.40 along z per step, 0.80 per cycle
  *   (`WALK_STRIDE_MODEL_UNITS`), 1.0667 s per cycle.
  *
- * This module imports `three/addons` (GLTFLoader, SkeletonUtils) and must not be imported by tests;
- * the pure parts live in `anim.ts`, `outfit.ts` and `math.ts`.
+ * Idle variety: while the base pose is a plain `Idle` / `Sit_Chair_Idle` with no overlay, a seeded
+ * schedule (`createFlourishSchedule(hash(id))`) starts a short look-around / stretch / weight shift
+ * every 6–14 s as one more fading overlay layer (`advanceFlourish`); any other pose cancels it.
+ *
+ * This module imports `three/addons` (GLTFLoader, SkeletonUtils, BufferGeometryUtils through
+ * `merge.ts`) and must not be imported by tests; the pure parts live in `anim.ts`, `outfit.ts` and
+ * `math.ts`.
  */
 
 export const CHARACTER_URL = '/models/characters/rogue.glb';
@@ -101,6 +114,7 @@ export const HEAD_TOP_ABOVE_BONE = 0.95;
 
 /** Sanitised GLB node names of the bones the overlays and props use. */
 export const BONE_NODES: Record<OverlayBone | 'handSlotL' | 'handSlotR', string> = {
+  hips: 'hips',
   chest: 'chest',
   head: 'head',
   upperArmL: 'upperarml',
@@ -205,6 +219,13 @@ interface OverlayLayer {
   weight: number;
 }
 
+/** An idle flourish in flight: its own clock plus the usual fade weight. */
+interface FlourishLayer {
+  kind: FlourishKind;
+  t: number;
+  weight: number;
+}
+
 interface PropNode {
   group: Group;
   slot: Object3D;
@@ -260,6 +281,10 @@ export class CharacterRig implements AvatarBody {
   private readonly props = new Map<PropKind, PropNode>();
   private overlay: OverlayLayer | null = null;
   private previous: OverlayLayer | null = null;
+  private flourish: FlourishLayer | null = null;
+  private readonly schedule: FlourishSchedule;
+  private nextFlourish: ScheduledFlourish;
+  private flourishWasAllowed = false;
   private spec: AnimationSpec;
   private pose: Pose = 'idle';
   private seated = false;
@@ -275,7 +300,7 @@ export class CharacterRig implements AvatarBody {
   constructor(
     private readonly asset: CharacterAsset,
     private readonly res: OutfitResources,
-    init: { avatar: Avatar; isIntern: boolean; phase: number },
+    init: { avatar: Avatar; isIntern: boolean; phase: number; seed?: number },
   ) {
     this.object.name = 'character';
     this.object.scale.setScalar(asset.modelScale);
@@ -285,6 +310,8 @@ export class CharacterRig implements AvatarBody {
     this.avatar = init.avatar;
     this.intern = init.isIntern;
     this.clock = init.phase * 10;
+    this.schedule = createFlourishSchedule(init.seed ?? 0);
+    this.nextFlourish = this.schedule.next(this.clock);
 
     this.outfit = materialsFor(init.avatar, init.isIntern);
     for (const m of [this.outfit.skin, this.outfit.shirt, this.outfit.pants])
@@ -368,6 +395,7 @@ export class CharacterRig implements AvatarBody {
     for (const [bone, q] of this.saved) bone.quaternion.copy(q);
     this.mixer.update(dt);
     this.advanceOverlayWeights(dt);
+    this.advanceFlourish(dt);
     this.applyOverlays();
   }
 
@@ -442,6 +470,33 @@ export class CharacterRig implements AvatarBody {
   }
 
   /**
+   * Idle flourishes (`anim.ts`): start the scheduled one when the base pose allows it, fade it out
+   * early if the pose changes, and schedule the next from the seeded stream once it is gone. A
+   * flourish that fell due while the character was busy is re-rolled when it goes idle again, so
+   * sitting down never triggers one on the spot.
+   */
+  private advanceFlourish(dt: number): void {
+    const allowed = flourishAllowed(this.spec);
+    if (allowed && !this.flourishWasAllowed && this.nextFlourish.at <= this.clock)
+      this.nextFlourish = this.schedule.next(this.clock);
+    this.flourishWasAllowed = allowed;
+    const f = this.flourish;
+    const step = dt / OVERLAY_FADE_S;
+    if (f) {
+      f.t += dt;
+      const playing = allowed && f.t < FLOURISH_DURATION_S[f.kind];
+      f.weight = playing ? Math.min(1, f.weight + step) : f.weight - step;
+      if (!playing && f.weight <= 0) {
+        this.flourish = null;
+        this.nextFlourish = this.schedule.next(this.clock);
+      }
+      return;
+    }
+    if (allowed && this.clock >= this.nextFlourish.at)
+      this.flourish = { kind: this.nextFlourish.kind, t: 0, weight: 0 };
+  }
+
+  /**
    * Multiply the overlay bones' orientations (as written by the mixer this frame) with the
    * weighted deltas, parent-first so a child's delta composes on top of its parent's. The
    * pre-overlay quaternions are saved (one persistent slot per bone) and restored before the next
@@ -457,6 +512,8 @@ export class CharacterRig implements AvatarBody {
       });
     if (this.overlay && this.overlay.weight > 0)
       layers.push({ pose: evaluateOverlay(this.overlay.kind, this.clock), w: this.overlay.weight });
+    const f = this.flourish;
+    if (f && f.weight > 0) layers.push({ pose: evaluateFlourish(f.kind, f.t), w: f.weight });
     if (layers.length === 0) {
       this.placeProps(null);
       return;
@@ -501,7 +558,7 @@ export class CharacterRig implements AvatarBody {
   private prop(kind: PropKind): PropNode {
     let node = this.props.get(kind);
     if (node) return node;
-    const group = propMesh(kind, this.res);
+    const group = mergeAttachment(propMesh(kind, this.res), this.res, `prop:${kind}`);
     const slot = this.bones[kind === 'book' ? 'handSlotL' : 'handSlotR'] ?? this.model;
     slot.add(group);
     const materials = collectMaterials(group);
@@ -548,10 +605,11 @@ export class CharacterRig implements AvatarBody {
     }
     const head = this.bones.head;
     if (head) {
-      this.hair = hairStyleMesh(
-        this.avatar.hairStyle,
-        slotColor(this.avatar, 'hair', this.intern),
+      // One mesh per hair style / accessory (`merge.ts`): a character stays at ≤ 8 draw calls.
+      this.hair = mergeAttachment(
+        hairStyleMesh(this.avatar.hairStyle, slotColor(this.avatar, 'hair', this.intern), this.res),
         this.res,
+        `hair:${this.avatar.hairStyle}`,
       );
       head.add(this.hair);
       this.track(this.hair);
@@ -560,7 +618,11 @@ export class CharacterRig implements AvatarBody {
     const boneKey = accessoryBone(this.avatar.accessory);
     const bone = boneKey ? this.bones[boneKey] : undefined;
     if (bone) {
-      this.accessory = accessoryMesh(this.avatar.accessory, this.avatar, this.intern, this.res);
+      this.accessory = mergeAttachment(
+        accessoryMesh(this.avatar.accessory, this.avatar, this.intern, this.res),
+        this.res,
+        `accessory:${this.avatar.accessory}`,
+      );
       bone.add(this.accessory);
       this.track(this.accessory);
     }

@@ -1,5 +1,6 @@
 import { SPEED_TILES_PER_S } from '../motion.js';
 import type { Pose } from '../pose.js';
+import { mulberry32 } from '../rng.js';
 
 /**
  * Pose → animation state machine for the rigged characters: pure data and maths, no three.js, so
@@ -234,6 +235,7 @@ export function animationFor(pose: Pose, ctx: AnimationContext): AnimationSpec {
 
 /** Bones an overlay may rotate, in parent-first order (the rig applies them in this order). */
 export type OverlayBone =
+  | 'hips'
   | 'chest'
   | 'head'
   | 'upperArmL'
@@ -244,6 +246,7 @@ export type OverlayBone =
   | 'handR';
 
 export const OVERLAY_BONES: readonly OverlayBone[] = [
+  'hips',
   'chest',
   'head',
   'upperArmL',
@@ -441,4 +444,123 @@ export function maxOverlayAngle(pose: OverlayPose): number {
       Math.abs(pose.prop.tilt.z),
     );
   return max;
+}
+
+// ---- idle flourishes --------------------------------------------------------------------------------
+
+/**
+ * Idle variety: every `FLOURISH_MIN_GAP_S`–`FLOURISH_MAX_GAP_S` seconds an idle character plays one
+ * short flourish on top of `Idle` / `Sit_Chair_Idle` (never over another overlay, never while a
+ * pose has a prop): a look-around, a stretch or a shift of weight. The rig fades the layer in and
+ * out like any overlay and `evaluateFlourish` is itself zero at both ends, so nothing pops. The
+ * schedule is a per-avatar seeded stream (`createFlourishSchedule(hash(id))`), so two reloads of the
+ * same office fidget identically and tests are deterministic.
+ */
+export type FlourishKind = 'look' | 'stretch' | 'shift';
+
+export const FLOURISH_KINDS: readonly FlourishKind[] = ['look', 'stretch', 'shift'];
+
+/** Length of each flourish in seconds (the pose is identity outside `[0, duration]`). */
+export const FLOURISH_DURATION_S: Record<FlourishKind, number> = {
+  look: 1.6,
+  stretch: 2.0,
+  shift: 2.6,
+};
+
+export const FLOURISH_MIN_GAP_S = 6;
+export const FLOURISH_MAX_GAP_S = 14;
+/** Peak head yaw of the look-around. */
+export const LOOK_YAW_DEG = 35;
+
+/** Clips a flourish may play over; any other base clip (walking, cheering, interacting) blocks it. */
+const FLOURISH_CLIPS: readonly ClipName[] = ['Idle', 'Sit_Chair_Idle'];
+
+/** Whether a flourish may start (or keep playing) over this animation spec. */
+export function flourishAllowed(spec: AnimationSpec): boolean {
+  return spec.overlay === null && spec.prop === null && FLOURISH_CLIPS.includes(spec.clip);
+}
+
+/** The time of the next flourish: `now` plus a uniform gap in `[MIN_GAP, MAX_GAP)`. */
+export function nextFlourishAt(now: number, rng: () => number): number {
+  return now + FLOURISH_MIN_GAP_S + rng() * (FLOURISH_MAX_GAP_S - FLOURISH_MIN_GAP_S);
+}
+
+/** A uniformly chosen flourish. */
+export function pickFlourish(rng: () => number): FlourishKind {
+  const i = Math.min(FLOURISH_KINDS.length - 1, Math.floor(rng() * FLOURISH_KINDS.length));
+  return FLOURISH_KINDS[i] ?? 'look';
+}
+
+export interface ScheduledFlourish {
+  at: number;
+  kind: FlourishKind;
+}
+
+export interface FlourishSchedule {
+  /** The next flourish after `now`; consumes the seeded stream, so successive calls differ. */
+  next(now: number): ScheduledFlourish;
+}
+
+/** Deterministic per-seed schedule (same seed → same gaps and kinds in the same order). */
+export function createFlourishSchedule(seed: number): FlourishSchedule {
+  const rng = mulberry32(seed);
+  return {
+    next(now) {
+      return { at: nextFlourishAt(now, rng), kind: pickFlourish(rng) };
+    },
+  };
+}
+
+/** Smooth bell window over `[0, duration]`: 0 at both ends, 1 across the middle, no kinks. */
+function window01(t: number, duration: number, edge: number): number {
+  if (t <= 0 || t >= duration) return 0;
+  return ramp(t, 0, edge) * (1 - ramp(t, duration - edge, duration));
+}
+
+/** Bone deltas of a flourish `t` seconds after it started (identity before 0 and after its duration). */
+export function evaluateFlourish(kind: FlourishKind, t: number): OverlayPose {
+  const duration = FLOURISH_DURATION_S[kind];
+  if (t <= 0 || t >= duration) return { bones: {}, prop: null };
+  switch (kind) {
+    case 'look': {
+      // One sweep: head turns to one side, then the other, back to centre, with a slight tilt.
+      const u = t / duration;
+      const w = window01(t, duration, 0.25);
+      const s = Math.sin(2 * Math.PI * u) * w;
+      return {
+        bones: {
+          head: deg(2 * w, LOOK_YAW_DEG * s, 3 * s),
+          chest: deg(0, 6 * s, 0),
+        },
+        prop: null,
+      };
+    }
+    case 'stretch': {
+      // Both arms up over the head, a lean back and a look up; rise 0.5 s, hold, lower by the end.
+      const e = ramp(t, 0, 0.5) - ramp(t, 1.4, duration);
+      return {
+        bones: {
+          chest: deg(-6 * e),
+          head: deg(-10 * e),
+          upperArmL: deg(-80 * e, 0, 55 * e),
+          upperArmR: deg(-80 * e, 0, -55 * e),
+          lowerArmL: deg(-35 * e, 0, 10 * e),
+          lowerArmR: deg(-35 * e, 0, -10 * e),
+        },
+        prop: null,
+      };
+    }
+    case 'shift': {
+      // Weight onto one hip: the hips roll, the chest and head counter so the eyes stay level.
+      const e = ramp(t, 0, 0.7) - ramp(t, 1.8, duration);
+      return {
+        bones: {
+          hips: deg(0, 0, 5 * e),
+          chest: deg(0, 4 * e, -3.5 * e),
+          head: deg(0, 0, -1.5 * e),
+        },
+        prop: null,
+      };
+    }
+  }
 }

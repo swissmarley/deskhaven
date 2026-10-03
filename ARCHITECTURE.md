@@ -411,6 +411,18 @@ from the projected head anchor each frame (same texts, truncation rules and dura
 path, shared through `bubble-text.ts`; overlay text keeps a fixed CSS size instead of scaling with
 the zoom); emotes are in-scene sprites and instanced particles so they are occluded correctly.
 
+### 11.5a Polish (G4)
+
+Camera `fit`/`zoomAt` ease over 180 ms (cubic ease-out, targets accumulate under the wheel, drag pans
+stay immediate, the mount fit snaps). Idle avatars play a seeded flourish every 6–14 s (look-around,
+stretch, weight shift) as an extra overlay layer, only on `Idle`/`Sit_Chair_Idle` with no prop. The
+door leaf swings open while an avatar is within one tile of the door and closes 0.6 s after. Hair,
+accessory and mug meshes are merged per material so a character costs ≤ 8 draw calls in the main
+pass. The HR desk shows offscreen 3D renders of the avatar (`game/preview.ts` → `three/preview.ts`:
+one shared alpha renderer, the cached rig re-dressed per call, a 64-entry LRU) and falls back to the
+pixel sprite when WebGL or the model is unavailable. The committed character file is the stripped
+GLB (six clips, six body meshes, quantised; `scripts/strip-character.mjs`).
+
 ### 11.6 Performance budget and out of scope
 
 ≤ 150 draw calls in the main pass (the `renderer.info` number includes the shadow pass, so the

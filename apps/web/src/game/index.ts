@@ -47,6 +47,8 @@ export { findPath } from './pathfinding.js';
 export { sheetFrameFor } from './pixi/avatar.js';
 export type { Pose } from './pose.js';
 export { poseFor } from './pose.js';
+export type { PreviewOptions } from './preview.js';
+export { disposePreviewRenderer, renderAvatarPreview3d } from './preview.js';
 export type { RendererKind } from './renderer.js';
 export {
   createWorld,

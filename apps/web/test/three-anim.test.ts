@@ -4,16 +4,26 @@ import type { Pose } from '../src/game/pose.js';
 import {
   ALL_POSES,
   animationFor,
+  createFlourishSchedule,
+  evaluateFlourish,
   evaluateOverlay,
+  FLOURISH_DURATION_S,
+  FLOURISH_KINDS,
+  FLOURISH_MAX_GAP_S,
+  FLOURISH_MIN_GAP_S,
+  flourishAllowed,
   gaitFor,
+  LOOK_YAW_DEG,
   MAX_RUN_TIME_SCALE,
   MAX_WALK_TIME_SCALE,
   MIN_RUN_TIME_SCALE,
   MIN_WALK_TIME_SCALE,
   maxOverlayAngle,
+  nextFlourishAt,
   OVERLAY_BONES,
   OVERLAY_KINDS,
   OVERLAY_PERIOD_S,
+  pickFlourish,
   RUN_CLIP_SECONDS,
   RUN_STRIDE_MODEL_UNITS,
   RUN_SWITCH_TIME_SCALE,
@@ -253,5 +263,110 @@ describe('overlays', () => {
     // The mug tilts towards the mouth only at the top.
     expect(Math.abs(evaluateOverlay('sip', 0).prop?.tilt.z ?? 1)).toBe(0);
     expect(evaluateOverlay('sip', 3).prop?.tilt.z ?? 0).toBeLessThan(0);
+  });
+});
+
+describe('idle flourishes', () => {
+  it('are allowed only over a bare Idle / Sit_Chair_Idle', () => {
+    for (const pose of POSES)
+      for (const seated of [false, true]) {
+        const spec = animationFor(pose, { seated, moving: false, strideTilesPerCycle: 0.53 });
+        const bare =
+          spec.overlay === null &&
+          spec.prop === null &&
+          (spec.clip === 'Idle' || spec.clip === 'Sit_Chair_Idle');
+        expect(flourishAllowed(spec), `${pose} seated=${seated}`).toBe(bare);
+      }
+    expect(flourishAllowed(animationFor('idle', { seated: false, moving: false }))).toBe(true);
+    expect(flourishAllowed(animationFor('wait', { seated: true, moving: false }))).toBe(true);
+    expect(flourishAllowed(animationFor('typing', { seated: true, moving: false }))).toBe(false);
+    expect(flourishAllowed(animationFor('walk', { seated: false, moving: true }))).toBe(false);
+    expect(flourishAllowed(animationFor('celebrate', { seated: false, moving: false }))).toBe(
+      false,
+    );
+  });
+
+  it('schedules the next one 6–14 s out, deterministically per seed', () => {
+    const fixed = (v: number) => () => v;
+    expect(nextFlourishAt(10, fixed(0))).toBe(10 + FLOURISH_MIN_GAP_S);
+    expect(nextFlourishAt(10, fixed(0.999999))).toBeLessThan(10 + FLOURISH_MAX_GAP_S);
+    expect(nextFlourishAt(10, fixed(0.5))).toBe(10 + (FLOURISH_MIN_GAP_S + FLOURISH_MAX_GAP_S) / 2);
+    expect(pickFlourish(fixed(0))).toBe('look');
+    expect(pickFlourish(fixed(0.999999))).toBe('shift');
+    const a = createFlourishSchedule(1234);
+    const b = createFlourishSchedule(1234);
+    const c = createFlourishSchedule(4321);
+    const seqA = Array.from({ length: 6 }, (_, i) => a.next(i * 20));
+    const seqB = Array.from({ length: 6 }, (_, i) => b.next(i * 20));
+    const seqC = Array.from({ length: 6 }, (_, i) => c.next(i * 20));
+    expect(seqA).toEqual(seqB);
+    expect(seqA).not.toEqual(seqC);
+    seqA.forEach((f, i) => {
+      expect(f.at).toBeGreaterThanOrEqual(i * 20 + FLOURISH_MIN_GAP_S);
+      expect(f.at).toBeLessThan(i * 20 + FLOURISH_MAX_GAP_S);
+      expect(FLOURISH_KINDS).toContain(f.kind);
+    });
+    // Over many draws every kind shows up.
+    const kinds = new Set<string>();
+    const s = createFlourishSchedule(7);
+    for (let i = 0; i < 60; i++) kinds.add(s.next(0).kind);
+    expect([...kinds].sort()).toEqual([...FLOURISH_KINDS].sort());
+  });
+
+  it('is identity at both ends and under 90° throughout, with no pops', () => {
+    for (const kind of FLOURISH_KINDS) {
+      const d = FLOURISH_DURATION_S[kind];
+      expect(evaluateFlourish(kind, 0)).toEqual({ bones: {}, prop: null });
+      expect(evaluateFlourish(kind, -1)).toEqual({ bones: {}, prop: null });
+      expect(evaluateFlourish(kind, d)).toEqual({ bones: {}, prop: null });
+      expect(evaluateFlourish(kind, d + 5)).toEqual({ bones: {}, prop: null });
+      let peak = 0;
+      for (let t = 0.001; t < d; t += 0.001) {
+        const a = evaluateFlourish(kind, t);
+        const b = evaluateFlourish(kind, t + 0.001);
+        expect(a.prop).toBeNull();
+        peak = Math.max(peak, maxOverlayAngle(a));
+        expect(maxOverlayAngle(a), `${kind} @ ${t}`).toBeLessThan(Math.PI / 2);
+        for (const bone of Object.keys(a.bones)) expect(OVERLAY_BONES).toContain(bone);
+        for (const bone of OVERLAY_BONES) {
+          const da = a.bones[bone];
+          const db = b.bones[bone];
+          if (!da || !db) continue;
+          const step = Math.max(
+            Math.abs(da.x - db.x),
+            Math.abs(da.y - db.y),
+            Math.abs(da.z - db.z),
+          );
+          expect(step, `${kind} ${bone} @ ${t}`).toBeLessThan(0.02);
+        }
+      }
+      // Each flourish actually moves something.
+      expect(peak, kind).toBeGreaterThan(0.05);
+    }
+  });
+
+  it('looks around by ±LOOK_YAW_DEG, stretches both arms up and shifts the hips', () => {
+    const d = FLOURISH_DURATION_S.look;
+    let maxYaw = 0;
+    let minYaw = 0;
+    for (let t = 0; t < d; t += 0.01) {
+      const y = evaluateFlourish('look', t).bones.head?.y ?? 0;
+      maxYaw = Math.max(maxYaw, y);
+      minYaw = Math.min(minYaw, y);
+    }
+    const limit = (LOOK_YAW_DEG * Math.PI) / 180;
+    expect(maxYaw).toBeGreaterThan(limit * 0.9);
+    expect(maxYaw).toBeLessThanOrEqual(limit + 1e-9);
+    expect(minYaw).toBeLessThan(-limit * 0.9);
+    const stretch = evaluateFlourish('stretch', 1.0);
+    expect(stretch.bones.upperArmL?.x ?? 0).toBeLessThan(-1);
+    expect(stretch.bones.upperArmR?.x ?? 0).toBeLessThan(-1);
+    expect(stretch.bones.upperArmL?.z ?? 0).toBeCloseTo(-(stretch.bones.upperArmR?.z ?? 0), 9);
+    const shift = evaluateFlourish('shift', 1.2);
+    expect(shift.bones.hips?.z ?? 0).toBeGreaterThan(0.05);
+    // The chest and head counter-roll so the eyes stay level.
+    expect(shift.bones.chest?.z ?? 0).toBeLessThan(0);
+    expect(shift.bones.head?.z ?? 0).toBeLessThan(0);
+    expect(OVERLAY_BONES[0]).toBe('hips');
   });
 });

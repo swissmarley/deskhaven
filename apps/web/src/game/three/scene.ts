@@ -69,6 +69,7 @@ export class ThreeScene implements Scene {
   private degraded = false;
   private avatarCount = 0;
   private readonly typingTiles = new Set<string>();
+  private readonly avatarPositions: { x: number; y: number }[] = [];
   private readonly iso = new IsoCamera();
   readonly cameraView: CameraView = this.iso;
   private host: SceneHost | null = null;
@@ -292,6 +293,7 @@ export class ThreeScene implements Scene {
     if (avatars) {
       avatars.update(dtMs, this.iso.camera.quaternion);
       furniture?.setGlowTiles(avatars.typingTiles(this.typingTiles));
+      furniture?.setAvatarPositions(avatars.positions(this.avatarPositions));
       if (overlay) {
         avatars.headAnchors((id, point) => {
           overlay.setAnchor(id, this.iso.project(point));

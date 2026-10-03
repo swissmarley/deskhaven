@@ -1,5 +1,7 @@
 import type { Avatar } from '@agenthotel/shared';
 import { type JSX, useEffect, useState } from 'react';
+import { renderAvatarPreview3d } from '../game/preview.js';
+import { rendererKind } from '../game/renderer.js';
 
 const SKINS = ['#ffdbac', '#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#a1665e'];
 const HAIRS = [
@@ -43,26 +45,59 @@ export function randomAvatar(): Avatar {
 
 type PreviewFn = (avatar: Avatar, facing?: 0 | 1 | 2 | 3, scale?: number) => string;
 
-/** Loads the sprite preview renderer lazily (the pure sprite module, never a world renderer); falls back to a colour swatch while sprites are not available. */
-export function useAvatarPreview(avatar: Avatar, facing: 0 | 1 | 2 | 3 = 2): string | null {
-  const [url, setUrl] = useState<string | null>(null);
+export interface AvatarPreviewImage {
+  url: string;
+  /** True for the pixel sprite (rendered with `image-rendering: pixelated`), false for the 3D render. */
+  pixelated: boolean;
+}
+
+/**
+ * Renders the avatar preview lazily. With the Three renderer active it asks the offscreen 3D preview
+ * first (`game/preview.js`, the only allowed import path: a lazy wrapper that loads Three on demand) and falls back to
+ * the procedural pixel sprite (`game/sprites.js`, no renderer) when WebGL or the model is unavailable;
+ * with the Pixi renderer the pixel sprite is used directly. Null while nothing is ready.
+ */
+export function useAvatarPreview(
+  avatar: Avatar,
+  facing: 0 | 1 | 2 | 3 = 2,
+): AvatarPreviewImage | null {
+  const [image, setImage] = useState<AvatarPreviewImage | null>(null);
   const key = JSON.stringify(avatar);
   useEffect(() => {
     let cancelled = false;
-    void import('../game/sprites.js').then((mod) => {
-      const fn = (mod as unknown as { renderAvatarPreview?: PreviewFn }).renderAvatarPreview;
-      if (!fn || cancelled) return;
+    const parsed = JSON.parse(key) as Avatar;
+    const pixel = async (): Promise<void> => {
+      const mod = (await import('../game/sprites.js')) as unknown as {
+        renderAvatarPreview?: PreviewFn;
+      };
+      if (cancelled || !mod.renderAvatarPreview) return;
       try {
-        setUrl(fn(JSON.parse(key) as Avatar, facing, 4));
+        setImage({ url: mod.renderAvatarPreview(parsed, facing, 4), pixelated: true });
       } catch {
-        setUrl(null);
+        setImage(null);
       }
-    });
+    };
+    const run = async (): Promise<void> => {
+      if (rendererKind() === 'three') {
+        try {
+          const url = await renderAvatarPreview3d(parsed, { size: 144, facing });
+          if (cancelled) return;
+          if (url) {
+            setImage({ url, pixelated: false });
+            return;
+          }
+        } catch {
+          // Fall through to the pixel sprite.
+        }
+      }
+      await pixel();
+    };
+    void run();
     return () => {
       cancelled = true;
     };
   }, [key, facing]);
-  return url;
+  return image;
 }
 
 export function AvatarPreview({
@@ -72,15 +107,15 @@ export function AvatarPreview({
   avatar: Avatar;
   size?: number;
 }): JSX.Element {
-  const url = useAvatarPreview(avatar);
-  if (url)
+  const image = useAvatarPreview(avatar);
+  if (image)
     return (
       <img
-        src={url}
+        src={image.url}
         alt="avatar preview"
         width={size}
         height={size}
-        style={{ imageRendering: 'pixelated', objectFit: 'contain' }}
+        style={{ imageRendering: image.pixelated ? 'pixelated' : 'auto', objectFit: 'contain' }}
       />
     );
   return (

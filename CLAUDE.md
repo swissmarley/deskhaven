@@ -115,3 +115,15 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   loop did and showed a black canvas; browsers already throttle `requestAnimationFrame` when hidden.
 - Debugging the live world from the browser pane: `const w = (await import('/src/ui/worldHandle.ts')).getWorldHandle()`;
   `w.inner` is the `WorldCore`, `w.inner.scene` the mounted scene (Three: `.renderer`, `.iso.camera`).
+- Avatar previews: the UI imports the 3D preview only through `game/preview.ts` (a lazy wrapper);
+  never import `three/preview.ts` statically from `game/index.ts` or the Three chunk lands in the entry.
+  The picker falls back to the pixel sprite when the 3D render resolves `null`.
+- `three/merge.ts` (BufferGeometryUtils) and `three/preview.ts` must stay out of modules that tests
+  import; pure helpers live in `preview-math.ts`, `door-math.ts`, `anim.ts`.
+- Camera zoom/fit ease over `EASE_MS` (180 ms) via `camera.tick()` from `WorldCore.step`; the fit on
+  mount snaps so the first paint is framed. The door leaf hinges at its +X edge and opens +80° inwards
+  (model +Z = into the room at every rotation because of the manifest's `yawOffset = π/2`).
+- Bundling: never `import()` a game module from the UI that `game/index.ts` also re-exports (e.g.
+  `game/preview.ts`): Rollup then merges the two graphs and 190 Pixi modules land in the entry chunk
+  (416 kB → 658 kB). Import the lazy wrappers statically; only the wrappers themselves `import()`
+  the Three modules. Check `pnpm build`: entry ≈ 416 kB, Three core in a lazy `lights-*.js` chunk.

@@ -160,7 +160,8 @@ export class WorldCore implements World, WorldExtras, InputTarget {
     scene.setEditorMode(this.editorMode);
     scene.setGhost(this.ghost);
     this.camera.setScreen(scene.screenWidth, scene.screenHeight);
-    this.camera.setBounds(roomBounds(this.room.width, this.room.height), true);
+    // The first paint is already framed: no easing from the default zoom on mount.
+    this.camera.setBounds(roomBounds(this.room.width, this.room.height), true, true);
     this.unbindInput = this.bindInput(canvas, container, this, this.camera);
 
     const queued = this.preMount;
@@ -439,6 +440,7 @@ export class WorldCore implements World, WorldExtras, InputTarget {
     if (!scene) return;
     const deltaMS = Math.min(rawDeltaMS, MAX_FRAME_MS);
     const dt = deltaMS / 1000;
+    this.camera.tick(deltaMS);
     this.removeQueue.length = 0;
     for (const st of this.avatars.values()) {
       this.advance(st, dt);
