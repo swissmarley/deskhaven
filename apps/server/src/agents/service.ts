@@ -21,26 +21,39 @@ import { agents as agentsTable, usageDaily } from '../db/schema.js';
 import type { SettingsService } from '../settings/service.js';
 import type { WsHub } from '../ws/hub.js';
 
-const PALETTES = {
+export const PALETTES = {
   skin: ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a1665e'],
   hair: ['#2c1b18', '#4a2c2a', '#b55239', '#d6b370', '#1b1b1b', '#6e6e6e', '#3a86ff', '#ef476f'],
   shirt: ['#3a86ff', '#ff006e', '#8338ec', '#fb5607', '#06d6a0', '#ffbe0b', '#118ab2', '#ef476f'],
   pants: ['#1d3557', '#2b2d42', '#4a4e69', '#22223b', '#5c677d', '#6c584c'],
 } as const;
 
-export function randomAvatar(seed = Math.random()): Avatar {
-  const pick = <T>(arr: readonly [T, ...T[]], salt: number): T => {
-    const idx =
-      Math.floor((((seed * 9301 + salt * 49297) % 233280) / 233280) * arr.length) % arr.length;
-    return arr[idx] ?? arr[0];
+/** mulberry32: a small, well-mixed 32-bit PRNG returning floats in [0, 1). */
+function mulberry32(a: number): () => number {
+  let t = a >>> 0;
+  return () => {
+    t = (t + 0x6d2b79f5) >>> 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/**
+ * A random avatar; the same `seed` (in [0, 1)) always gives the same one. Every field draws its own
+ * number from a seeded PRNG. (The old per-field LCG barely moved with the seed, so 10,000 calls
+ * produced only two distinct avatars.)
+ */
+export function randomAvatar(seed = Math.random()): Avatar {
+  const next = mulberry32(Math.floor(seed * 4294967296));
+  const pick = <T>(arr: readonly [T, ...T[]]): T => arr[Math.floor(next() * arr.length)] ?? arr[0];
   return {
-    skin: pick(PALETTES.skin, 1),
-    hair: pick(PALETTES.hair, 2),
-    hairStyle: pick(['short', 'long', 'cap', 'bald', 'bun'] as const, 3),
-    shirt: pick(PALETTES.shirt, 4),
-    pants: pick(PALETTES.pants, 5),
-    accessory: pick(['none', 'glasses', 'headset', 'tie', 'scarf', 'none'] as const, 6),
+    skin: pick(PALETTES.skin),
+    hair: pick(PALETTES.hair),
+    hairStyle: pick(['short', 'long', 'cap', 'bald', 'bun'] as const),
+    shirt: pick(PALETTES.shirt),
+    pants: pick(PALETTES.pants),
+    accessory: pick(['none', 'glasses', 'headset', 'tie', 'scarf', 'none'] as const),
   };
 }
 
