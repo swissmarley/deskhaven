@@ -1,10 +1,11 @@
-import type {
-  Agent,
-  Avatar,
-  CreateAgent,
-  PermissionMode,
-  RolePreset,
-  UpdateAgent,
+import {
+  type Agent,
+  type Avatar,
+  agentCwd,
+  type CreateAgent,
+  type PermissionMode,
+  type RolePreset,
+  type UpdateAgent,
 } from '@deskhaven/shared';
 import { type JSX, useEffect, useState } from 'react';
 import { api } from '../net/api.js';
@@ -198,7 +199,7 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
         </div>
       ) : agent.worktree ? (
         <p className="muted small">
-          Worktree: {agent.worktree.path} ({agent.worktree.branch})
+          Worktree: {agentCwd(agent)} ({agent.worktree.branch})
         </p>
       ) : null}
       <label>

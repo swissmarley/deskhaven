@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { agentCwd } from '@deskhaven/shared';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type Built, client, testApp } from './helpers.js';
 
@@ -10,6 +11,8 @@ function tmpRepo(): string {
   const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   git('init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'hello\n');
+  fs.mkdirSync(path.join(dir, 'src', 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', 'lib', 'index.ts'), 'export {};\n');
   git('add', '-A');
   git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
   return dir;
@@ -95,6 +98,34 @@ describe('hiring with a git worktree', () => {
       payload: { workdir: tmpRepo() },
     });
     expect(res.statusCode).toBe(400);
+    await req({ method: 'DELETE', url: `/api/agents/${agent.id}?force=true` });
+  });
+});
+
+describe('hiring a worktree agent for a subfolder', () => {
+  it('keeps the subfolder: the agent works in <worktree>/<subpath>, not the whole checkout', async () => {
+    const repo = tmpRepo();
+    const res = await hire(path.join(repo, 'src', 'lib'), 'Sub');
+    expect(res.statusCode).toBe(201);
+    const agent = res.json();
+    expect(agent.workdir).toBe(path.join(repo, 'src', 'lib'));
+    expect(agent.worktree.subdir).toBe('src/lib');
+    // The worktree is still of the whole repository (git operates on its root)...
+    expect(fs.existsSync(path.join(agent.worktree.path, 'a.txt'))).toBe(true);
+    // ...but the agent's directory is the same subfolder inside it.
+    const cwd = agentCwd(agent);
+    expect(cwd).toBe(`${agent.worktree.path}/src/lib`);
+    expect(fs.existsSync(path.join(cwd, 'index.ts'))).toBe(true);
+    const del = await req({ method: 'DELETE', url: `/api/agents/${agent.id}` });
+    expect(del.statusCode).toBe(200);
+    expect(fs.existsSync(agent.worktree.path)).toBe(false);
+  });
+
+  it('records no subdir when hired at the repository root', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Root')).json();
+    expect(agent.worktree.subdir).toBeUndefined();
+    expect(agentCwd(agent)).toBe(agent.worktree.path);
     await req({ method: 'DELETE', url: `/api/agents/${agent.id}?force=true` });
   });
 });

@@ -6,8 +6,11 @@ import { promisify } from 'node:util';
 const run = promisify(execFile);
 
 export interface WorktreeInfo {
+  /** The worktree root. */
   path: string;
   branch: string;
+  /** The hired folder relative to the repository root, `/`-separated; absent for the root. */
+  subdir?: string;
 }
 
 /**
@@ -53,9 +56,26 @@ export class WorktreeService {
     }
   }
 
-  async create(repoDir: string, agentId: string, agentName: string): Promise<WorktreeInfo> {
-    if (!(await this.isGitRepo(repoDir)))
-      throw new Error(`${repoDir} is not a git repository; worktrees need git`);
+  /** The repository root containing `dir` (git's own answer, symlinks resolved). */
+  async toplevel(dir: string): Promise<string> {
+    const { stdout } = await run('git', ['rev-parse', '--show-toplevel'], {
+      cwd: dir,
+      timeout: 10_000,
+    });
+    return fs.realpathSync(stdout.trim());
+  }
+
+  /**
+   * A worktree of the repository that contains `workdir`, on a new branch. When `workdir` is a
+   * subfolder of the repository, the same subfolder is recorded as `subdir` so the agent works there
+   * (and its edit guard is scoped to it) instead of in the whole checkout.
+   */
+  async create(workdir: string, agentId: string, agentName: string): Promise<WorktreeInfo> {
+    if (!(await this.isGitRepo(workdir)))
+      throw new Error(`${workdir} is not a git repository; worktrees need git`);
+    const repoDir = await this.toplevel(workdir);
+    const rel = path.relative(repoDir, fs.realpathSync(workdir));
+    const subdir = rel && !rel.startsWith('..') ? rel.split(path.sep).join('/') : undefined;
     const slug = `${slugify(agentName)}-${agentId.slice(0, 6)}`;
     const branch = `deskhaven/${slug}`;
     const target = path.join(this.root(), slug);
@@ -72,7 +92,11 @@ export class WorktreeService {
         await run('git', ['worktree', 'add', target, branch], { cwd: repoDir, timeout: 60_000 });
       } else throw err;
     }
-    return { path: target, branch };
+    if (subdir && !fs.existsSync(path.join(target, subdir))) {
+      // An untracked or ignored folder is not in a fresh checkout; create it so the agent has a cwd.
+      fs.mkdirSync(path.join(target, subdir), { recursive: true });
+    }
+    return { path: target, branch, ...(subdir ? { subdir } : {}) };
   }
 
   async isDirty(worktreePath: string): Promise<boolean> {

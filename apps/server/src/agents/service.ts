@@ -160,10 +160,7 @@ export class AgentService {
    * `extra.worktree` is the agent's own checkout (created by the caller under the data dir); the
    * runtime then uses it as the cwd while `workdir` keeps pointing at the source repository.
    */
-  create(
-    input: CreateAgent,
-    extra: { id?: string; worktree?: { path: string; branch: string } | null } = {},
-  ): Agent {
+  create(input: CreateAgent, extra: { id?: string; worktree?: Agent['worktree'] } = {}): Agent {
     const workdir = this.validateCreate(input);
     const preset = this.presetLookup(input.rolePresetId);
     if (!preset) throw new Error(`Unknown role preset ${input.rolePresetId}`);

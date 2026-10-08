@@ -5,6 +5,7 @@ import {
   type AgentEvent,
   type AgentEventOf,
   type AgentStatus,
+  agentCwd,
   classifyTool,
   newId,
   type Settings,
@@ -122,7 +123,7 @@ export class AgentRuntime {
   }
 
   private cwd(): string {
-    return this.agent.worktree?.path ?? this.agent.workdir;
+    return agentCwd(this.agent);
   }
 
   /** Spawn the Claude Code process (resuming the stored session when there is one). */

@@ -224,7 +224,9 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
 1. HR desk → fill **Working directory** with the **absolute path** of your repository.
 2. Tick **git worktree** to give the agent its own checkout under `~/.deskhaven/worktrees/<name>-<id>` on a
    new branch `deskhaven/<name>-<id>`, created from your repository's current commit. The agent runs and
-   edits only there; your own working copy stays untouched, and several engineers can work in parallel on
+   edits only there (if the working directory is a subfolder of the repository, such as `repo/src`, the
+   worktree still covers the whole repository but the agent works in, and may only edit, the same
+   subfolder inside it); your own working copy stays untouched, and several engineers can work in parallel on
    the same repository. Hiring fails with a clear error if the folder is not a git repository. Uncommitted
    changes in your checkout are *not* copied into the worktree (the Feed shows a warning when there are
    some). **Fire** removes the worktree folder but keeps the branch; if the worktree has uncommitted

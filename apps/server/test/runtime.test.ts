@@ -174,6 +174,30 @@ function setup(over: Partial<Agent> = {}, mode: 'API_KEY' | 'CLAUDE_SUBSCRIPTION
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
 describe('AgentRuntime', () => {
+  it('scopes the cwd and the edit guard to the hired subfolder of a worktree', () => {
+    const { rt, sessions } = setup({
+      worktree: { path: '/data/worktrees/ada-a1', branch: 'b', subdir: 'packages/app' },
+    });
+    rt.sendPrompt('hi', null);
+    const s = sessions[0];
+    if (!s) throw new Error('no session');
+    expect(s.cfg.cwd).toBe('/data/worktrees/ada-a1/packages/app');
+    const edit = (file_path: string) =>
+      s.cb.preToolGuard?.({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Edit',
+        tool_input: { file_path },
+        tool_use_id: 't',
+        session_id: 's',
+        transcript_path: '/t',
+        cwd: s.cfg.cwd,
+      } as unknown as HookInput);
+    expect(edit('/data/worktrees/ada-a1/packages/app/src/x.ts')).toBeNull();
+    expect(edit('src/relative.ts')).toBeNull();
+    expect(edit('/data/worktrees/ada-a1/README.md')).toMatch(/outside/);
+    expect(edit('/data/worktrees/ada-a1/packages/other/y.ts')).toMatch(/outside/);
+  });
+
   it('runs in the agent worktree when it has one', () => {
     const { rt, sessions } = setup({ worktree: { path: '/data/worktrees/ada-a1', branch: 'b' } });
     rt.sendPrompt('hi', null);
