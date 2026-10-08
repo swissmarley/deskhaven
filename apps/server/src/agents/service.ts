@@ -67,17 +67,32 @@ export class AgentService {
     return row ? AgentSchema.parse(JSON.parse(row.json)) : undefined;
   }
 
-  create(input: CreateAgent): Agent {
-    const preset = this.presetLookup(input.rolePresetId);
-    if (!preset) throw new Error(`Unknown role preset ${input.rolePresetId}`);
+  /** Throws when `input` cannot become an agent; returns the resolved working directory. */
+  validateCreate(input: CreateAgent): string {
+    if (!this.presetLookup(input.rolePresetId))
+      throw new Error(`Unknown role preset ${input.rolePresetId}`);
     const workdir = path.resolve(input.workdir);
     if (!fs.existsSync(workdir) || !fs.statSync(workdir).isDirectory()) {
       throw new Error(`Working directory does not exist: ${workdir}`);
     }
+    return workdir;
+  }
+
+  /**
+   * `extra.worktree` is the agent's own checkout (created by the caller under the data dir); the
+   * runtime then uses it as the cwd while `workdir` keeps pointing at the source repository.
+   */
+  create(
+    input: CreateAgent,
+    extra: { id?: string; worktree?: { path: string; branch: string } | null } = {},
+  ): Agent {
+    const workdir = this.validateCreate(input);
+    const preset = this.presetLookup(input.rolePresetId);
+    if (!preset) throw new Error(`Unknown role preset ${input.rolePresetId}`);
     const now = Date.now();
     const settings = this.settings.get();
     const agent: Agent = AgentSchema.parse({
-      id: newId(),
+      id: extra.id ?? newId(),
       name: input.name.trim(),
       avatar: input.avatar ?? randomAvatar(),
       rolePresetId: preset.id,
@@ -91,7 +106,7 @@ export class AgentService {
       allowedTools: input.allowedTools ?? preset.allowedTools,
       permissionMode: input.permissionMode ?? preset.permissionMode,
       workdir,
-      worktree: null,
+      worktree: extra.worktree ?? null,
       sessionId: null,
       status: 'stopped',
       roomId: input.roomId ?? DEFAULT_ROOM_ID,
@@ -109,6 +124,10 @@ export class AgentService {
 
   update(id: string, patch: UpdateAgent): Agent {
     const current = this.mustGet(id);
+    if (current.worktree && patch.workdir && path.resolve(patch.workdir) !== current.workdir)
+      throw new Error(
+        'This agent works in its own git worktree; fire it and hire a new one to change the repository',
+      );
     if (patch.workdir) {
       const workdir = path.resolve(patch.workdir);
       if (!fs.existsSync(workdir)) throw new Error(`Working directory does not exist: ${workdir}`);

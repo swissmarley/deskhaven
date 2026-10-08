@@ -2,6 +2,7 @@ import {
   APP_VERSION,
   CreateAgentSchema,
   CreateTaskSchema,
+  newId,
   ResolvePermissionSchema,
   UpdateAgentSchema,
   UpdateSettingsSchema,
@@ -10,6 +11,7 @@ import {
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.js';
+import type { WorktreeInfo } from '../worktree/service.js';
 
 const idParams = z.object({ id: z.string().min(1) });
 const messageBody = z.object({ text: z.string().min(1) });
@@ -76,12 +78,30 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post('/api/agents', async (req, reply) => {
     const body = parse(CreateAgentSchema, req.body, reply);
     if (!body) return;
+    const id = newId();
+    let repo: string | null = null;
+    let worktree: WorktreeInfo | null = null;
     try {
-      const agent = ctx.agents.create(body);
-      if (body.useWorktree)
-        ctx.log.warn({ agentId: agent.id }, 'worktrees arrive in M3; created without one');
+      const workdir = ctx.agents.validateCreate(body);
+      if (body.useWorktree) {
+        repo = workdir;
+        worktree = await ctx.worktrees.create(repo, id, body.name);
+      }
+      const agent = ctx.agents.create(body, { id, worktree });
+      if (repo && worktree && (await ctx.worktrees.isDirty(repo).catch(() => false))) {
+        // The worktree starts from HEAD: uncommitted work in the user's checkout is not in it.
+        ctx.events.append({
+          id: newId(),
+          ts: Date.now(),
+          agentId: agent.id,
+          type: 'notification',
+          kind: 'worktree',
+          message: `${repo} has uncommitted changes; they are not in ${agent.name}'s worktree (${worktree.branch}), which starts from the last commit.`,
+        });
+      }
       return reply.code(201).send(agent);
     } catch (err) {
+      if (repo && worktree) await ctx.worktrees.remove(repo, worktree, true).catch(() => undefined);
       fail(reply, err);
     }
   });
@@ -112,15 +132,27 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     if (!p || !q) return;
     const agent = ctx.agents.get(p.id);
     if (!agent) return reply.code(404).send({ error: 'not_found' });
+    const conflict = (err: unknown) =>
+      reply.code(409).send({
+        error: err instanceof Error ? err.message : String(err),
+        worktree: agent.worktree,
+      });
+    // Refuse before stopping anything: firing an agent must not throw away uncommitted work.
+    if (agent.worktree && !q.force) {
+      const dirty = await ctx.worktrees.isDirty(agent.worktree.path).catch(() => false);
+      if (dirty)
+        return conflict(
+          new Error(
+            `worktree ${agent.worktree.path} has uncommitted changes; commit them or force removal`,
+          ),
+        );
+    }
     await ctx.manager.remove(p.id);
     if (agent.worktree) {
       try {
         await ctx.worktrees.remove(agent.workdir, agent.worktree, q.force ?? false);
       } catch (err) {
-        return reply.code(409).send({
-          error: err instanceof Error ? err.message : String(err),
-          worktree: agent.worktree,
-        });
+        return conflict(err);
       }
     }
     ctx.agents.remove(p.id);

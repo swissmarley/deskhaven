@@ -174,6 +174,12 @@ function setup(over: Partial<Agent> = {}, mode: 'API_KEY' | 'CLAUDE_SUBSCRIPTION
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
 describe('AgentRuntime', () => {
+  it('runs in the agent worktree when it has one', () => {
+    const { rt, sessions } = setup({ worktree: { path: '/data/worktrees/ada-a1', branch: 'b' } });
+    rt.sendPrompt('hi', null);
+    expect(sessions[0]?.cfg.cwd).toBe('/data/worktrees/ada-a1');
+  });
+
   it('runs a prompt through a full turn, dedupes tool events, attributes the turn to the task', async () => {
     const { rt, sessions, calls, all } = setup();
     rt.sendPrompt('fix the bug', 'task1');
