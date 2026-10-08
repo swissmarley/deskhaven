@@ -9,6 +9,7 @@ import {
   type RolePreset,
   type Room,
   type Settings,
+  WORKDIR_ERROR_PREFIX,
 } from '@deskhaven/shared';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
@@ -166,8 +167,14 @@ export async function buildApp(
         currentTaskId: null,
         lastError: problem,
       }));
-    } else if (a.status !== 'stopped')
-      agents.patch(a.id, (x) => ({ ...x, status: 'stopped', currentTaskId: null }));
+    } else if (a.status !== 'stopped' || a.lastError?.startsWith(WORKDIR_ERROR_PREFIX))
+      // Also clears an "invalid working directory" error once the folder is usable again.
+      agents.patch(a.id, (x) => ({
+        ...x,
+        status: 'stopped',
+        currentTaskId: null,
+        lastError: x.lastError?.startsWith(WORKDIR_ERROR_PREFIX) ? null : x.lastError,
+      }));
   }
 
   let manager: AgentManager;

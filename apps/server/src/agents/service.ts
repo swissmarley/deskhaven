@@ -137,7 +137,11 @@ export function workdirProblem(agent: Pick<Agent, 'workdir' | 'worktree'>): stri
     return null;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    return `${WORKDIR_ERROR_PREFIX}${reason}. Edit the agent to pick another folder, or fire it.`;
+    // A worktree agent's folder cannot be edited (its repository is fixed): only firing helps.
+    const action = agent.worktree
+      ? 'Its worktree cannot be repaired from here: fire the agent and hire a new one.'
+      : 'Edit the agent to pick another folder, or fire it.';
+    return `${WORKDIR_ERROR_PREFIX}${reason}. ${action}`;
   }
 }
 

@@ -109,7 +109,7 @@ export function InspectorPanel(): JSX.Element {
             <dt>Error</dt>
             <dd className="error">
               {agent.lastError}
-              {agent.lastError.startsWith(WORKDIR_ERROR_PREFIX) && !editing ? (
+              {agent.lastError.startsWith(WORKDIR_ERROR_PREFIX) && !agent.worktree && !editing ? (
                 <>
                   {' '}
                   <button type="button" className="link" onClick={() => setEditing(true)}>
