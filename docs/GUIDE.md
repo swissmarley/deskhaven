@@ -20,25 +20,36 @@ Contents: [Requirements](#1-requirements) · [Install and start](#2-install-and-
 | Need | Details |
 |---|---|
 | Node.js | 22 or newer (`node --version`). |
-| pnpm | 10.x. The repo pins `pnpm@10.34.5`; the easiest way is `corepack enable` (ships with Node). If that fails with `EACCES`, see the user-local install below. |
+| pnpm | 10.x. The repo pins `pnpm@10.34.5`; the easiest way is `corepack enable` (ships with Node). If that fails with `EACCES` (Node installed system-wide), use the user-local install below. |
 | Git | Needed for the git worktree option and for the sample repository. |
 | A browser with WebGL 2 | Any current Chrome, Edge, Firefox or Safari. Without WebGL the app falls back to the pixel-art renderer. |
 | Network (first install) | `pnpm install` downloads about 230 MB: the Agent SDK ships its own native `claude` binary. The agents also need the Anthropic API at runtime. |
 | One way to pay for agents | Either an Anthropic API key, **or** a Claude Pro/Max plan logged in with the `claude` CLI (see section 3). |
-| No C/C++ toolchain | `better-sqlite3` ships prebuilt binaries for Linux (glibc and musl), macOS and Windows on x64 and arm64, and `pnpm install` uses them without compiling, so `make` and `g++` are not needed. Only on other platforms see "Install fails while compiling" in section 10. |
+| No C/C++ toolchain | `better-sqlite3` ships prebuilt binaries for Linux (glibc and musl), macOS and Windows on x64 and arm64, and `pnpm install` uses them without compiling, so `make` and `g++` are not needed. Only on other platforms see "Could not locate the bindings file" in section 10. |
 
 Everything runs on your machine. The server listens on `127.0.0.1` only and only answers the Deskhaven web
 app (see section 11 for how other websites are kept out). Nothing is sent anywhere except the Anthropic API
 calls your agents make.
 
 **pnpm without root.** `corepack enable` writes shims next to the `node` binary; with a system-wide Node
-(e.g. `/usr/local/bin`) it fails with `EACCES`. Install the shims into a folder you own instead:
+(e.g. `/usr/local/bin`) it fails with `EACCES`. The most reliable fix is a user-local pnpm from npm:
 
 ```bash
-mkdir -p ~/.local/bin
-corepack enable --install-directory ~/.local/bin   # or: npm install -g --prefix ~/.local pnpm@10.34.5
-export PATH="$HOME/.local/bin:$PATH"               # add this line to ~/.bashrc or ~/.zshrc
-pnpm --version                                     # 10.34.5
+npm install -g --prefix ~/.local pnpm@10.34.5   # installs ~/.local/bin/pnpm, no root needed
+export PATH="$HOME/.local/bin:$PATH"            # add this line to ~/.bashrc or ~/.zshrc
+pnpm --version                                  # 10.34.5
+```
+
+If you prefer corepack, point both its shims **and its cache** at folders you own. `--install-directory`
+alone is not enough when `COREPACK_HOME` (where corepack downloads pnpm) is root-owned, for example set by
+a system-wide profile:
+
+```bash
+mkdir -p ~/.local/bin ~/.cache/corepack
+export COREPACK_HOME="$HOME/.cache/corepack"    # add both exports to ~/.bashrc or ~/.zshrc
+export PATH="$HOME/.local/bin:$PATH"
+corepack enable --install-directory ~/.local/bin pnpm
+pnpm --version                                  # 10.34.5 (downloaded into $COREPACK_HOME)
 ```
 
 ## 2. Install and start
@@ -321,7 +332,8 @@ above. Section 11 explains what keeps other websites out and what `DESKHAVEN_ALL
 | Symptom | Fix |
 |---|---|
 | `pnpm: command not found` or the wrong version | `corepack enable`, then `corepack prepare pnpm@10.34.5 --activate`. |
-| `corepack enable` fails with `EACCES` | Node is installed system-wide; use the user-local install in section 1 (`corepack enable --install-directory ~/.local/bin`). |
+| `corepack enable` fails with `EACCES` | Node is installed system-wide; use the user-local install in section 1: `npm install -g --prefix ~/.local pnpm@10.34.5` and put `~/.local/bin` on `PATH`. |
+| `corepack enable --install-directory ...` still fails with `EACCES` | `COREPACK_HOME` points to a root-owned folder. Set `COREPACK_HOME="$HOME/.cache/corepack"` (section 1), or use the npm install above. |
 | `Could not locate the bindings file` for `better-sqlite3` | Your platform has no prebuilt binary (anything but Linux, macOS or Windows on x64/arm64). Install the build tools (macOS: `xcode-select --install`; Linux: `make`, `g++` and `python3`, e.g. `build-essential`) and run `pnpm rebuild better-sqlite3`. Node must be 22+. |
 | Install seems stuck | The first install downloads the 230 MB native `claude` binary; wait, or check your network. |
 | Port 5173 or 8787 already in use | Stop the other process, or set `DESKHAVEN_PORT` (and change the proxy target in `apps/web/vite.config.ts`). |

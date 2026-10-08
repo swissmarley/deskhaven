@@ -18,7 +18,7 @@ first task, every panel of the UI, configuration, troubleshooting.
 
 ```bash
 git clone <repository URL> deskhaven && cd deskhaven
-corepack enable # once, if `pnpm --version` is not 10.x (EACCES? see docs/GUIDE.md §1)
+corepack enable # once, if `pnpm --version` is not 10.x (EACCES? `npm i -g --prefix ~/.local pnpm@10.34.5`, see docs/GUIDE.md §1)
 pnpm i          # Node >= 22 and pnpm 10; downloads the SDK's native claude binary (~230 MB); no compiler needed
 pnpm dev        # server on http://127.0.0.1:8787, web UI on http://127.0.0.1:5173
 ```
