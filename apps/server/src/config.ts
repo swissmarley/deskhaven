@@ -53,6 +53,27 @@ export function defaultDbPath(
   return !exists(current) && exists(legacy) ? legacy : current;
 }
 
+/** The monorepo root (this file lives in apps/server/src). */
+export const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
+
+/**
+ * `pnpm start` runs the server with apps/server as its cwd, so a relative DESKHAVEN_WEB_DIST such as
+ * the documented `apps/web/dist` is resolved from the repository root, not from the process cwd.
+ */
+export function resolveWebDist(value: string | undefined, root = REPO_ROOT): string | null {
+  if (!value) return null;
+  return path.isAbsolute(value) ? path.normalize(value) : path.resolve(root, value);
+}
+
+/** Why `dir` cannot be served as the web UI, or null when it looks like a built app. */
+export function webDistProblem(dir: string): string | null {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory())
+    return `DESKHAVEN_WEB_DIST does not exist: ${dir} (run \`pnpm build\` first)`;
+  if (!fs.existsSync(path.join(dir, 'index.html')))
+    return `DESKHAVEN_WEB_DIST has no index.html: ${dir} (run \`pnpm build\` first)`;
+  return null;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const dataDir = envVar(env, 'DATA_DIR') ?? defaultDataDir();
   const port = Number.parseInt(envVar(env, 'PORT') ?? '8787', 10);
@@ -62,7 +83,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     port: Number.isFinite(port) ? port : 8787,
     dataDir,
     dbPath: envVar(env, 'DB') ?? defaultDbPath(dataDir),
-    webDist: envVar(env, 'WEB_DIST') ?? null,
+    webDist: resolveWebDist(envVar(env, 'WEB_DIST')),
     isProduction: env.NODE_ENV === 'production',
     keyStore: envVar(env, 'KEYSTORE') === 'memory' ? 'memory' : 'keyring',
     probeOnBoot: (envVar(env, 'PROBE_ON_BOOT') ?? '1') !== '0',

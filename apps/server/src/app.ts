@@ -26,7 +26,7 @@ import {
   type KeyStore,
   MemoryKeyStore,
 } from './auth/index.js';
-import type { ServerConfig } from './config.js';
+import { type ServerConfig, webDistProblem } from './config.js';
 import { type Db, openDb } from './db/client.js';
 import { EventStore } from './events/store.js';
 import { registerRoutes } from './http/routes.js';
@@ -262,7 +262,9 @@ export async function buildApp(
     });
   });
 
-  if (config.webDist) {
+  const distProblem = config.webDist ? webDistProblem(config.webDist) : null;
+  if (distProblem) app.log.error({ webDist: config.webDist }, distProblem);
+  if (config.webDist && !distProblem) {
     await app.register(fastifyStatic, { root: path.resolve(config.webDist), wildcard: false });
     app.setNotFoundHandler((req, reply) => {
       const pathname = req.url.split('?')[0] ?? req.url;
