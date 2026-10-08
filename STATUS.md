@@ -2,6 +2,12 @@
 
 One 3-line note per milestone, newest first.
 
+## Follow-ups to the security fixes (2026-10-08)
+
+1. Firing works when a worktree's source repo was moved or deleted (state check is clean/dirty/missing/unknown; unknown needs force; forced removal deletes the folder without git); the session cookie is `deskhaven_session_<port>`; remote binds list a login URL per interface address (never 0.0.0.0); worktrees for a repo subfolder keep the agent (and its edit guard) in that subfolder; `DESKHAVEN_SESSION_TOKEN` needs 32+ characters.
+2. API key mode accepts Bedrock/Vertex/Foundry, a project `apiKeyHelper`, or `DESKHAVEN_ALLOW_EXTERNAL_CREDENTIALS=1`; stored workdirs are re-checked at boot and start ("Invalid working directory" + a fix link in the Inspector); the edit guard compares path segments ("..foo" is inside). Guide recommends the npm user-local pnpm and `COREPACK_HOME` for corepack.
+3. Next: same as before — a live run against a real repository with a worktree engineer.
+
 ## Fixes — security and bugs found in local testing (2026-10-08)
 
 1. Network gate (`http/security.ts`): Host allow-list against DNS rebinding, Origin/Referer on writes and `/ws` against CSRF and cross-site WebSocket hijacking, JSON-only writes, per-launch session token (HttpOnly SameSite=Strict cookie), non-loopback binds need `DESKHAVEN_ALLOW_REMOTE=1`. Git worktrees are real now (created on hire, used as cwd, removal refuses dirty trees). Stop removes waiting agents from the desk queue and drops their prompts; auth switches are validated before they are saved; replay honours its time range; new credentials reach idle agents; permission timeout capped at 24 h; relative `DESKHAVEN_WEB_DIST` resolves from the repo root; avatars are random again; workdir/name validation; symlink-aware edit guard; managers detected by preset flag; API key mode never falls back to other credentials.
