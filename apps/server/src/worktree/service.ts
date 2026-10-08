@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { isInside } from '../agent/diff-tracker.js';
 
 const run = promisify(execFile);
 
@@ -108,8 +109,20 @@ export class WorktreeService {
     return stdout.trim().length > 0;
   }
 
+  /**
+   * The source repository's root. `repoDir` is the agent's workdir, which is a subfolder of the
+   * repository when the worktree records a `subdir`; git commands and prune must run at the root,
+   * which still exists when only that subfolder was removed.
+   */
+  sourceRoot(repoDir: string, wt: WorktreeInfo): string {
+    if (!wt.subdir) return repoDir;
+    const depth = wt.subdir.split('/').filter(Boolean).length;
+    return path.resolve(repoDir, ...Array<string>(depth).fill('..'));
+  }
+
   /** Clean, dirty, already gone, or unknown (with the reason) — never throws. */
   async state(repoDir: string, wt: WorktreeInfo): Promise<WorktreeState> {
+    repoDir = this.sourceRoot(repoDir, wt);
     if (!fs.existsSync(wt.path)) return { kind: 'missing' };
     try {
       return (await this.isDirty(wt.path)) ? { kind: 'dirty' } : { kind: 'clean' };
@@ -134,8 +147,9 @@ export class WorktreeService {
    * determined, unless `force`. A forced removal works without git when the source repository is
    * gone: the folder is deleted directly and the repository's stale entry is pruned if it exists.
    */
-  async remove(repoDir: string, wt: WorktreeInfo, force = false): Promise<void> {
-    const state = await this.state(repoDir, wt);
+  async remove(workdir: string, wt: WorktreeInfo, force = false): Promise<void> {
+    const repoDir = this.sourceRoot(workdir, wt);
+    const state = await this.state(workdir, wt);
     if (state.kind === 'missing') return this.prune(repoDir);
     if (!force) {
       if (state.kind === 'dirty')
@@ -159,6 +173,11 @@ export class WorktreeService {
         // e.g. the worktree is not registered in this repository any more: fall through.
       }
     }
+    // Deleting without git: only ever a folder inside our worktrees root, never the root itself
+    // (a corrupted or hand-edited database row must not point this at anything else).
+    const root = this.root();
+    if (!isInside(root, wt.path) || isInside(wt.path, root))
+      throw new Error(`refusing to delete ${wt.path}: it is not inside ${root}`);
     fs.rmSync(wt.path, { recursive: true, force: true });
     await this.prune(repoDir);
   }

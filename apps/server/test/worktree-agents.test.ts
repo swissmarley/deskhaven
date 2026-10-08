@@ -135,6 +135,28 @@ describe('hiring a worktree agent for a subfolder', () => {
     await req({ method: 'DELETE', url: `/api/agents/${agent.id}?force=true` });
   });
 
+  it('leaves no stale worktree entry when the source subfolder was removed', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(path.join(repo, 'src', 'lib'), 'SubGone')).json();
+    fs.rmSync(path.join(repo, 'src'), { recursive: true });
+    const res = await req({ method: 'DELETE', url: `/api/agents/${agent.id}` });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(fs.existsSync(agent.worktree.path)).toBe(false);
+    const list = execFileSync('git', ['worktree', 'list'], { cwd: repo }).toString();
+    expect(list).not.toContain(agent.worktree.path);
+  });
+
+  it('prunes from the repository root when both the subfolder and the worktree are gone', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(path.join(repo, 'src', 'lib'), 'BothGone')).json();
+    fs.rmSync(path.join(repo, 'src'), { recursive: true });
+    fs.rmSync(agent.worktree.path, { recursive: true });
+    const res = await req({ method: 'DELETE', url: `/api/agents/${agent.id}` });
+    expect(res.statusCode, res.body).toBe(200);
+    const list = execFileSync('git', ['worktree', 'list'], { cwd: repo }).toString();
+    expect(list).not.toContain(agent.worktree.path);
+  });
+
   it('records no subdir when hired at the repository root', async () => {
     const repo = tmpRepo();
     const agent = (await hire(repo, 'Root')).json();
@@ -208,6 +230,22 @@ describe('firing a worktree agent whose source repository is gone', () => {
     expect(res.statusCode).toBe(200);
     const list = execFileSync('git', ['worktree', 'list'], { cwd: repo }).toString();
     expect(list).not.toContain(agent.worktree.path);
+  });
+
+  it('never deletes a folder outside the worktrees root, even when forced', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-outside-'));
+    fs.writeFileSync(path.join(outside, 'keep.txt'), 'precious\n');
+    const gone = path.join(os.tmpdir(), 'deskhaven-no-such-repo');
+    const svc = built.ctx.worktrees;
+    await expect(svc.remove(gone, { path: outside, branch: 'b' }, true)).rejects.toThrow(
+      /refusing to delete/,
+    );
+    expect(fs.existsSync(path.join(outside, 'keep.txt'))).toBe(true);
+    fs.mkdirSync(svc.root(), { recursive: true });
+    await expect(svc.remove(gone, { path: svc.root(), branch: 'b' }, true)).rejects.toThrow(
+      /refusing to delete/,
+    );
+    expect(fs.existsSync(svc.root())).toBe(true);
   });
 
   it('WorktreeService.state reports unknown instead of clean when git cannot run', async () => {
