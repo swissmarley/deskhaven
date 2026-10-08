@@ -79,6 +79,11 @@ export class AgentRuntime {
   private inTurn = false;
   private lastError: string | null = null;
   private lastActivityAt = Date.now();
+  /** The auth provider the live process was spawned with (its env is fixed at spawn). */
+  private sessionAuth: AuthProvider | null = null;
+  private restarting = false;
+  /** Bumped by stop(), so a credentials restart that is still winding down does not respawn. */
+  private stopGeneration = 0;
 
   constructor(
     private agent: Agent,
@@ -122,10 +127,18 @@ export class AgentRuntime {
 
   /** Spawn the Claude Code process (resuming the stored session when there is one). */
   start(): void {
-    if (this.session) return;
+    if (this.session || this.restarting) return;
     this.stopping = false;
     const auth = this.deps.auth();
     const settings = this.deps.settings();
+    const env = auth.childEnv(this.deps.baseEnv());
+    if (auth.mode === 'API_KEY' && !env.ANTHROPIC_API_KEY) {
+      // Without a key the CLI would silently fall back to whatever else it finds (a claude.ai login).
+      this.failToStart(
+        'API key mode is selected but no API key is configured. Add one in Settings (or set ANTHROPIC_API_KEY), or switch to subscription mode.',
+      );
+      return;
+    }
     const cfg: SessionConfig = {
       cwd: this.cwd(),
       model: this.agent.model || settings.defaultModel,
@@ -133,7 +146,7 @@ export class AgentRuntime {
       tools: this.agent.tools,
       allowedTools: this.agent.allowedTools,
       permissionMode: this.agent.permissionMode,
-      env: auth.childEnv(this.deps.baseEnv()),
+      env,
       additionalDirectories: [],
       // Only Deskhaven's own MCP servers: the user's global connectors must not leak into agents.
       strictMcpConfig: true,
@@ -153,6 +166,7 @@ export class AgentRuntime {
     };
     const factory = this.deps.startSession ?? startAgentSession;
     this.session = factory(cfg, cb);
+    this.sessionAuth = auth;
     this.deps.log.info(
       {
         agentId: this.agent.id,
@@ -172,7 +186,7 @@ export class AgentRuntime {
   sendPrompt(text: string, taskId: string | null): void {
     this.emit({ ...this.baseEvent(), type: 'message_sent', text, ...(taskId ? { taskId } : {}) });
     this.queue.push({ text, taskId });
-    if (this.status === 'paused' || this.status === 'waiting') return;
+    if (this.status === 'paused' || this.status === 'waiting' || this.restarting) return;
     if (!this.session) {
       this.start();
       return;
@@ -225,6 +239,7 @@ export class AgentRuntime {
 
   /** End the input stream, interrupt, and abort after a grace period. Keeps `sessionId` for resume. */
   async stop(): Promise<void> {
+    this.stopGeneration++;
     // Drop queued prompts first: nothing may be dispatched while the process winds down, and an agent
     // stopped while waiting for a desk must not wake up later and run them.
     this.dropQueue('The agent was stopped before this task started.');
@@ -253,6 +268,49 @@ export class AgentRuntime {
   }
 
   // ----- internals -------------------------------------------------------------------------------
+
+  /** True when credentials changed in Settings after this process was spawned. */
+  private credentialsChanged(): boolean {
+    return this.sessionAuth !== null && this.deps.auth() !== this.sessionAuth;
+  }
+
+  /**
+   * The SDK fixes the subprocess env at spawn, so a key added (or removed, or a mode switch) in
+   * Settings would never reach a running agent. Between turns the process is ended and respawned on
+   * the same session id; the queued prompt then runs with the current credentials.
+   */
+  private async restartForCredentials(): Promise<void> {
+    const s = this.session;
+    if (!s || this.restarting) return;
+    this.restarting = true;
+    const generation = this.stopGeneration;
+    this.deps.log.info(
+      { agentId: this.agent.id },
+      'credentials changed; restarting the session before the next turn',
+    );
+    this.stopping = true;
+    s.prompts.end();
+    const timeout = new Promise<void>((r) => setTimeout(r, this.deps.stopGraceMs ?? 5000));
+    await Promise.race([this.loop ?? Promise.resolve(), timeout]);
+    if (this.session === s) {
+      s.abort.abort();
+      this.session = null;
+    }
+    this.sessionAuth = null;
+    this.stopping = false;
+    this.restarting = false;
+    if (generation !== this.stopGeneration || this.status === 'paused') return;
+    this.start();
+  }
+
+  private failToStart(message: string): void {
+    this.lastError = message;
+    this.emit({ ...this.baseEvent(), type: 'error', kind: 'auth', message });
+    this.dropQueue(message);
+    this.currentTaskId = null;
+    this.setStatus('error');
+    this.deps.onStopped(this.agent.id);
+  }
 
   /** Empties the prompt queue; queued task prompts are reported so the board can flag them. */
   private dropQueue(message: string): void {
@@ -304,8 +362,13 @@ export class AgentRuntime {
   }
 
   private dispatchNext(): void {
+    if (!this.session || !this.queue.length) return;
+    if (this.credentialsChanged()) {
+      void this.restartForCredentials();
+      return;
+    }
     const next = this.queue.shift();
-    if (!next || !this.session) return;
+    if (!next) return;
     this.lastActivityAt = Date.now();
     this.currentTaskId = next.taskId;
     this.inTurn = true;
@@ -358,9 +421,15 @@ export class AgentRuntime {
         if (ev.sessionId) this.deps.onSessionId(this.agent.id, ev.sessionId);
         this.deps.onApiKeySource(this.agent.id, ev.apiKeySource);
         this.emit(ev);
-        const auth = this.deps.auth();
-        if (auth.mode === 'CLAUDE_SUBSCRIPTION' && ev.apiKeySource !== 'none') {
-          const message = `Subscription mode expected the claude.ai login but the session reports apiKeySource="${ev.apiKeySource}". Stopping to avoid API billing.`;
+        // Check against the credentials this process was spawned with, in both modes: the CLI
+        // falls back to other credentials it finds rather than failing.
+        const auth = this.sessionAuth ?? this.deps.auth();
+        let message: string | null = null;
+        if (auth.mode === 'CLAUDE_SUBSCRIPTION' && ev.apiKeySource !== 'none')
+          message = `Subscription mode expected the claude.ai login but the session reports apiKeySource="${ev.apiKeySource}". Stopping to avoid API billing.`;
+        else if (auth.mode === 'API_KEY' && ev.apiKeySource !== 'ANTHROPIC_API_KEY')
+          message = `API key mode expected the configured API key but the session reports apiKeySource="${ev.apiKeySource}". Stopping so it does not run on other credentials.`;
+        if (message) {
           this.lastError = message;
           this.emit({ ...this.baseEvent(), type: 'error', kind: 'auth', message });
           void this.stop();

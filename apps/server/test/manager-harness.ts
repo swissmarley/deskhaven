@@ -100,6 +100,7 @@ export function managerHarness(
   const room = () => ({ ...defaultRoom(), id: DEFAULT_ROOM_ID });
   const agents = new AgentService(db, hub, settings, room);
   const sessions: FakeLiveSession[] = [];
+  const defaultAuth = apiKeyAuth('sk-ant-test-key');
   const startSession: RuntimeDeps['startSession'] = (cfg): AgentSession => {
     const fake = new FakeLiveSession(cfg);
     sessions.push(fake);
@@ -121,7 +122,7 @@ export function managerHarness(
     hub,
     concurrencyCap: () => settings.get().concurrencyCap,
     runtimeDeps: {
-      auth: opts.auth ?? (() => apiKeyAuth('sk-ant-test-key')),
+      auth: opts.auth ?? (() => defaultAuth),
       events,
       broker,
       settings: () => settings.get(),
