@@ -17,7 +17,17 @@ import type { ServerConfig } from '../config.js';
  * 4. The per-launch session token (HttpOnly SameSite=Strict cookie, or a header) on /api and /ws.
  */
 
-export const SESSION_COOKIE = 'deskhaven_session';
+/**
+ * Pre-port cookie name. Cookies are not scoped by port, so a single name let two instances on one
+ * host (say dev on 8787 and a built copy on 8788) overwrite each other's token. Still read as a
+ * fallback; never set any more.
+ */
+export const LEGACY_SESSION_COOKIE = 'deskhaven_session';
+
+/** The session cookie name for a server port: `deskhaven_session_<port>`. */
+export function sessionCookieName(port: number): string {
+  return `${LEGACY_SESSION_COOKIE}_${port}`;
+}
 export const TOKEN_HEADER = 'x-deskhaven-token';
 
 const LOOPBACK_NAMES = ['localhost', '127.0.0.1', '[::1]'];
@@ -105,13 +115,21 @@ export function readCookie(header: string | undefined, name: string): string | n
   return null;
 }
 
-/** Token from the cookie, the X-Deskhaven-Token header, or `Authorization: Bearer`. */
-export function presentedToken(req: FastifyRequest): string | null {
+/**
+ * Candidate tokens, in order: the X-Deskhaven-Token header, `Authorization: Bearer`, this port's
+ * cookie, then the legacy unported cookie.
+ */
+export function presentedTokens(req: FastifyRequest, cookieName: string): string[] {
+  const out: string[] = [];
   const header = req.headers[TOKEN_HEADER];
-  if (typeof header === 'string' && header) return header;
+  if (typeof header === 'string' && header) out.push(header);
   const auth = req.headers.authorization;
-  if (auth?.startsWith('Bearer ')) return auth.slice(7).trim();
-  return readCookie(req.headers.cookie, SESSION_COOKIE);
+  if (auth?.startsWith('Bearer ')) out.push(auth.slice(7).trim());
+  for (const name of [cookieName, LEGACY_SESSION_COOKIE]) {
+    const c = readCookie(req.headers.cookie, name);
+    if (c) out.push(c);
+  }
+  return out;
 }
 
 /** Heuristic for "a browser sent this": fetch metadata or a browser user agent. */
@@ -130,6 +148,8 @@ export interface SecurityOptions {
 
 export interface Security {
   token: string;
+  /** Name of this instance's session cookie (includes the port). */
+  cookieName: string;
   remote: boolean;
   hosts: Set<string>;
   hostAllowed(host: string | undefined): boolean;
@@ -154,8 +174,11 @@ export function registerSecurity(app: FastifyInstance, opts: SecurityOptions): S
   const { config, token } = opts;
   const remote = checkBindPolicy(config);
   const hosts = allowedHosts(config);
+  const cookieName = sessionCookieName(config.port);
+  const hasToken = (candidates: string[]) => candidates.some((t) => sameToken(t, token));
   const sec: Security = {
     token,
+    cookieName,
     remote,
     hosts,
     hostAllowed: (host) => {
@@ -214,8 +237,7 @@ export function registerSecurity(app: FastifyInstance, opts: SecurityOptions): S
     }
 
     if ((isApi && !PUBLIC_API.has(pathname)) || isWs) {
-      const presented = presentedToken(req);
-      if (!presented || !sameToken(presented, token)) return deny(reply, 401, 'unauthorized');
+      if (!hasToken(presentedTokens(req, cookieName))) return deny(reply, 401, 'unauthorized');
     }
   });
 
@@ -227,13 +249,14 @@ export function registerSecurity(app: FastifyInstance, opts: SecurityOptions): S
   app.get('/api/session', async (req, reply) => {
     if (remote) {
       const q = (req.query ?? {}) as Record<string, unknown>;
-      const presented = typeof q.token === 'string' ? q.token : presentedToken(req);
-      if (!presented || !sameToken(presented, token)) return deny(reply, 401, 'token_required');
+      const candidates = presentedTokens(req, cookieName);
+      if (typeof q.token === 'string') candidates.unshift(q.token);
+      if (!hasToken(candidates)) return deny(reply, 401, 'token_required');
     }
     const secure = req.protocol === 'https' ? '; Secure' : '';
     void reply.header(
       'set-cookie',
-      `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict${secure}`,
+      `${cookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict${secure}`,
     );
     return { ok: true };
   });

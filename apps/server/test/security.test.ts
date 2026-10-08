@@ -4,14 +4,16 @@ import {
   allowedHosts,
   checkBindPolicy,
   isLoopbackAddress,
+  LEGACY_SESSION_COOKIE,
   normalizeHost,
   originHost,
-  SESSION_COOKIE,
+  sessionCookieName,
 } from '../src/http/security.js';
 import { type Built, client, TEST_HOST, TEST_ORIGIN, testApp } from './helpers.js';
 
 let built: Built;
 let req: ReturnType<typeof client>;
+const COOKIE = sessionCookieName(8787);
 
 beforeAll(async () => {
   built = await testApp();
@@ -178,7 +180,7 @@ describe('session token', () => {
         await req({
           method: 'GET',
           url: '/api/agents',
-          headers: { cookie: `${SESSION_COOKIE}=nope` },
+          headers: { cookie: `${COOKIE}=nope` },
         })
       ).statusCode,
     ).toBe(401);
@@ -203,7 +205,7 @@ describe('session token', () => {
     const res = await req({ method: 'GET', url: '/api/session', headers: { cookie: null } });
     expect(res.statusCode).toBe(200);
     const cookie = String(res.headers['set-cookie']);
-    expect(cookie).toContain(`${SESSION_COOKIE}=${encodeURIComponent(built.ctx.security.token)}`);
+    expect(cookie).toContain(`${COOKIE}=${encodeURIComponent(built.ctx.security.token)}`);
     expect(cookie).toMatch(/HttpOnly/);
     expect(cookie).toMatch(/SameSite=Strict/);
     expect(res.body).not.toContain(built.ctx.security.token);
@@ -225,7 +227,7 @@ describe('websocket', () => {
   const wsHeaders = (over: Record<string, string> = {}) => ({
     host: TEST_HOST,
     origin: TEST_ORIGIN,
-    cookie: `${SESSION_COOKIE}=${token()}`,
+    cookie: `${COOKIE}=${token()}`,
     ...over,
   });
 
@@ -281,7 +283,7 @@ describe('remote binding', () => {
         headers: host,
       });
       expect(ok.statusCode).toBe(200);
-      expect(String(ok.headers['set-cookie'])).toContain(SESSION_COOKIE);
+      expect(String(ok.headers['set-cookie'])).toContain(sessionCookieName(8787));
       expect((await r({ method: 'GET', url: '/api/agents', headers: host })).statusCode).toBe(401);
       expect(
         (await r({ method: 'GET', url: '/api/agents', headers: { host: 'deskhaven.lan:8787' } }))
@@ -327,5 +329,58 @@ describe('helpers', () => {
         'proxy.example:443',
       ].sort(),
     );
+  });
+});
+
+describe('session cookie per port', () => {
+  it('names the cookie after the server port so two instances do not log each other out', async () => {
+    const other = await testApp({ DESKHAVEN_PORT: '8788' });
+    try {
+      expect(built.ctx.security.cookieName).toBe('deskhaven_session_8787');
+      expect(other.ctx.security.cookieName).toBe('deskhaven_session_8788');
+      const set = await client(other)({
+        method: 'GET',
+        url: '/api/session',
+        headers: { host: '127.0.0.1:8788', cookie: null },
+      });
+      expect(String(set.headers['set-cookie'])).toMatch(/^deskhaven_session_8788=/);
+      // The browser sends both cookies to both ports (cookies ignore ports): each instance picks its own.
+      const both = `${COOKIE}=${built.ctx.security.token}; deskhaven_session_8788=${other.ctx.security.token}`;
+      expect(
+        (await req({ method: 'GET', url: '/api/agents', headers: { cookie: both } })).statusCode,
+      ).toBe(200);
+      expect(
+        (
+          await client(other)({
+            method: 'GET',
+            url: '/api/agents',
+            headers: { host: '127.0.0.1:8788', cookie: both },
+          })
+        ).statusCode,
+      ).toBe(200);
+      // The other instance's cookie alone is not accepted here.
+      const foreign = `deskhaven_session_8788=${other.ctx.security.token}`;
+      expect(
+        (await req({ method: 'GET', url: '/api/agents', headers: { cookie: foreign } })).statusCode,
+      ).toBe(401);
+    } finally {
+      await other.app.close();
+    }
+  });
+
+  it('still accepts the legacy unported cookie, and a stale port cookie does not mask it', async () => {
+    const legacy = `${LEGACY_SESSION_COOKIE}=${built.ctx.security.token}`;
+    expect(
+      (await req({ method: 'GET', url: '/api/agents', headers: { cookie: legacy } })).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await req({
+          method: 'GET',
+          url: '/api/agents',
+          headers: { cookie: `${COOKIE}=stale; ${legacy}` },
+        })
+      ).statusCode,
+    ).toBe(200);
   });
 });
