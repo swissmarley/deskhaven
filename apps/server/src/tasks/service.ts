@@ -54,6 +54,7 @@ export class TaskService {
   }
 
   create(input: CreateTask): Task {
+    if (!input.title.trim()) throw new Error('Title must not be empty');
     const now = Date.now();
     const position = Math.max(0, ...this.list().map((t) => t.position)) + 1;
     const task: Task = TaskSchema.parse({

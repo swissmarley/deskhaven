@@ -234,6 +234,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.delete('/api/tasks/:id', async (req, reply) => {
     const p = parse(idParams, req.params, reply);
     if (!p) return;
+    if (!ctx.tasks.get(p.id)) return reply.code(404).send({ error: 'not_found' });
     ctx.tasks.remove(p.id);
     return { ok: true };
   });

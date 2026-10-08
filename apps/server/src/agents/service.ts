@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   type Agent,
@@ -57,6 +58,73 @@ export function randomAvatar(seed = Math.random()): Avatar {
   };
 }
 
+/**
+ * Directories an agent may never use as its working directory: the filesystem root, top-level
+ * system folders and the home directory itself (an agent there could edit ~/.ssh or ~/.claude).
+ * Only exact matches: projects below them (e.g. /usr/local/src/app) stay allowed.
+ */
+export function forbiddenWorkdirs(home = os.homedir()): Set<string> {
+  const unix = [
+    '/bin',
+    '/boot',
+    '/dev',
+    '/etc',
+    '/home',
+    '/lib',
+    '/lib64',
+    '/opt',
+    '/proc',
+    '/root',
+    '/run',
+    '/sbin',
+    '/srv',
+    '/sys',
+    '/tmp',
+    '/usr',
+    '/var',
+    '/Applications',
+    '/Library',
+    '/System',
+    '/Users',
+    '/Volumes',
+    '/private',
+    '/private/tmp',
+    '/private/var',
+  ];
+  const out = new Set<string>([...unix, home].map((p) => path.resolve(p)));
+  for (const p of [...out]) {
+    try {
+      out.add(fs.realpathSync(p));
+    } catch {
+      // not on this system
+    }
+  }
+  return out;
+}
+
+/**
+ * The canonical working directory for `input`: must be absolute (a relative path would be resolved
+ * against the server's own folder), exist, be a directory, and not be a system root. Symlinks are
+ * resolved so the checks and the edit guard see the real location.
+ */
+export function validateWorkdir(input: string, forbidden = forbiddenWorkdirs()): string {
+  if (!path.isAbsolute(input))
+    throw new Error(`Working directory must be an absolute path: ${input}`);
+  let real: string;
+  try {
+    real = fs.realpathSync(input);
+  } catch {
+    throw new Error(`Working directory does not exist: ${input}`);
+  }
+  if (!fs.statSync(real).isDirectory())
+    throw new Error(`Working directory is not a directory: ${real}`);
+  if (path.parse(real).root === real || forbidden.has(real))
+    throw new Error(
+      `Refusing ${real} as a working directory: pick a project folder, not a system or home root`,
+    );
+  return real;
+}
+
 export class AgentService {
   constructor(
     private readonly db: Db,
@@ -84,11 +152,8 @@ export class AgentService {
   validateCreate(input: CreateAgent): string {
     if (!this.presetLookup(input.rolePresetId))
       throw new Error(`Unknown role preset ${input.rolePresetId}`);
-    const workdir = path.resolve(input.workdir);
-    if (!fs.existsSync(workdir) || !fs.statSync(workdir).isDirectory()) {
-      throw new Error(`Working directory does not exist: ${workdir}`);
-    }
-    return workdir;
+    if (!input.name.trim()) throw new Error('Name must not be empty');
+    return validateWorkdir(input.workdir);
   }
 
   /**
@@ -137,13 +202,13 @@ export class AgentService {
 
   update(id: string, patch: UpdateAgent): Agent {
     const current = this.mustGet(id);
-    if (current.worktree && patch.workdir && path.resolve(patch.workdir) !== current.workdir)
-      throw new Error(
-        'This agent works in its own git worktree; fire it and hire a new one to change the repository',
-      );
-    if (patch.workdir) {
-      const workdir = path.resolve(patch.workdir);
-      if (!fs.existsSync(workdir)) throw new Error(`Working directory does not exist: ${workdir}`);
+    if (patch.name !== undefined && !patch.name.trim()) throw new Error('Name must not be empty');
+    if (patch.workdir !== undefined) {
+      const workdir = validateWorkdir(patch.workdir);
+      if (current.worktree && workdir !== current.workdir)
+        throw new Error(
+          'This agent works in its own git worktree; fire it and hire a new one to change the repository',
+        );
       patch = { ...patch, workdir };
     }
     const next = AgentSchema.parse({ ...current, ...patch, updatedAt: Date.now() });
