@@ -89,7 +89,12 @@ export const apiKeyAuth = (key: string | null): AuthProvider => ({
 
 /** Real AgentService / EventStore / TaskService / AgentManager over an in-memory DB, fake SDK. */
 export function managerHarness(
-  opts: { cap?: number; auth?: () => AuthProvider; workdir?: string } = {},
+  opts: {
+    cap?: number;
+    auth?: () => AuthProvider;
+    workdir?: string;
+    baseEnv?: Record<string, string>;
+  } = {},
 ) {
   const { db } = openDb(':memory:');
   const hub = new WsHub();
@@ -126,7 +131,7 @@ export function managerHarness(
       events,
       broker,
       settings: () => settings.get(),
-      baseEnv: () => ({ PATH: '/bin' }),
+      baseEnv: () => ({ PATH: '/bin', ...opts.baseEnv }),
       log: { info() {}, warn() {}, error() {}, debug() {} },
       onTurn: () => {},
       onApiKeySource: () => {},

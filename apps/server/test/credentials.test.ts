@@ -1,4 +1,8 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { externalCredentials } from '../src/auth/external.js';
 import type { AuthProvider } from '../src/auth/types.js';
 import { client, testApp } from './helpers.js';
 import { apiKeyAuth, managerHarness, tick } from './manager-harness.js';
@@ -100,5 +104,62 @@ describe('API key mode without a key', () => {
       /apiKeySource="none"/,
     );
     expect(h.manager.get(a.id)?.isRunning()).toBe(false);
+  });
+});
+
+describe('API key mode with external credentials (Bedrock, Vertex, apiKeyHelper, opt-in)', () => {
+  const run = async (
+    opts: { baseEnv?: Record<string, string>; workdir?: string },
+    source: string,
+  ) => {
+    const h = managerHarness({ cap: 2, auth: () => noKey, ...opts });
+    const noKey = apiKeyAuth(null);
+    const a = h.hire('Ada');
+    h.manager.sendPrompt(a.id, 'first', null);
+    await tick();
+    const started = h.sessions.length === 1;
+    h.sessions[0]?.emit(init(source));
+    await tick(80);
+    return { started, running: h.manager.get(a.id)?.isRunning() ?? false, h, a };
+  };
+
+  for (const [name, env, source] of [
+    ['Bedrock', { CLAUDE_CODE_USE_BEDROCK: '1' }, 'none'],
+    ['Vertex', { CLAUDE_CODE_USE_VERTEX: 'true' }, 'none'],
+    ['Foundry', { CLAUDE_CODE_USE_FOUNDRY: '1' }, 'none'],
+    ['the explicit opt-in', { DESKHAVEN_ALLOW_EXTERNAL_CREDENTIALS: '1' }, 'oauth'],
+  ] as const) {
+    it(`starts without ANTHROPIC_API_KEY and keeps running with ${name}`, async () => {
+      const r = await run({ baseEnv: { ...env } }, source);
+      expect(r.started).toBe(true);
+      expect(r.running).toBe(true);
+      expect(r.h.events.list({ agentId: r.a.id, types: ['error'] })).toHaveLength(0);
+    });
+  }
+
+  it('accepts a project apiKeyHelper, but not some other credential source', async () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-helper-')));
+    fs.mkdirSync(path.join(dir, '.claude'));
+    fs.writeFileSync(
+      path.join(dir, '.claude', 'settings.json'),
+      JSON.stringify({ apiKeyHelper: '~/bin/get-key.sh' }),
+    );
+    const ok = await run({ workdir: dir }, 'apiKeyHelper');
+    expect(ok.started).toBe(true);
+    expect(ok.running).toBe(true);
+    const fallback = await run({ workdir: dir }, 'none');
+    expect(fallback.started).toBe(true);
+    expect(fallback.running).toBe(false);
+    const errors = fallback.h.events.list({ agentId: fallback.a.id, types: ['error'] });
+    expect(JSON.stringify(errors)).toMatch(/apiKeyHelper in/);
+  });
+
+  it('treats "0" and "false" as not configured', () => {
+    for (const v of ['0', 'false', '']) {
+      expect(externalCredentials({ CLAUDE_CODE_USE_BEDROCK: v }, os.tmpdir()), v).toBeNull();
+    }
+    expect(
+      externalCredentials({ DESKHAVEN_ALLOW_EXTERNAL_CREDENTIALS: '0' }, os.tmpdir()),
+    ).toBeNull();
   });
 });

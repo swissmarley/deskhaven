@@ -72,6 +72,9 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   loopback hosts plus `X-Deskhaven-Token` (set `DESKHAVEN_SESSION_TOKEN` for scripted runs).
 - Credentials are captured per process: when the auth provider changes, an idle runtime restarts its
   process (same session id) before dispatching the next prompt.
+- API_KEY mode without `ANTHROPIC_API_KEY` refuses to spawn unless `auth/external.ts` recognises other
+  configured credentials (`CLAUDE_CODE_USE_BEDROCK|VERTEX|FOUNDRY`, a project `apiKeyHelper`, or
+  `DESKHAVEN_ALLOW_EXTERNAL_CREDENTIALS=1`); the same object decides which `apiKeySource` values pass.
 - Record real SDK traffic for fixtures with `DESKHAVEN_RECORD_SDK=/path/to/file.jsonl pnpm dev`; the
   normaliser test replays every `apps/server/test/fixtures/*.jsonl` file.
 - The sample repo (`examples/sample-repo`) is copied to `~/.deskhaven/sample-repo` by `POST /api/sample/init`;

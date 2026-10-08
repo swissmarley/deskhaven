@@ -79,6 +79,18 @@ Open **Settings → Authentication**.
    start instead of falling back to other credentials, and a session that reports anything but the API
    key as its credential source is stopped.
 
+**Bedrock, Vertex, Foundry or an `apiKeyHelper`.** These count as configured credentials in API key mode,
+so no `ANTHROPIC_API_KEY` is needed:
+
+- `CLAUDE_CODE_USE_BEDROCK=1`, `CLAUDE_CODE_USE_VERTEX=1` or `CLAUDE_CODE_USE_FOUNDRY=1` in the server's
+  environment (plus that provider's usual credentials and region variables): any credential source the
+  session reports is accepted.
+- An `apiKeyHelper` in the working directory's `.claude/settings.json` (the project settings agents load):
+  sessions reporting `apiKeyHelper` or `ANTHROPIC_API_KEY` are accepted.
+- Anything else (for example a helper configured elsewhere): set `DESKHAVEN_ALLOW_EXTERNAL_CREDENTIALS=1`.
+  Agents then start without a key and run on whatever Claude Code finds, **including your claude.ai
+  login**, so only use it when you know which credentials that will be.
+
 ### Option B: Claude Pro/Max subscription (your own machine only)
 
 1. In your own terminal run `claude login` and finish Anthropic's login flow. Deskhaven never shows a
@@ -273,6 +285,7 @@ accepted for every variable below.
 | `DESKHAVEN_ALLOWED_HOSTS` | unset | Comma-separated extra `Host` names the server answers to (`box.lan` or `box.lan:8787`), besides `localhost`, `127.0.0.1`, `[::1]` and, on a remote bind, the machine's interface addresses. |
 | `DESKHAVEN_SESSION_TOKEN` | random per launch | Fixes the session token instead of generating one at start (for scripts; keep it secret). Must be at least 32 characters, or the server exits with an error; `openssl rand -base64 32` makes one. |
 | `DESKHAVEN_DEV_WEB_PORT` | `5173` | Port of the Vite dev server whose origin is accepted outside production. |
+| `DESKHAVEN_ALLOW_EXTERNAL_CREDENTIALS` | unset | `1` lets API key mode run agents without `ANTHROPIC_API_KEY` on whatever credentials Claude Code finds (section 3). Bedrock, Vertex, Foundry and a project `apiKeyHelper` are recognised without it. |
 | `DESKHAVEN_DATA_DIR` | `~/.deskhaven` | Data directory. An existing `~/.agenthotel` is reused until `~/.deskhaven` exists. |
 | `DESKHAVEN_DB` | `<data dir>/deskhaven.db` | SQLite file (`:memory:` for throwaway runs). |
 | `DESKHAVEN_WEB_DIST` | unset | Directory of the built UI to serve from the server port (see section 9). A relative path is resolved from the repository root; a missing folder or `index.html` is logged as an error at start. |
@@ -314,7 +327,7 @@ above. Section 11 explains what keeps other websites out and what `DESKHAVEN_ALL
 | Port 5173 or 8787 already in use | Stop the other process, or set `DESKHAVEN_PORT` (and change the proxy target in `apps/web/vite.config.ts`). |
 | Settings says "not logged in" in subscription mode | Run `claude login` in a terminal, then reopen Settings. Check with `claude auth status`. |
 | An agent stops with "apiKeySource" or key error in subscription mode | An API key reached the agent process. Unset `ANTHROPIC_API_KEY` for the shell that starts the server, or use API key mode. |
-| An agent goes to error with "no API key is configured" | API key mode is selected but there is no key. Add one in Settings (running agents pick it up on their next task) or switch to subscription mode. Deskhaven refuses to start the agent rather than let the CLI fall back to other credentials. |
+| An agent goes to error with "no API key is configured" | API key mode is selected but there is no key. Add one in Settings (running agents pick it up on their next task) or switch to subscription mode. Deskhaven refuses to start the agent rather than let the CLI fall back to other credentials. Using Bedrock, Vertex or an `apiKeyHelper`? See section 3. |
 | The UI shows 401/403 errors, or curl gets `forbidden_host` / `unauthorized` | Open the app at `http://127.0.0.1:5173` (dev) or `:8787` (built) rather than another hostname, or add the name to `DESKHAVEN_ALLOWED_HOSTS`. Scripts need the session token (section 11). |
 | 401 or 429 emotes | 401: re-authenticate or fix the key. 429: you hit a rate limit; the avatar shows a cooldown and work resumes after the window. |
 | Black room or "WebGL" errors | Enable hardware acceleration in your browser, or switch to the pixel renderer in Settings → Renderer. |
