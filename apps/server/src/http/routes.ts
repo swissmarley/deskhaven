@@ -46,13 +46,13 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(apiKeyBody, req.body, reply);
     if (!body) return;
     await ctx.keyStore.set(body.key.trim());
-    ctx.reloadAuth();
+    await ctx.reloadAuth();
     return { stored: true, keySource: 'keychain' };
   });
 
   app.delete('/api/auth/api-key', async () => {
     await ctx.keyStore.clear();
-    ctx.reloadAuth();
+    await ctx.reloadAuth();
     return { stored: false };
   });
 
@@ -62,9 +62,13 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(UpdateSettingsSchema, req.body, reply);
     if (!body) return;
     try {
+      // Validate the whole change (including the auth provider's bind constraints) before
+      // persisting anything: a refused auth switch must leave the stored settings untouched.
       const before = ctx.settings.get();
+      const candidate = ctx.settings.preview(body);
+      const nextAuth = candidate.authMode !== before.authMode ? ctx.buildAuth(candidate) : null;
       const next = ctx.settings.update(body);
-      if (next.authMode !== before.authMode) ctx.reloadAuth();
+      if (nextAuth) await ctx.applyAuth(nextAuth);
       ctx.hub.broadcast({ type: 'settings_updated', settings: next });
       return next;
     } catch (err) {

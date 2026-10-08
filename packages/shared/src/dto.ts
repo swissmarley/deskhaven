@@ -196,12 +196,18 @@ export type Room = z.infer<typeof RoomSchema>;
 export const AuthModeSchema = z.enum(['API_KEY', 'CLAUDE_SUBSCRIPTION']);
 export type AuthMode = z.infer<typeof AuthModeSchema>;
 
+/**
+ * Upper bound for the permission timeout: 24 h. Node timers overflow above 2^31-1 ms (~24.8 days) and
+ * fire after ~1 ms, which would auto-deny every permission request.
+ */
+export const MAX_PERMISSION_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
 export const SettingsSchema = z.object({
   authMode: AuthModeSchema,
   subscriptionModeEnabled: z.boolean(),
   concurrencyCap: z.number().int().min(1).max(16),
   dailyCapUsd: z.number().nonnegative(),
-  permissionTimeoutMs: z.number().int().positive(),
+  permissionTimeoutMs: z.number().int().positive().max(MAX_PERMISSION_TIMEOUT_MS),
   /** Idle Claude Code processes are stopped (session kept for resume) after this many minutes; 0 = never. */
   idleTimeoutMinutes: z.number().int().min(0).max(1440).default(15),
   soundEnabled: z.boolean(),

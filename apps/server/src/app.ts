@@ -8,6 +8,7 @@ import {
   defaultRoom,
   type RolePreset,
   type Room,
+  type Settings,
 } from '@deskhaven/shared';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
@@ -48,7 +49,12 @@ export interface AppContext {
   settings: SettingsService;
   keyStore: KeyStore;
   auth: () => AuthProvider;
-  reloadAuth: () => void;
+  /** Provider for `settings` (bind constraints checked); throws instead of switching. */
+  buildAuth: (settings: Settings) => AuthProvider;
+  /** Makes `next` current once its key is loaded; idle agents pick it up on their next prompt. */
+  applyAuth: (next: AuthProvider) => Promise<void>;
+  /** Rebuilds the provider from the stored settings (after the keychain changed). */
+  reloadAuth: () => Promise<void>;
   events: EventStore;
   broker: PermissionBroker;
   agents: AgentService;
@@ -123,16 +129,17 @@ export async function buildApp(
   enforceBind(auth);
   if (auth instanceof ApiKeyAuthProvider) await auth.prepare();
 
-  const reloadAuth = () => {
-    const next = createAuthProvider(settings.get(), {
-      env: baseEnv(),
-      keyStore,
-      bindHost: config.host,
-    });
+  const buildAuth = (s: Settings) => {
+    const next = createAuthProvider(s, { env: baseEnv(), keyStore, bindHost: config.host });
     enforceBind(next);
-    if (next instanceof ApiKeyAuthProvider) void next.prepare();
+    return next;
+  };
+  const applyAuth = async (next: AuthProvider) => {
+    // Load the key before publishing the provider, so the next agent start already sees it.
+    if (next instanceof ApiKeyAuthProvider) await next.prepare();
     auth = next;
   };
+  const reloadAuth = () => applyAuth(buildAuth(settings.get()));
 
   const events = new EventStore(db, hub);
   PermissionBroker.reconcileOnBoot(db);
@@ -202,6 +209,8 @@ export async function buildApp(
     settings,
     keyStore,
     auth: () => auth,
+    buildAuth,
+    applyAuth,
     reloadAuth,
     events,
     broker,

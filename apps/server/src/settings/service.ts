@@ -1,6 +1,7 @@
 import {
   DEFAULT_MANAGER_MODEL,
   DEFAULT_MODEL,
+  MAX_PERMISSION_TIMEOUT_MS,
   type Settings,
   SettingsSchema,
   type UpdateSettingsSchema,
@@ -52,16 +53,19 @@ export class SettingsService {
   get(): Settings {
     if (this.cache) return this.cache;
     const row = this.db.select().from(settingsTable).where(eq(settingsTable.key, KEY)).get();
-    const parsed = row
-      ? SettingsSchema.safeParse({ ...defaultSettings(), ...JSON.parse(row.value) })
-      : null;
+    const stored = row ? (JSON.parse(row.value) as Record<string, unknown>) : null;
+    // Rows written before the 24 h cap existed are clamped rather than discarded wholesale.
+    if (stored && typeof stored.permissionTimeoutMs === 'number')
+      stored.permissionTimeoutMs = Math.min(stored.permissionTimeoutMs, MAX_PERMISSION_TIMEOUT_MS);
+    const parsed = stored ? SettingsSchema.safeParse({ ...defaultSettings(), ...stored }) : null;
     this.cache = parsed?.success ? parsed.data : defaultSettings();
     // The feature flag is code-level: it always wins over a stored value.
     this.cache = { ...this.cache, subscriptionModeEnabled: SUBSCRIPTION_MODE_FEATURE_FLAG };
     return this.cache;
   }
 
-  update(patch: z.infer<typeof UpdateSettingsSchema>): Settings {
+  /** The settings `patch` would produce, validated but not persisted. Throws when invalid. */
+  preview(patch: z.infer<typeof UpdateSettingsSchema>): Settings {
     const next = SettingsSchema.parse({
       ...this.get(),
       ...patch,
@@ -70,6 +74,11 @@ export class SettingsService {
     if (next.authMode === 'CLAUDE_SUBSCRIPTION' && !next.subscriptionModeEnabled) {
       throw new Error('Subscription mode is disabled by the feature flag');
     }
+    return next;
+  }
+
+  update(patch: z.infer<typeof UpdateSettingsSchema>): Settings {
+    const next = this.preview(patch);
     this.db
       .insert(settingsTable)
       .values({ key: KEY, value: JSON.stringify(next) })

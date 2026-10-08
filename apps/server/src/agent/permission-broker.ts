@@ -1,4 +1,5 @@
 import {
+  MAX_PERMISSION_TIMEOUT_MS,
   newId,
   type PermissionDecision,
   type PermissionRequest,
@@ -70,7 +71,8 @@ export class PermissionBroker {
     this.persist(request);
     this.deps.onUpsert(request);
     return new Promise<PermissionOutcome>((resolve) => {
-      const timeoutMs = this.deps.timeoutMs();
+      // Clamped: setTimeout overflows above 2^31-1 ms and would fire (deny) almost immediately.
+      const timeoutMs = Math.min(this.deps.timeoutMs(), MAX_PERMISSION_TIMEOUT_MS);
       const timer =
         timeoutMs > 0
           ? setTimeout(() => this.finish(request.id, 'timeout', 'No decision in time'), timeoutMs)
