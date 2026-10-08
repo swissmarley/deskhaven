@@ -16,13 +16,19 @@ const agent = (id: string, role: string): Agent =>
     model: 'm',
   }) as unknown as Agent;
 
-function setup() {
+/** Role presets as the app's PresetService would return them: "cto" is a custom manager preset. */
+const presetIsManager: Record<string, boolean> = { manager: true, cto: true };
+
+function setup(withIsManager = true) {
+  const all = () => [
+    agent('mgr', 'manager'),
+    agent('eng', 'engineer'),
+    agent('qa', 'qa'),
+    agent('boss', 'cto'),
+  ];
   const agents = {
-    list: () => [agent('mgr', 'manager'), agent('eng', 'engineer'), agent('qa', 'qa')],
-    get: (id: string) =>
-      [agent('mgr', 'manager'), agent('eng', 'engineer'), agent('qa', 'qa')].find(
-        (a) => a.id === id,
-      ),
+    list: all,
+    get: (id: string) => all().find((a) => a.id === id),
   } as unknown as AgentService;
   const store = new Map<string, Task>();
   const tasks = {
@@ -51,7 +57,12 @@ function setup() {
     get: (id: string) => store.get(id),
     list: () => [...store.values()],
   } as unknown as TaskService;
-  return managerActions({ agents, tasks, selfId: 'mgr' });
+  return managerActions({
+    agents,
+    tasks,
+    selfId: 'mgr',
+    ...(withIsManager ? { isManager: (a: Agent) => presetIsManager[a.rolePresetId] === true } : {}),
+  });
 }
 
 describe('manager delegation tools', () => {
@@ -85,5 +96,19 @@ describe('manager delegation tools', () => {
       /itself/,
     );
     expect(() => a.assignTask({ taskId: 'any', agentId: 'ghost' })).toThrow(/Unknown employee/);
+  });
+  it('treats any agent whose preset has the manager flag as a manager, not just id "manager"', () => {
+    const a = setup();
+    expect(a.listAgents().map((x) => x.id)).not.toContain('boss');
+    expect(() => a.createTask({ title: 'x', prompt: 'y', assigneeAgentId: 'boss' })).toThrow(
+      /flat/,
+    );
+    const backlog = a.createTask({ title: 'Later', prompt: 'later' });
+    expect(() => a.assignTask({ taskId: backlog.taskId, agentId: 'boss' })).toThrow(/flat/);
+  });
+  it('falls back to the built-in presets when no lookup is given', () => {
+    const a = setup(false);
+    expect(() => a.assignTask({ taskId: 'any', agentId: 'mgr' })).toThrow(/itself/);
+    expect(a.listAgents().map((x) => x.id)).toEqual(['eng', 'qa', 'boss']);
   });
 });

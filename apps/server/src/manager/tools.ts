@@ -1,3 +1,4 @@
+import { type Agent, presetById } from '@deskhaven/shared';
 import { z } from 'zod';
 import { createSdkMcpServer, type McpServerConfig, tool } from '../agent/sdk-adapter.js';
 import type { AgentService } from '../agents/service.js';
@@ -11,6 +12,11 @@ export interface ManagerToolDeps {
   tasks: TaskService;
   /** The manager agent's own id, so it cannot assign work to itself or to other managers. */
   selfId: string;
+  /**
+   * Whether an agent is a manager: its role preset carries `manager: true` (an edited or custom
+   * preset can, whatever its id). Defaults to the built-in presets.
+   */
+  isManager?: (agent: Agent) => boolean;
 }
 
 export function managerToolNames(): string[] {
@@ -21,11 +27,14 @@ export function managerToolNames(): string[] {
 
 /** Plain functions behind the MCP tools, so they can be unit-tested without an MCP transport. */
 export function managerActions(deps: ManagerToolDeps) {
+  const isManager =
+    deps.isManager ??
+    ((a: Agent) => Boolean(presetById(a.rolePresetId)?.manager) || a.rolePresetId === 'manager');
   const guardAssignee = (agentId: string) => {
     const a = deps.agents.get(agentId);
     if (!a) throw new Error(`Unknown employee ${agentId}; call list_agents first`);
     if (a.id === deps.selfId) throw new Error('A manager cannot assign work to itself');
-    if (a.rolePresetId === 'manager')
+    if (isManager(a))
       throw new Error('Delegation is flat: managers cannot delegate to other managers');
   };
   const summary = (t: ReturnType<TaskService['list']>[number]) => ({
@@ -41,7 +50,7 @@ export function managerActions(deps: ManagerToolDeps) {
     listAgents: () =>
       deps.agents
         .list()
-        .filter((a) => a.id !== deps.selfId && a.rolePresetId !== 'manager')
+        .filter((a) => a.id !== deps.selfId && !isManager(a))
         .map((a) => ({
           id: a.id,
           name: a.name,

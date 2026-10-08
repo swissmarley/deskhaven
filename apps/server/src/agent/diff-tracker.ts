@@ -92,10 +92,34 @@ export function patch(filePath: string, before: string, after: string): FileDiff
   return { path: filePath, patch: text, additions, deletions };
 }
 
-/** True when `target` is inside `root` (or equals it). Both are resolved to absolute paths. */
+/**
+ * `fs.realpath` for paths that may not exist yet (a Write creating a new file): the deepest existing
+ * ancestor is resolved and the missing tail appended, so a symlinked directory on the way is
+ * followed.
+ */
+export function realpathLoose(p: string): string {
+  const abs = path.resolve(p);
+  const tail: string[] = [];
+  let cur = abs;
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(cur), ...tail.reverse());
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return abs;
+      tail.push(path.basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+/**
+ * True when `target` is inside `root` (or equals it). Both are resolved through symlinks first, so
+ * a link inside the workdir that points elsewhere (`ln -s ~/.ssh keys`) does not pass as "inside".
+ */
 export function isInside(root: string, target: string): boolean {
-  const r = path.resolve(root);
-  const t = path.resolve(target);
+  const r = realpathLoose(root);
+  const t = realpathLoose(target);
   const rel = path.relative(r, t);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }

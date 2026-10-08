@@ -182,7 +182,14 @@ export async function buildApp(
     runtimeDeps: {
       mcpServers: (agent) =>
         presetService.get(agent.rolePresetId)?.manager
-          ? { deskhaven: createManagerMcpServer({ agents, tasks, selfId: agent.id }) }
+          ? {
+              deskhaven: createManagerMcpServer({
+                agents,
+                tasks,
+                selfId: agent.id,
+                isManager: (a) => Boolean(presetService.get(a.rolePresetId)?.manager),
+              }),
+            }
           : undefined,
       auth: () => auth,
       events,
