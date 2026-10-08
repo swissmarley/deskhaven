@@ -57,7 +57,7 @@ pnpm --version                                  # 10.34.5 (downloaded into $CORE
 ```bash
 git clone <your repository URL> deskhaven
 cd deskhaven
-corepack enable            # once, if `pnpm --version` is not 10.x
+corepack enable            # once, if `pnpm --version` is not 10.x; EACCES? use the user-local pnpm (section 1)
 pnpm install               # downloads the native claude binary (better-sqlite3 uses a prebuilt one)
 pnpm dev                   # server on 127.0.0.1:8787, web UI on 127.0.0.1:5173
 ```
@@ -331,7 +331,7 @@ above. Section 11 explains what keeps other websites out and what `DESKHAVEN_ALL
 
 | Symptom | Fix |
 |---|---|
-| `pnpm: command not found` or the wrong version | `corepack enable`, then `corepack prepare pnpm@10.34.5 --activate`. |
+| `pnpm: command not found` or the wrong version | `corepack enable`, then `corepack prepare pnpm@10.34.5 --activate`. If either fails with `EACCES`, use the user-local install from section 1 (`npm install -g --prefix ~/.local pnpm@10.34.5`). |
 | `corepack enable` fails with `EACCES` | Node is installed system-wide; use the user-local install in section 1: `npm install -g --prefix ~/.local pnpm@10.34.5` and put `~/.local/bin` on `PATH`. |
 | `corepack enable --install-directory ...` still fails with `EACCES` | `COREPACK_HOME` points to a root-owned folder. Set `COREPACK_HOME="$HOME/.cache/corepack"` (section 1), or use the npm install above. |
 | `Could not locate the bindings file` for `better-sqlite3` | Your platform has no prebuilt binary (anything but Linux, macOS or Windows on x64/arm64). Install the build tools (macOS: `xcode-select --install`; Linux: `make`, `g++` and `python3`, e.g. `build-essential`) and run `pnpm rebuild better-sqlite3`. Node must be 22+. |

@@ -20,6 +20,17 @@ describe('docs/GUIDE.md install instructions', () => {
     expect(guide).toMatch(/COREPACK_HOME` points to a root-owned folder/);
   });
 
+  it('never suggests a bare `corepack enable` without the no-root fallback next to it', () => {
+    const lines = guide
+      .split('\n')
+      .filter((l) => /corepack enable(?! --install-directory)/.test(l));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      if (line.includes('writes shims next to the `node` binary')) continue; // the explanation itself
+      expect(line, line).toMatch(/EACCES|user-local/);
+    }
+  });
+
   it('pins the same pnpm version as package.json', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
     const version = String(pkg.packageManager).replace('pnpm@', '');
