@@ -2,26 +2,19 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildApp } from '../src/app.js';
-import { loadConfig } from '../src/config.js';
+import { type Built, client, testApp } from './helpers.js';
 
-let app: Awaited<ReturnType<typeof buildApp>>['app'];
+let built: Built;
+let app: { inject: ReturnType<typeof client> };
 
 beforeAll(async () => {
   const dist = mkdtempSync(path.join(tmpdir(), 'deskhaven-dist-'));
   writeFileSync(path.join(dist, 'index.html'), '<!doctype html><title>shell</title>');
-  ({ app } = await buildApp(
-    loadConfig({
-      DESKHAVEN_DATA_DIR: mkdtempSync(path.join(tmpdir(), 'deskhaven-data-')),
-      DESKHAVEN_DB: ':memory:',
-      DESKHAVEN_KEYSTORE: 'memory',
-      DESKHAVEN_PROBE_ON_BOOT: '0',
-      DESKHAVEN_WEB_DIST: dist,
-    }),
-  ));
+  built = await testApp({ DESKHAVEN_WEB_DIST: dist });
+  app = { inject: client(built) };
 });
 afterAll(async () => {
-  await app.close();
+  await built.app.close();
 });
 
 describe('static web dist', () => {

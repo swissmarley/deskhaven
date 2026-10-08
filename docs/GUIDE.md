@@ -20,15 +20,26 @@ Contents: [Requirements](#1-requirements) · [Install and start](#2-install-and-
 | Need | Details |
 |---|---|
 | Node.js | 22 or newer (`node --version`). |
-| pnpm | 10.x. The repo pins `pnpm@10.34.5`; the easiest way is `corepack enable` (ships with Node). |
+| pnpm | 10.x. The repo pins `pnpm@10.34.5`; the easiest way is `corepack enable` (ships with Node). If that fails with `EACCES`, see the user-local install below. |
 | Git | Needed for the git worktree option and for the sample repository. |
 | A browser with WebGL 2 | Any current Chrome, Edge, Firefox or Safari. Without WebGL the app falls back to the pixel-art renderer. |
 | Network (first install) | `pnpm install` downloads about 230 MB: the Agent SDK ships its own native `claude` binary. The agents also need the Anthropic API at runtime. |
 | One way to pay for agents | Either an Anthropic API key, **or** a Claude Pro/Max plan logged in with the `claude` CLI (see section 3). |
-| A C/C++ toolchain (rarely) | `better-sqlite3` ships prebuilt binaries for common platforms. If yours has none, install Xcode Command Line Tools (macOS) or `build-essential` and `python3` (Linux). |
+| No C/C++ toolchain | `better-sqlite3` ships prebuilt binaries for Linux (glibc and musl), macOS and Windows on x64 and arm64, and `pnpm install` uses them without compiling, so `make` and `g++` are not needed. Only on other platforms see "Install fails while compiling" in section 10. |
 
-Everything runs on your machine. The server listens on `127.0.0.1` only. Nothing is sent anywhere except
-the Anthropic API calls your agents make.
+Everything runs on your machine. The server listens on `127.0.0.1` only and only answers the Deskhaven web
+app (see section 11 for how other websites are kept out). Nothing is sent anywhere except the Anthropic API
+calls your agents make.
+
+**pnpm without root.** `corepack enable` writes shims next to the `node` binary; with a system-wide Node
+(e.g. `/usr/local/bin`) it fails with `EACCES`. Install the shims into a folder you own instead:
+
+```bash
+mkdir -p ~/.local/bin
+corepack enable --install-directory ~/.local/bin   # or: npm install -g --prefix ~/.local pnpm@10.34.5
+export PATH="$HOME/.local/bin:$PATH"               # add this line to ~/.bashrc or ~/.zshrc
+pnpm --version                                     # 10.34.5
+```
 
 ## 2. Install and start
 
@@ -36,7 +47,7 @@ the Anthropic API calls your agents make.
 git clone <your repository URL> deskhaven
 cd deskhaven
 corepack enable            # once, if `pnpm --version` is not 10.x
-pnpm install               # downloads the native claude binary, builds better-sqlite3
+pnpm install               # downloads the native claude binary (better-sqlite3 uses a prebuilt one)
 pnpm dev                   # server on 127.0.0.1:8787, web UI on 127.0.0.1:5173
 ```
 
@@ -62,8 +73,11 @@ Open **Settings → Authentication**.
 1. Create a key in the Anthropic Console.
 2. Either export it before starting the server (`export ANTHROPIC_API_KEY=sk-ant-...` then `pnpm dev`) or
    paste it into Settings. A pasted key goes to your operating system keychain; it is never written to
-   disk by the app, never sent to the browser and never logged.
-3. Select **API key**. Agents are billed per token on your API account.
+   disk by the app, never sent to the browser and never logged. Agents that are already running pick up
+   a new key with their next task (their idle process restarts and resumes the same session).
+3. Select **API key**. Agents are billed per token on your API account. Without a key, agents refuse to
+   start instead of falling back to other credentials, and a session that reports anything but the API
+   key as its credential source is stopped.
 
 ### Option B: Claude Pro/Max subscription (your own machine only)
 
@@ -105,16 +119,17 @@ Notes that apply to both:
 
 - **The room** (left): zoom with the mouse wheel, pan with middle-drag or Space + drag. Click a floor tile
   to walk the selected character there. Click a character to select it and open the Inspector.
-- **Top bar**: connection state, authentication mode and the plan-usage notice, cost estimate against the
-  daily cap, token count, desks in use, the plan windows when the SDK reports them, the **Board** toggle,
+- **Top bar**: connection state, authentication mode and the plan-usage notice, estimated cost as
+  **today / all time** (the daily cap is enforced separately, see section 7), today's token count, desks in use, the plan windows when the SDK reports them, the **Board** toggle,
   the sound toggle and the **Kill switch**.
 - **Side panel** tabs: **HR desk**, **Inspector**, **Feed**, **Room**, **Replay**, **Settings**.
 - **Task board** (bottom): Backlog → Assigned → In progress → Needs input → Review → Done.
 
 ### HR desk (agents)
 
-Create and edit agents: name, avatar, role preset, model, permission mode, working directory (or a
-dedicated git worktree), system prompt addition, tool lists and budgets. Open **Advanced** for the system
+Create and edit agents: name, avatar, role preset, model, permission mode, working directory (an absolute
+path to an existing folder; `/`, top-level system folders and your home folder itself are refused), or a
+dedicated git worktree of it, system prompt addition, tool lists and budgets. Open **Advanced** for the system
 prompt, allowed and denied tools, per-agent daily cap, max turns and the desk assignment.
 
 Lifecycle buttons live in the Inspector: **Start**, **Pause**, **Resume**, **Stop** and **Fire**. A
@@ -183,7 +198,7 @@ Side panel → **Room**.
 ### Replay
 
 Every event is logged, so you can watch the office re-enact past work at no cost. **Replay** → pick a range
-(last 5 minutes, 15 minutes, hour, everything) → **Start replay**. Speeds from 1× to 64×, step, pause,
+(last 5 minutes, 15 minutes, hour, everything; only events in that range are replayed) → **Start replay**. Speeds from 1× to 64×, step, pause,
 scrub, **Stop** returns to live state. Live events are held back while a replay runs.
 
 ### Renderers and performance
@@ -207,9 +222,14 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
 ## 6. Using it on your own repository
 
 1. HR desk → fill **Working directory** with the **absolute path** of your repository.
-2. Tick **git worktree** to give the agent its own checkout under `~/.deskhaven/worktrees/`. Your own
-   working copy stays untouched, and several engineers can work in parallel on the same repository.
-   Removing an agent with uncommitted work asks for confirmation instead of deleting it.
+2. Tick **git worktree** to give the agent its own checkout under `~/.deskhaven/worktrees/<name>-<id>` on a
+   new branch `deskhaven/<name>-<id>`, created from your repository's current commit. The agent runs and
+   edits only there; your own working copy stays untouched, and several engineers can work in parallel on
+   the same repository. Hiring fails with a clear error if the folder is not a git repository. Uncommitted
+   changes in your checkout are *not* copied into the worktree (the Feed shows a warning when there are
+   some). **Fire** removes the worktree folder but keeps the branch; if the worktree has uncommitted
+   changes, firing is refused and the app asks before forcing it. A worktree agent's repository cannot be
+   changed afterwards: fire it and hire a new one.
 3. Choose the role. Start with **Reviewer** or **Architect** (read-only) to see how it behaves before you
    let an **Engineer** edit.
 4. Keep the permission mode on **ask** for the first session, and lower the agent's daily cap in
@@ -228,7 +248,7 @@ If the repository contains a `CLAUDE.md`, agents load it (project settings only;
 |---|---|
 | Concurrent agents (2 in subscription mode, 4 with an API key) | How many agents may be busy at once. Idle agents do not count. Extra work waits. |
 | Daily cost cap (20 USD, estimate) | New work is refused once today's estimated cost reaches the cap; the task goes to **Needs input** with the reason. |
-| Permission timeout (10 min) | Unanswered approval requests are denied after this long. |
+| Permission timeout (10 min, at most 24 h) | Unanswered approval requests are denied after this long. |
 | Stop idle processes after (15 min, 0 = never) | Frees memory; the session id is kept so the agent resumes later. |
 | Sounds | Master switch, volume and per-sound toggles. |
 
@@ -244,10 +264,14 @@ accepted for every variable below.
 | Variable | Default | Meaning |
 |---|---|---|
 | `DESKHAVEN_PORT` | `8787` | Server port. |
-| `DESKHAVEN_HOST` | `127.0.0.1` | Bind address. In subscription mode the server refuses anything but loopback. |
+| `DESKHAVEN_HOST` | `127.0.0.1` | Bind address. A non-loopback address (e.g. `0.0.0.0`) is refused unless `DESKHAVEN_ALLOW_REMOTE=1`; subscription mode always refuses it. See section 11. |
+| `DESKHAVEN_ALLOW_REMOTE` | unset | `1` accepts a non-loopback `DESKHAVEN_HOST` (logs a warning; the session token is required as always). |
+| `DESKHAVEN_ALLOWED_HOSTS` | unset | Comma-separated extra `Host` names the server answers to (`box.lan` or `box.lan:8787`), besides `localhost`, `127.0.0.1` and `[::1]`. |
+| `DESKHAVEN_SESSION_TOKEN` | random per launch | Fixes the session token instead of generating one at start (for scripts; keep it secret). |
+| `DESKHAVEN_DEV_WEB_PORT` | `5173` | Port of the Vite dev server whose origin is accepted outside production. |
 | `DESKHAVEN_DATA_DIR` | `~/.deskhaven` | Data directory. An existing `~/.agenthotel` is reused until `~/.deskhaven` exists. |
 | `DESKHAVEN_DB` | `<data dir>/deskhaven.db` | SQLite file (`:memory:` for throwaway runs). |
-| `DESKHAVEN_WEB_DIST` | unset | Directory of the built UI to serve from the server port (see section 9). |
+| `DESKHAVEN_WEB_DIST` | unset | Directory of the built UI to serve from the server port (see section 9). A relative path is resolved from the repository root; a missing folder or `index.html` is logged as an error at start. |
 | `DESKHAVEN_KEYSTORE` | `keyring` | `memory` keeps pasted API keys in memory only (no OS keychain). |
 | `DESKHAVEN_PROBE_ON_BOOT` | `1` | `0` skips the login probe at start. |
 | `DESKHAVEN_ENABLE_SUBSCRIPTION_MODE` | `1` | `0` disables subscription mode. |
@@ -269,19 +293,25 @@ pnpm build                                  # type-checks and builds apps/web/di
 DESKHAVEN_WEB_DIST=apps/web/dist pnpm start # one process: http://127.0.0.1:8787
 ```
 
-Do not expose the port to a network. The server has no login of its own; it relies on binding to
-`127.0.0.1`, and agents can run commands on your machine under the permission rules above.
+`DESKHAVEN_WEB_DIST` may be relative (resolved from the repository root, whatever folder `pnpm start` runs
+the server in) or absolute, e.g. `DESKHAVEN_WEB_DIST="$PWD/apps/web/dist"`.
+
+Do not expose the port to a network: agents can run commands on your machine under the permission rules
+above. Section 11 explains what keeps other websites out and what `DESKHAVEN_ALLOW_REMOTE` changes.
 
 ## 10. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | `pnpm: command not found` or the wrong version | `corepack enable`, then `corepack prepare pnpm@10.34.5 --activate`. |
-| Install fails while compiling `better-sqlite3` | Install the build tools (macOS: `xcode-select --install`; Linux: `build-essential python3`) and rerun `pnpm install`. Node must be 22+. |
+| `corepack enable` fails with `EACCES` | Node is installed system-wide; use the user-local install in section 1 (`corepack enable --install-directory ~/.local/bin`). |
+| `Could not locate the bindings file` for `better-sqlite3` | Your platform has no prebuilt binary (anything but Linux, macOS or Windows on x64/arm64). Install the build tools (macOS: `xcode-select --install`; Linux: `make`, `g++` and `python3`, e.g. `build-essential`) and run `pnpm rebuild better-sqlite3`. Node must be 22+. |
 | Install seems stuck | The first install downloads the 230 MB native `claude` binary; wait, or check your network. |
 | Port 5173 or 8787 already in use | Stop the other process, or set `DESKHAVEN_PORT` (and change the proxy target in `apps/web/vite.config.ts`). |
 | Settings says "not logged in" in subscription mode | Run `claude login` in a terminal, then reopen Settings. Check with `claude auth status`. |
 | An agent stops with "apiKeySource" or key error in subscription mode | An API key reached the agent process. Unset `ANTHROPIC_API_KEY` for the shell that starts the server, or use API key mode. |
+| An agent goes to error with "no API key is configured" | API key mode is selected but there is no key. Add one in Settings (running agents pick it up on their next task) or switch to subscription mode. Deskhaven refuses to start the agent rather than let the CLI fall back to other credentials. |
+| The UI shows 401/403 errors, or curl gets `forbidden_host` / `unauthorized` | Open the app at `http://127.0.0.1:5173` (dev) or `:8787` (built) rather than another hostname, or add the name to `DESKHAVEN_ALLOWED_HOSTS`. Scripts need the session token (section 11). |
 | 401 or 429 emotes | 401: re-authenticate or fix the key. 429: you hit a rate limit; the avatar shows a cooldown and work resumes after the window. |
 | Black room or "WebGL" errors | Enable hardware acceleration in your browser, or switch to the pixel renderer in Settings → Renderer. |
 | Room looks right but characters are capsules | The character model failed to load (check the network tab for `/models/characters/rogue.glb`). Capsules are the deliberate fallback. |
@@ -292,8 +322,46 @@ Do not expose the port to a network. The server has no login of its own; it reli
 
 ## 11. Safety and cost
 
+### Network security: what keeps other websites out
+
+Binding to `127.0.0.1` on its own did **not** protect the server. Your browser runs code from every site
+you visit, and that code can reach `127.0.0.1`:
+
+- **Cross-site WebSocket hijacking.** Browsers do not apply CORS to WebSockets. Any page could open
+  `ws://127.0.0.1:8787/ws` and read every agent, working directory, task, prompt and event.
+- **DNS rebinding.** A domain such as `rebind.attacker.example` can resolve to `127.0.0.1` after the page
+  loads; the page is then "same origin" with the API and can create an agent with workdir `/` and Bash,
+  Write and Edit auto-approved.
+- **CSRF.** "Simple" cross-site requests (`text/plain` POSTs, form posts) reach the server without a CORS
+  preflight, e.g. a POST to `/api/kill`.
+
+Every request now passes these checks, in order:
+
+1. **Host allow-list**: only `localhost`, `127.0.0.1` and `[::1]` on the server port (plus the Vite port
+   during `pnpm dev`, and `DESKHAVEN_ALLOWED_HOSTS`). A rebinding domain sends its own name in `Host` and
+   gets 403.
+2. **Origin check** on the WebSocket and on every POST, PUT, PATCH and DELETE: the `Origin` (or `Referer`)
+   must be one of the allowed hosts. A browser request with neither, or marked `cross-site` by fetch
+   metadata, gets 403.
+3. **JSON only**: writes must be `Content-Type: application/json`, which no simple cross-site request can
+   send (415 otherwise).
+4. **Session token**: generated at each server start and required on `/api/*` and `/ws` (401 otherwise).
+   The web app receives it as an `HttpOnly; SameSite=Strict` cookie from `GET /api/session`, so other
+   sites can neither read it nor make the browser send it. Scripts can pass it as
+   `X-Deskhaven-Token: <token>` or `Authorization: Bearer <token>`; fix it with `DESKHAVEN_SESSION_TOKEN`.
+   `/api/health` stays public.
+
+**Remote access** stays off by default. A non-loopback `DESKHAVEN_HOST` (such as `0.0.0.0`) refuses to
+start unless `DESKHAVEN_ALLOW_REMOTE=1` is set; then the server logs a loud warning, prints a login URL
+with the token on the terminal, and hands out the cookie only to a browser that presents that token.
+Anyone with the token controls agents that can run commands on your machine; there is no TLS, so use it
+only on a network you trust (or behind an SSH tunnel, which needs none of this).
+
+### Agents and cost
+
 - Default permission mode is **ask**; there is no mode that skips all permission checks.
-- Agents are confined to their working directory by a guard that denies edits outside it.
+- Agents are confined to their working directory by a guard that denies edits outside it (symlinks are
+  resolved first, so a link pointing out of the workdir does not count as inside).
 - Use git worktrees for anything you care about, and review diffs before merging.
 - Budgets: per-agent and global daily caps, per-session turn and spend limits, the concurrency cap and the
   kill switch. Caps use estimated costs, so leave headroom.

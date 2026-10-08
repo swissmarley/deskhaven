@@ -1,22 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildApp } from '../src/app.js';
-import { loadConfig } from '../src/config.js';
-import { scrubSecrets } from '../src/logger.js';
+import { redactUrl, scrubSecrets } from '../src/logger.js';
+import { type Built, client, testApp } from './helpers.js';
 
-let app: Awaited<ReturnType<typeof buildApp>>['app'];
+let built: Built;
+let app: { inject: ReturnType<typeof client> };
 
 beforeAll(async () => {
-  ({ app } = await buildApp(
-    loadConfig({
-      DESKHAVEN_DATA_DIR: '/tmp/deskhaven-test',
-      DESKHAVEN_DB: ':memory:',
-      DESKHAVEN_KEYSTORE: 'memory',
-      DESKHAVEN_PROBE_ON_BOOT: '0',
-    }),
-  ));
+  built = await testApp();
+  app = { inject: client(built) };
 });
 afterAll(async () => {
-  await app.close();
+  await built.app.close();
 });
 
 describe('server', () => {
@@ -119,5 +113,6 @@ describe('server', () => {
 
   it('scrubs key-like strings', () => {
     expect(scrubSecrets('key sk-ant-abcdefghijklmnop rest')).toBe('key sk-ant-[redacted] rest');
+    expect(redactUrl('/api/session?token=abc&x=1')).toBe('/api/session?token=[redacted]&x=1');
   });
 });

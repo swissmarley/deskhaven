@@ -1,0 +1,100 @@
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { type Built, client, testApp } from './helpers.js';
+
+function tmpRepo(): string {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-repo-')));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'hello\n');
+  git('add', '-A');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+  return dir;
+}
+
+let built: Built;
+let req: ReturnType<typeof client>;
+
+beforeAll(async () => {
+  built = await testApp();
+  req = client(built);
+});
+afterAll(async () => {
+  await built.app.close();
+});
+
+const hire = (workdir: string, name = 'Grace') =>
+  req({
+    method: 'POST',
+    url: '/api/agents',
+    payload: { name, rolePresetId: 'engineer', workdir, useWorktree: true },
+  });
+
+describe('hiring with a git worktree', () => {
+  it('creates a worktree under the data dir and records it on the agent', async () => {
+    const repo = tmpRepo();
+    const res = await hire(repo);
+    expect(res.statusCode).toBe(201);
+    const agent = res.json();
+    expect(agent.workdir).toBe(repo);
+    expect(agent.worktree.branch).toMatch(/^deskhaven\/grace-/);
+    expect(agent.worktree.path.startsWith(built.ctx.worktrees.root())).toBe(true);
+    expect(fs.existsSync(path.join(agent.worktree.path, 'a.txt'))).toBe(true);
+    // The user's checkout is untouched and still on main.
+    const branch = execFileSync('git', ['branch', '--show-current'], { cwd: repo }).toString();
+    expect(branch.trim()).toBe('main');
+
+    const del = await req({ method: 'DELETE', url: `/api/agents/${agent.id}` });
+    expect(del.statusCode).toBe(200);
+    expect(fs.existsSync(agent.worktree.path)).toBe(false);
+  });
+
+  it('refuses to fire an agent whose worktree has uncommitted work unless forced', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Linus')).json();
+    fs.writeFileSync(path.join(agent.worktree.path, 'wip.txt'), 'unsaved\n');
+    const refused = await req({ method: 'DELETE', url: `/api/agents/${agent.id}` });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().error).toMatch(/uncommitted/);
+    expect(fs.existsSync(path.join(agent.worktree.path, 'wip.txt'))).toBe(true);
+    expect((await req({ method: 'GET', url: `/api/agents/${agent.id}` })).statusCode).toBe(200);
+
+    const forced = await req({ method: 'DELETE', url: `/api/agents/${agent.id}?force=true` });
+    expect(forced.statusCode).toBe(200);
+    expect(fs.existsSync(agent.worktree.path)).toBe(false);
+    expect((await req({ method: 'GET', url: `/api/agents/${agent.id}` })).statusCode).toBe(404);
+  });
+
+  it('warns when the source checkout has uncommitted changes', async () => {
+    const repo = tmpRepo();
+    fs.appendFileSync(path.join(repo, 'a.txt'), 'local edit\n');
+    const agent = (await hire(repo, 'Barbara')).json();
+    const notes = built.ctx.events.list({ agentId: agent.id, types: ['notification'] });
+    expect(notes[0]).toMatchObject({ kind: 'worktree' });
+    await req({ method: 'DELETE', url: `/api/agents/${agent.id}?force=true` });
+  });
+
+  it('returns 400 and creates nothing when the workdir is not a git repository', async () => {
+    const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-plain-'));
+    const before = (await req({ method: 'GET', url: '/api/agents' })).json().length;
+    const res = await hire(plain);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/not a git repository/);
+    expect((await req({ method: 'GET', url: '/api/agents' })).json()).toHaveLength(before);
+  });
+
+  it('does not let a worktree agent switch repositories', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Ken')).json();
+    const res = await req({
+      method: 'PATCH',
+      url: `/api/agents/${agent.id}`,
+      payload: { workdir: tmpRepo() },
+    });
+    expect(res.statusCode).toBe(400);
+    await req({ method: 'DELETE', url: `/api/agents/${agent.id}?force=true` });
+  });
+});

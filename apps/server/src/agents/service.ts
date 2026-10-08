@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   type Agent,
@@ -21,27 +22,107 @@ import { agents as agentsTable, usageDaily } from '../db/schema.js';
 import type { SettingsService } from '../settings/service.js';
 import type { WsHub } from '../ws/hub.js';
 
-const PALETTES = {
+export const PALETTES = {
   skin: ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a1665e'],
   hair: ['#2c1b18', '#4a2c2a', '#b55239', '#d6b370', '#1b1b1b', '#6e6e6e', '#3a86ff', '#ef476f'],
   shirt: ['#3a86ff', '#ff006e', '#8338ec', '#fb5607', '#06d6a0', '#ffbe0b', '#118ab2', '#ef476f'],
   pants: ['#1d3557', '#2b2d42', '#4a4e69', '#22223b', '#5c677d', '#6c584c'],
 } as const;
 
+/** mulberry32: a small, well-mixed 32-bit PRNG returning floats in [0, 1). */
+function mulberry32(a: number): () => number {
+  let t = a >>> 0;
+  return () => {
+    t = (t + 0x6d2b79f5) >>> 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * A random avatar; the same `seed` (in [0, 1)) always gives the same one. Every field draws its own
+ * number from a seeded PRNG. (The old per-field LCG barely moved with the seed, so 10,000 calls
+ * produced only two distinct avatars.)
+ */
 export function randomAvatar(seed = Math.random()): Avatar {
-  const pick = <T>(arr: readonly [T, ...T[]], salt: number): T => {
-    const idx =
-      Math.floor((((seed * 9301 + salt * 49297) % 233280) / 233280) * arr.length) % arr.length;
-    return arr[idx] ?? arr[0];
-  };
+  const next = mulberry32(Math.floor(seed * 4294967296));
+  const pick = <T>(arr: readonly [T, ...T[]]): T => arr[Math.floor(next() * arr.length)] ?? arr[0];
   return {
-    skin: pick(PALETTES.skin, 1),
-    hair: pick(PALETTES.hair, 2),
-    hairStyle: pick(['short', 'long', 'cap', 'bald', 'bun'] as const, 3),
-    shirt: pick(PALETTES.shirt, 4),
-    pants: pick(PALETTES.pants, 5),
-    accessory: pick(['none', 'glasses', 'headset', 'tie', 'scarf', 'none'] as const, 6),
+    skin: pick(PALETTES.skin),
+    hair: pick(PALETTES.hair),
+    hairStyle: pick(['short', 'long', 'cap', 'bald', 'bun'] as const),
+    shirt: pick(PALETTES.shirt),
+    pants: pick(PALETTES.pants),
+    accessory: pick(['none', 'glasses', 'headset', 'tie', 'scarf', 'none'] as const),
   };
+}
+
+/**
+ * Directories an agent may never use as its working directory: the filesystem root, top-level
+ * system folders and the home directory itself (an agent there could edit ~/.ssh or ~/.claude).
+ * Only exact matches: projects below them (e.g. /usr/local/src/app) stay allowed.
+ */
+export function forbiddenWorkdirs(home = os.homedir()): Set<string> {
+  const unix = [
+    '/bin',
+    '/boot',
+    '/dev',
+    '/etc',
+    '/home',
+    '/lib',
+    '/lib64',
+    '/opt',
+    '/proc',
+    '/root',
+    '/run',
+    '/sbin',
+    '/srv',
+    '/sys',
+    '/tmp',
+    '/usr',
+    '/var',
+    '/Applications',
+    '/Library',
+    '/System',
+    '/Users',
+    '/Volumes',
+    '/private',
+    '/private/tmp',
+    '/private/var',
+  ];
+  const out = new Set<string>([...unix, home].map((p) => path.resolve(p)));
+  for (const p of [...out]) {
+    try {
+      out.add(fs.realpathSync(p));
+    } catch {
+      // not on this system
+    }
+  }
+  return out;
+}
+
+/**
+ * The canonical working directory for `input`: must be absolute (a relative path would be resolved
+ * against the server's own folder), exist, be a directory, and not be a system root. Symlinks are
+ * resolved so the checks and the edit guard see the real location.
+ */
+export function validateWorkdir(input: string, forbidden = forbiddenWorkdirs()): string {
+  if (!path.isAbsolute(input))
+    throw new Error(`Working directory must be an absolute path: ${input}`);
+  let real: string;
+  try {
+    real = fs.realpathSync(input);
+  } catch {
+    throw new Error(`Working directory does not exist: ${input}`);
+  }
+  if (!fs.statSync(real).isDirectory())
+    throw new Error(`Working directory is not a directory: ${real}`);
+  if (path.parse(real).root === real || forbidden.has(real))
+    throw new Error(
+      `Refusing ${real} as a working directory: pick a project folder, not a system or home root`,
+    );
+  return real;
 }
 
 export class AgentService {
@@ -67,17 +148,29 @@ export class AgentService {
     return row ? AgentSchema.parse(JSON.parse(row.json)) : undefined;
   }
 
-  create(input: CreateAgent): Agent {
+  /** Throws when `input` cannot become an agent; returns the resolved working directory. */
+  validateCreate(input: CreateAgent): string {
+    if (!this.presetLookup(input.rolePresetId))
+      throw new Error(`Unknown role preset ${input.rolePresetId}`);
+    if (!input.name.trim()) throw new Error('Name must not be empty');
+    return validateWorkdir(input.workdir);
+  }
+
+  /**
+   * `extra.worktree` is the agent's own checkout (created by the caller under the data dir); the
+   * runtime then uses it as the cwd while `workdir` keeps pointing at the source repository.
+   */
+  create(
+    input: CreateAgent,
+    extra: { id?: string; worktree?: { path: string; branch: string } | null } = {},
+  ): Agent {
+    const workdir = this.validateCreate(input);
     const preset = this.presetLookup(input.rolePresetId);
     if (!preset) throw new Error(`Unknown role preset ${input.rolePresetId}`);
-    const workdir = path.resolve(input.workdir);
-    if (!fs.existsSync(workdir) || !fs.statSync(workdir).isDirectory()) {
-      throw new Error(`Working directory does not exist: ${workdir}`);
-    }
     const now = Date.now();
     const settings = this.settings.get();
     const agent: Agent = AgentSchema.parse({
-      id: newId(),
+      id: extra.id ?? newId(),
       name: input.name.trim(),
       avatar: input.avatar ?? randomAvatar(),
       rolePresetId: preset.id,
@@ -91,7 +184,7 @@ export class AgentService {
       allowedTools: input.allowedTools ?? preset.allowedTools,
       permissionMode: input.permissionMode ?? preset.permissionMode,
       workdir,
-      worktree: null,
+      worktree: extra.worktree ?? null,
       sessionId: null,
       status: 'stopped',
       roomId: input.roomId ?? DEFAULT_ROOM_ID,
@@ -109,9 +202,13 @@ export class AgentService {
 
   update(id: string, patch: UpdateAgent): Agent {
     const current = this.mustGet(id);
-    if (patch.workdir) {
-      const workdir = path.resolve(patch.workdir);
-      if (!fs.existsSync(workdir)) throw new Error(`Working directory does not exist: ${workdir}`);
+    if (patch.name !== undefined && !patch.name.trim()) throw new Error('Name must not be empty');
+    if (patch.workdir !== undefined) {
+      const workdir = validateWorkdir(patch.workdir);
+      if (current.worktree && workdir !== current.workdir)
+        throw new Error(
+          'This agent works in its own git worktree; fire it and hire a new one to change the repository',
+        );
       patch = { ...patch, workdir };
     }
     const next = AgentSchema.parse({ ...current, ...patch, updatedAt: Date.now() });

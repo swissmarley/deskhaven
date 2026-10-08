@@ -18,8 +18,8 @@ first task, every panel of the UI, configuration, troubleshooting.
 
 ```bash
 git clone <repository URL> deskhaven && cd deskhaven
-corepack enable # once, if `pnpm --version` is not 10.x
-pnpm i          # Node >= 22 and pnpm 10; downloads the SDK's native claude binary (~230 MB)
+corepack enable # once, if `pnpm --version` is not 10.x (EACCES? see docs/GUIDE.md §1)
+pnpm i          # Node >= 22 and pnpm 10; downloads the SDK's native claude binary (~230 MB); no compiler needed
 pnpm dev        # server on http://127.0.0.1:8787, web UI on http://127.0.0.1:5173
 ```
 
@@ -27,7 +27,8 @@ Open http://127.0.0.1:5173. On first run the app picks an authentication mode (b
 sample repository under `~/.deskhaven/sample-repo`, and lets you hire your first agent.
 
 Other commands: `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, `pnpm start` (production
-server; set `DESKHAVEN_WEB_DIST=apps/web/dist` to serve the built UI from the same port).
+server; set `DESKHAVEN_WEB_DIST=apps/web/dist` to serve the built UI from the same port; relative paths
+are resolved from the repository root).
 
 ## Authentication: two modes
 
@@ -131,6 +132,11 @@ accessories; furniture comes from the CC0 Kenney Furniture Kit; licences in [ASS
 Everything lives under `~/.deskhaven/` (SQLite database, worktrees, the sample repo). Session
 transcripts are written by Claude Code itself under `~/.claude/projects/`. Nothing is sent anywhere except
 the Anthropic API calls your agents make. Logs redact key-like values.
+
+The server binds to `127.0.0.1`, and because that alone does not stop other websites (cross-site
+WebSockets, DNS rebinding, simple cross-site POSTs) it also checks `Host` and `Origin`, accepts only JSON
+writes, and requires a per-launch session token (an HttpOnly SameSite=Strict cookie for the web app).
+Details in [docs/GUIDE.md §11](docs/GUIDE.md#11-safety-and-cost).
 
 ## License
 

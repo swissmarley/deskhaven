@@ -94,7 +94,12 @@ export const CreateAgentSchema = AgentSchema.pick({
     budget: true,
     avatar: true,
   })
-  .extend({ useWorktree: z.boolean().default(false), roomId: z.string().optional() });
+  .extend({
+    /** Whitespace-only names are rejected; surrounding whitespace is trimmed. */
+    name: z.string().trim().min(1, 'Name must not be empty').max(80),
+    useWorktree: z.boolean().default(false),
+    roomId: z.string().optional(),
+  });
 export type CreateAgent = z.infer<typeof CreateAgentSchema>;
 
 export const UpdateAgentSchema = CreateAgentSchema.omit({ useWorktree: true })
@@ -137,7 +142,7 @@ export const TaskSchema = z.object({
 export type Task = z.infer<typeof TaskSchema>;
 
 export const CreateTaskSchema = z.object({
-  title: z.string().min(1),
+  title: z.string().trim().min(1, 'Title must not be empty'),
   prompt: z.string().min(1),
   assigneeAgentId: z.string().nullable().optional(),
   parentTaskId: z.string().nullable().optional(),
@@ -145,7 +150,7 @@ export const CreateTaskSchema = z.object({
 export type CreateTask = z.infer<typeof CreateTaskSchema>;
 
 export const UpdateTaskSchema = z.object({
-  title: z.string().min(1).optional(),
+  title: z.string().trim().min(1, 'Title must not be empty').optional(),
   prompt: z.string().min(1).optional(),
   status: TaskStatusSchema.optional(),
   assigneeAgentId: z.string().nullable().optional(),
@@ -196,12 +201,18 @@ export type Room = z.infer<typeof RoomSchema>;
 export const AuthModeSchema = z.enum(['API_KEY', 'CLAUDE_SUBSCRIPTION']);
 export type AuthMode = z.infer<typeof AuthModeSchema>;
 
+/**
+ * Upper bound for the permission timeout: 24 h. Node timers overflow above 2^31-1 ms (~24.8 days) and
+ * fire after ~1 ms, which would auto-deny every permission request.
+ */
+export const MAX_PERMISSION_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
 export const SettingsSchema = z.object({
   authMode: AuthModeSchema,
   subscriptionModeEnabled: z.boolean(),
   concurrencyCap: z.number().int().min(1).max(16),
   dailyCapUsd: z.number().nonnegative(),
-  permissionTimeoutMs: z.number().int().positive(),
+  permissionTimeoutMs: z.number().int().positive().max(MAX_PERMISSION_TIMEOUT_MS),
   /** Idle Claude Code processes are stopped (session kept for resume) after this many minutes; 0 = never. */
   idleTimeoutMinutes: z.number().int().min(0).max(1440).default(15),
   soundEnabled: z.boolean(),

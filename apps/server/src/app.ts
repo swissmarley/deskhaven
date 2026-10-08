@@ -8,6 +8,7 @@ import {
   defaultRoom,
   type RolePreset,
   type Room,
+  type Settings,
 } from '@deskhaven/shared';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
@@ -25,11 +26,12 @@ import {
   type KeyStore,
   MemoryKeyStore,
 } from './auth/index.js';
-import type { ServerConfig } from './config.js';
+import { type ServerConfig, webDistProblem } from './config.js';
 import { type Db, openDb } from './db/client.js';
 import { EventStore } from './events/store.js';
 import { registerRoutes } from './http/routes.js';
 import { registerSampleRoutes } from './http/sample.js';
+import { generateToken, registerSecurity, type Security } from './http/security.js';
 import { loggerOptions } from './logger.js';
 import { createManagerMcpServer } from './manager/tools.js';
 import { PresetService } from './presets/service.js';
@@ -47,7 +49,12 @@ export interface AppContext {
   settings: SettingsService;
   keyStore: KeyStore;
   auth: () => AuthProvider;
-  reloadAuth: () => void;
+  /** Provider for `settings` (bind constraints checked); throws instead of switching. */
+  buildAuth: (settings: Settings) => AuthProvider;
+  /** Makes `next` current once its key is loaded; idle agents pick it up on their next prompt. */
+  applyAuth: (next: AuthProvider) => Promise<void>;
+  /** Rebuilds the provider from the stored settings (after the keychain changed). */
+  reloadAuth: () => Promise<void>;
   events: EventStore;
   broker: PermissionBroker;
   agents: AgentService;
@@ -61,6 +68,7 @@ export interface AppContext {
   tasks: TaskService;
   models: () => { id: string; label: string }[];
   log: FastifyBaseLogger;
+  security: Security;
 }
 
 export const KNOWN_MODELS = [
@@ -73,6 +81,11 @@ export async function buildApp(
   config: ServerConfig,
 ): Promise<{ app: FastifyInstance; ctx: AppContext }> {
   const app = Fastify({ logger: loggerOptions(config.isProduction) });
+  // Before anything else: refuses a non-loopback bind without DESKHAVEN_ALLOW_REMOTE=1.
+  const security = registerSecurity(app, {
+    config,
+    token: config.sessionToken ?? generateToken(),
+  });
   const { db } = openDb(config.dbPath);
   const hub = new WsHub();
   const settings = new SettingsService(db);
@@ -116,16 +129,17 @@ export async function buildApp(
   enforceBind(auth);
   if (auth instanceof ApiKeyAuthProvider) await auth.prepare();
 
-  const reloadAuth = () => {
-    const next = createAuthProvider(settings.get(), {
-      env: baseEnv(),
-      keyStore,
-      bindHost: config.host,
-    });
+  const buildAuth = (s: Settings) => {
+    const next = createAuthProvider(s, { env: baseEnv(), keyStore, bindHost: config.host });
     enforceBind(next);
-    if (next instanceof ApiKeyAuthProvider) void next.prepare();
+    return next;
+  };
+  const applyAuth = async (next: AuthProvider) => {
+    // Load the key before publishing the provider, so the next agent start already sees it.
+    if (next instanceof ApiKeyAuthProvider) await next.prepare();
     auth = next;
   };
+  const reloadAuth = () => applyAuth(buildAuth(settings.get()));
 
   const events = new EventStore(db, hub);
   PermissionBroker.reconcileOnBoot(db);
@@ -168,7 +182,14 @@ export async function buildApp(
     runtimeDeps: {
       mcpServers: (agent) =>
         presetService.get(agent.rolePresetId)?.manager
-          ? { deskhaven: createManagerMcpServer({ agents, tasks, selfId: agent.id }) }
+          ? {
+              deskhaven: createManagerMcpServer({
+                agents,
+                tasks,
+                selfId: agent.id,
+                isManager: (a) => Boolean(presetService.get(a.rolePresetId)?.manager),
+              }),
+            }
           : undefined,
       auth: () => auth,
       events,
@@ -195,6 +216,8 @@ export async function buildApp(
     settings,
     keyStore,
     auth: () => auth,
+    buildAuth,
+    applyAuth,
     reloadAuth,
     events,
     broker,
@@ -209,6 +232,7 @@ export async function buildApp(
     tasks,
     models: () => KNOWN_MODELS,
     log: app.log,
+    security,
   };
 
   await app.register(websocket);
@@ -245,7 +269,9 @@ export async function buildApp(
     });
   });
 
-  if (config.webDist) {
+  const distProblem = config.webDist ? webDistProblem(config.webDist) : null;
+  if (distProblem) app.log.error({ webDist: config.webDist }, distProblem);
+  if (config.webDist && !distProblem) {
     await app.register(fastifyStatic, { root: path.resolve(config.webDist), wildcard: false });
     app.setNotFoundHandler((req, reply) => {
       const pathname = req.url.split('?')[0] ?? req.url;

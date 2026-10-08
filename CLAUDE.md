@@ -62,8 +62,16 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
 - `result.total_cost_usd` is an estimate and includes subagents; `result.usage` is main-loop only.
 - pnpm: this machine's corepack shim pointed at a missing pnpm; `corepack prepare pnpm@10.34.5 --activate`
   fixes it. `packageManager` is pinned in the root `package.json`.
-- pnpm 10 blocks lifecycle scripts; `better-sqlite3` and `esbuild` are allow-listed in
-  `pnpm.onlyBuiltDependencies`.
+- pnpm 10 blocks lifecycle scripts; only `esbuild` is allow-listed in `pnpm.onlyBuiltDependencies`.
+  `better-sqlite3` is in `ignoredBuiltDependencies` on purpose: it loads its prebuilt N-API binary
+  (linux/darwin/win32, x64/arm64, glibc+musl), and running its install script made node-gyp require
+  `make`/`g++` on Linux for nothing. Other platforms: `pnpm rebuild better-sqlite3` with a toolchain.
+- Every request passes `apps/server/src/http/security.ts`: Host allow-list, Origin/Referer on writes and
+  `/ws`, JSON-only writes, per-launch session token (cookie from `GET /api/session`). Server tests use
+  `test/helpers.ts` (`client(built)` adds the headers); `curl` needs `-H 'Host: 127.0.0.1:8787'`-style
+  loopback hosts plus `X-Deskhaven-Token` (set `DESKHAVEN_SESSION_TOKEN` for scripted runs).
+- Credentials are captured per process: when the auth provider changes, an idle runtime restarts its
+  process (same session id) before dispatching the next prompt.
 - Record real SDK traffic for fixtures with `DESKHAVEN_RECORD_SDK=/path/to/file.jsonl pnpm dev`; the
   normaliser test replays every `apps/server/test/fixtures/*.jsonl` file.
 - The sample repo (`examples/sample-repo`) is copied to `~/.deskhaven/sample-repo` by `POST /api/sample/init`;

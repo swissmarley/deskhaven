@@ -20,7 +20,21 @@ export function loggerOptions(isProduction: boolean): FastifyServerOptions['logg
   return {
     level: process.env.LOG_LEVEL ?? (isProduction ? 'info' : 'info'),
     redact: { paths: REDACT_PATHS, censor: '[redacted]' },
+    serializers: {
+      // The default request serializer logs the raw URL, which can carry `?token=` (remote login).
+      req: (req: { method?: string; url?: string; host?: string; ip?: string }) => ({
+        method: req.method,
+        url: redactUrl(req.url ?? ''),
+        host: req.host,
+        remoteAddress: req.ip,
+      }),
+    },
   };
+}
+
+/** Replaces the value of any `token` query parameter. */
+export function redactUrl(url: string): string {
+  return url.replace(/([?&]token=)[^&#]*/gi, '$1[redacted]');
 }
 
 /** Scrub anything that looks like an Anthropic key from free text before logging it. */

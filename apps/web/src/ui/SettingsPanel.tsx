@@ -1,4 +1,4 @@
-import type { AuthStatus, Settings } from '@deskhaven/shared';
+import { type AuthStatus, MAX_PERMISSION_TIMEOUT_MS, type Settings } from '@deskhaven/shared';
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
@@ -169,6 +169,7 @@ export function SettingsPanel(): JSX.Element {
           <input
             type="number"
             min={1}
+            max={MAX_PERMISSION_TIMEOUT_MS / 60000}
             value={Math.round(settings.permissionTimeoutMs / 60000)}
             disabled={busy}
             onChange={(e) => void update({ permissionTimeoutMs: Number(e.target.value) * 60000 })}
