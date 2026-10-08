@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import net from 'node:net';
+import os from 'node:os';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ServerConfig } from '../config.js';
 
@@ -74,15 +75,41 @@ export function originHost(value: string): string | null {
   return `${url.hostname.toLowerCase()}:${port}`;
 }
 
+export type Interfaces = ReturnType<typeof os.networkInterfaces>;
+
+const isWildcard = (host: string) => host === '0.0.0.0' || host === '::';
+
+/**
+ * The machine addresses a non-loopback bind is reachable on, as Host names (IPv6 bracketed):
+ * the bind address itself, or for a wildcard bind every external interface address (IPv4 for
+ * 0.0.0.0, IPv4 and IPv6 for ::; link-local IPv6 is skipped since it needs a zone id).
+ */
+export function reachableAddresses(
+  host: string,
+  interfaces: Interfaces = os.networkInterfaces(),
+): string[] {
+  const bind = host.toLowerCase();
+  if (isLoopbackAddress(bind)) return [];
+  if (!isWildcard(bind)) return [net.isIPv6(bind) ? `[${bind}]` : bind];
+  const out: string[] = [];
+  for (const list of Object.values(interfaces)) {
+    for (const i of list ?? []) {
+      if (i.internal) continue;
+      if (i.family === 'IPv4') out.push(i.address);
+      else if (bind === '::' && !i.address.toLowerCase().startsWith('fe80'))
+        out.push(`[${i.address}]`);
+    }
+  }
+  return [...new Set(out)];
+}
+
 /** Every `name:port` this server answers to. */
 export function allowedHosts(
   config: Pick<ServerConfig, 'host' | 'port' | 'isProduction' | 'devWebPort' | 'allowedHosts'>,
+  interfaces?: Interfaces,
 ): Set<string> {
   const ports = [config.port, ...(config.isProduction ? [] : [config.devWebPort])];
-  const names = [...LOOPBACK_NAMES];
-  const bind = config.host.toLowerCase();
-  if (bind !== '0.0.0.0' && bind !== '::' && !isLoopbackAddress(bind))
-    names.push(net.isIPv6(bind) ? `[${bind}]` : bind);
+  const names = [...LOOPBACK_NAMES, ...reachableAddresses(config.host, interfaces)];
   const out = new Set<string>();
   for (const n of names) for (const p of ports) out.add(`${n}:${p}`);
   // Entries without a port ("myhost.lan") match the same ports as the loopback names.
@@ -144,6 +171,8 @@ function fromBrowser(req: FastifyRequest): boolean {
 export interface SecurityOptions {
   config: ServerConfig;
   token: string;
+  /** Test seam: replaces os.networkInterfaces(). */
+  interfaces?: Interfaces;
 }
 
 export interface Security {
@@ -154,6 +183,21 @@ export interface Security {
   hosts: Set<string>;
   hostAllowed(host: string | undefined): boolean;
   originAllowed(origin: string): boolean;
+  /** Base URLs (no token) a remote browser can use; empty on loopback. Never 0.0.0.0 or ::. */
+  loginUrls: string[];
+}
+
+/** `http://name:port/` for every allowed non-loopback host on the server port. */
+export function loginUrls(hosts: Set<string>, port: number): string[] {
+  const out: string[] = [];
+  for (const h of hosts) {
+    const i = h.lastIndexOf(':');
+    const name = h.slice(0, i);
+    if (Number(h.slice(i + 1)) !== port) continue;
+    if (isLoopbackAddress(name) || isWildcard(name.replace(/^\[|\]$/g, ''))) continue;
+    out.push(`http://${h}/`);
+  }
+  return out;
 }
 
 /**
@@ -173,7 +217,13 @@ export function checkBindPolicy(config: Pick<ServerConfig, 'host' | 'allowRemote
 export function registerSecurity(app: FastifyInstance, opts: SecurityOptions): Security {
   const { config, token } = opts;
   const remote = checkBindPolicy(config);
-  const hosts = allowedHosts(config);
+  const hosts = allowedHosts(config, opts.interfaces);
+  const urls = remote ? loginUrls(hosts, config.port) : [];
+  if (remote && urls.length === 0)
+    throw new Error(
+      `Listening on ${config.host} but no address to reach it was found (no external network ` +
+        'interface). Set DESKHAVEN_ALLOWED_HOSTS to the name or IP clients will use, or bind to it directly.',
+    );
   const cookieName = sessionCookieName(config.port);
   const hasToken = (candidates: string[]) => candidates.some((t) => sameToken(t, token));
   const sec: Security = {
@@ -190,6 +240,7 @@ export function registerSecurity(app: FastifyInstance, opts: SecurityOptions): S
       const h = originHost(origin);
       return h !== null && hosts.has(h);
     },
+    loginUrls: urls,
   };
   if (remote)
     app.log.warn(

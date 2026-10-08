@@ -266,7 +266,7 @@ accepted for every variable below.
 | `DESKHAVEN_PORT` | `8787` | Server port. |
 | `DESKHAVEN_HOST` | `127.0.0.1` | Bind address. A non-loopback address (e.g. `0.0.0.0`) is refused unless `DESKHAVEN_ALLOW_REMOTE=1`; subscription mode always refuses it. See section 11. |
 | `DESKHAVEN_ALLOW_REMOTE` | unset | `1` accepts a non-loopback `DESKHAVEN_HOST` (logs a warning; the session token is required as always). |
-| `DESKHAVEN_ALLOWED_HOSTS` | unset | Comma-separated extra `Host` names the server answers to (`box.lan` or `box.lan:8787`), besides `localhost`, `127.0.0.1` and `[::1]`. |
+| `DESKHAVEN_ALLOWED_HOSTS` | unset | Comma-separated extra `Host` names the server answers to (`box.lan` or `box.lan:8787`), besides `localhost`, `127.0.0.1`, `[::1]` and, on a remote bind, the machine's interface addresses. |
 | `DESKHAVEN_SESSION_TOKEN` | random per launch | Fixes the session token instead of generating one at start (for scripts; keep it secret). Must be at least 32 characters, or the server exits with an error; `openssl rand -base64 32` makes one. |
 | `DESKHAVEN_DEV_WEB_PORT` | `5173` | Port of the Vite dev server whose origin is accepted outside production. |
 | `DESKHAVEN_DATA_DIR` | `~/.deskhaven` | Data directory. An existing `~/.agenthotel` is reused until `~/.deskhaven` exists. |
@@ -352,8 +352,11 @@ Every request now passes these checks, in order:
    `/api/health` stays public.
 
 **Remote access** stays off by default. A non-loopback `DESKHAVEN_HOST` (such as `0.0.0.0`) refuses to
-start unless `DESKHAVEN_ALLOW_REMOTE=1` is set; then the server logs a loud warning, prints a login URL
-with the token on the terminal, and hands out the cookie only to a browser that presents that token.
+start unless `DESKHAVEN_ALLOW_REMOTE=1` is set; then the server logs a loud warning, prints one login URL
+per reachable address on the terminal (for `0.0.0.0` every external network interface, plus each
+`DESKHAVEN_ALLOWED_HOSTS` name; never `0.0.0.0` itself), and hands out the cookie only to a browser that
+presents the token. Those interface addresses are accepted as `Host` automatically; if the machine has no
+external interface the server exits and asks for `DESKHAVEN_ALLOWED_HOSTS`.
 Anyone with the token controls agents that can run commands on your machine; there is no TLS, so use it
 only on a network you trust (or behind an SSH tunnel, which needs none of this).
 

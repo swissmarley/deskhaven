@@ -1,5 +1,7 @@
+import Fastify from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type WebSocket from 'ws';
+import { loadConfig } from '../src/config.js';
 import {
   allowedHosts,
   checkBindPolicy,
@@ -7,6 +9,8 @@ import {
   LEGACY_SESSION_COOKIE,
   normalizeHost,
   originHost,
+  reachableAddresses,
+  registerSecurity,
   sessionCookieName,
 } from '../src/http/security.js';
 import { type Built, client, TEST_HOST, TEST_ORIGIN, testApp } from './helpers.js';
@@ -382,5 +386,74 @@ describe('session cookie per port', () => {
         })
       ).statusCode,
     ).toBe(200);
+  });
+});
+
+describe('remote login URLs', () => {
+  const lan = {
+    lo: [{ address: '127.0.0.1', family: 'IPv4', internal: true }],
+    eth0: [
+      { address: '192.168.1.5', family: 'IPv4', internal: false },
+      { address: 'fe80::1', family: 'IPv6', internal: false },
+      { address: '2001:db8::5', family: 'IPv6', internal: false },
+    ],
+  } as unknown as ReturnType<typeof import('node:os').networkInterfaces>;
+
+  const remoteSecurity = (env: Record<string, string>, interfaces = lan) =>
+    registerSecurity(Fastify(), {
+      config: loadConfig({ DESKHAVEN_ALLOW_REMOTE: '1', NODE_ENV: 'production', ...env }),
+      token: 't'.repeat(43),
+      interfaces,
+    });
+
+  it('lists interface addresses for a wildcard bind, never 0.0.0.0', () => {
+    expect(reachableAddresses('0.0.0.0', lan)).toEqual(['192.168.1.5']);
+    expect(reachableAddresses('::', lan)).toEqual(['192.168.1.5', '[2001:db8::5]']);
+    expect(reachableAddresses('10.0.0.7', lan)).toEqual(['10.0.0.7']);
+    expect(reachableAddresses('127.0.0.1', lan)).toEqual([]);
+
+    const sec = remoteSecurity({ DESKHAVEN_HOST: '0.0.0.0' });
+    expect(sec.loginUrls).toEqual(['http://192.168.1.5:8787/']);
+    expect(sec.hostAllowed('192.168.1.5:8787')).toBe(true);
+    expect(sec.hostAllowed('0.0.0.0:8787')).toBe(false);
+    expect(sec.loginUrls.join()).not.toMatch(/0\.0\.0\.0|\[::\]/);
+  });
+
+  it('adds DESKHAVEN_ALLOWED_HOSTS names to the login URLs', () => {
+    const sec = remoteSecurity({ DESKHAVEN_HOST: '0.0.0.0', DESKHAVEN_ALLOWED_HOSTS: 'box.lan' });
+    expect(sec.loginUrls.sort()).toEqual(['http://192.168.1.5:8787/', 'http://box.lan:8787/']);
+  });
+
+  it('refuses to start when nothing can reach a wildcard bind', () => {
+    const none = { lo: lan.lo } as typeof lan;
+    expect(() => remoteSecurity({ DESKHAVEN_HOST: '0.0.0.0' }, none)).toThrow(
+      /DESKHAVEN_ALLOWED_HOSTS/,
+    );
+    expect(
+      remoteSecurity({ DESKHAVEN_HOST: '0.0.0.0', DESKHAVEN_ALLOWED_HOSTS: 'box.lan' }, none)
+        .loginUrls,
+    ).toEqual(['http://box.lan:8787/']);
+  });
+
+  it('accepts the printed LAN address end to end (real interfaces)', async () => {
+    const remote = await testApp({
+      DESKHAVEN_HOST: '0.0.0.0',
+      DESKHAVEN_ALLOW_REMOTE: '1',
+      DESKHAVEN_ALLOWED_HOSTS: 'fallback.lan',
+    });
+    try {
+      for (const url of remote.ctx.security.loginUrls) {
+        expect(url).not.toMatch(/0\.0\.0\.0/);
+        const host = new URL(url).host;
+        const res = await client(remote)({
+          method: 'GET',
+          url: `/api/session?token=${remote.ctx.security.token}`,
+          headers: { host, cookie: null },
+        });
+        expect(res.statusCode, host).toBe(200);
+      }
+    } finally {
+      await remote.app.close();
+    }
   });
 });
