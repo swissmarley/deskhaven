@@ -192,7 +192,7 @@ interface AuthProvider {
 - No login UI. The user runs `claude login` in their own terminal (or `/login` inside Claude Code).
 - Probe = run the SDK's **bundled** `claude` binary with `auth status`, which prints JSON (`loggedIn`, `authMethod`, `subscriptionType`, `apiProvider`, `email`). Verified on this machine with CLI 2.1.280 (user is logged in via `claude.ai`, plan `max`). We read stdout only; we never open `~/.claude/.credentials.json` or the keychain entry Claude Code uses. Fallback probe: the `apiKeySource`/`accountInfo()` of a real session.
 - `childEnv` = `{ ...base }` with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` **deleted** (tested). At runtime the `system/init` message's `apiKeySource` must be `'none'`; if it is anything else we stop the agent and show an error, because an API key leaked into the env and would be billed.
-- Server binds `127.0.0.1` only and refuses to start if configured otherwise.
+- Server binds `127.0.0.1` only and refuses to start if configured otherwise (in any mode, a non-loopback bind additionally needs `DESKHAVEN_ALLOW_REMOTE=1`; see §12).
 - Persistent HUD notice: "Usage counts against your Claude plan"; default concurrency cap **2** (configurable).
 - 401 (`authentication_failed`, `oauth_org_not_allowed`), 402-ish (`billing_error`) and 429 (`rate_limit`, `rate_limit_event.status === 'rejected'`) become `error`/`rate_limit` events → sweat/cooldown emotes + a banner with the reset time.
 
@@ -448,3 +448,24 @@ multiple rooms in the UI, WebGPU, SSAO, Mixamo or any non-CC0 source.
 | 8 | StrictMode double mount leaks WebGL contexts | medium / medium | `destroy()` disposes everything and forces context loss; `mountGen` guard reused |
 | 9 | Hot reload of the Three world leaves a stale context | certain / low | Reload the page (same rule as today) |
 | 10 | Licence mistakes | low / high | CC0 only, licence texts committed, one ASSETS.md row per file |
+
+## 12. Network security (2026-10-08)
+
+Binding to `127.0.0.1` was the only protection, and it was not enough: a page on any site could open
+`ws://127.0.0.1:8787/ws` (no CORS for WebSockets), a DNS-rebinding domain could use the whole API as
+"same origin", and `text/plain` cross-site POSTs reached mutating routes. `apps/server/src/http/security.ts`
+now runs one `onRequest` hook before every route, WebSocket upgrades included:
+
+| Check | Rule | Failure |
+|---|---|---|
+| Host | `localhost`, `127.0.0.1`, `[::1]` on the server port; the Vite port outside production; `DESKHAVEN_ALLOWED_HOSTS` | 403 `forbidden_host` |
+| Origin | On `/ws` and every non-GET/HEAD/OPTIONS request, `Origin` (else `Referer`) must name an allowed host; a browser request with neither is refused; any `/api` or `/ws` request with `Sec-Fetch-Site: cross-site` is refused | 403 |
+| Content type | Writes must be `application/json` (an empty JSON body is accepted for bodiless actions) | 415 |
+| Session token | 32 random bytes per launch (or `DESKHAVEN_SESSION_TOKEN`); cookie `deskhaven_session` (HttpOnly, SameSite=Strict), `X-Deskhaven-Token` or `Authorization: Bearer`; required on `/api/*` except `/api/health` and `/api/session`, and on `/ws` | 401 |
+
+`GET /api/session` sets the cookie. On loopback any same-origin page may ask (cross-site callers fail the
+checks above and could not read or replay the cookie anyway); on a remote bind it also needs the token,
+which the server prints once as a login URL on the terminal (not through the logger, whose request
+serializer redacts `?token=`). Non-loopback binds refuse to start without `DESKHAVEN_ALLOW_REMOTE=1`.
+The web client awaits the session before API calls and WebSocket connects and refreshes it after a 401
+(a restarted server has a new token).

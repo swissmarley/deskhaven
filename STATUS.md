@@ -2,6 +2,12 @@
 
 One 3-line note per milestone, newest first.
 
+## Fixes — security and bugs found in local testing (2026-10-08)
+
+1. Network gate (`http/security.ts`): Host allow-list against DNS rebinding, Origin/Referer on writes and `/ws` against CSRF and cross-site WebSocket hijacking, JSON-only writes, per-launch session token (HttpOnly SameSite=Strict cookie), non-loopback binds need `DESKHAVEN_ALLOW_REMOTE=1`. Git worktrees are real now (created on hire, used as cwd, removal refuses dirty trees). Stop removes waiting agents from the desk queue and drops their prompts; auth switches are validated before they are saved; replay honours its time range; new credentials reach idle agents; permission timeout capped at 24 h; relative `DESKHAVEN_WEB_DIST` resolves from the repo root; avatars are random again; workdir/name validation; symlink-aware edit guard; managers detected by preset flag; API key mode never falls back to other credentials.
+2. `better-sqlite3` loads its prebuilt binary without node-gyp (no `make`/`g++` on Linux); verified with a clean install while `make`/`g++` were unavailable. Guide gained a security section, the user-local pnpm fallback and the real worktree behaviour.
+3. Next: a live run against a real repository with a worktree engineer to confirm the restart-on-new-key path end to end.
+
 ## G4 — polish, 3D avatar previews, stripped model, GIF, docs (2026-10-03)
 
 1. Offscreen 3D avatar previews (`game/preview.ts` → `three/preview.ts`: one shared alpha renderer, the cached rig re-dressed per call, 64-entry LRU, `null` on failure) now feed the HR desk picker, the agents list, the inspector and the board cards, with the pixel sprite as fallback and whenever Pixi is selected; camera zoom/fit ease over 180 ms (mount snaps); idle avatars play seeded flourishes (look-around, stretch, weight shift); the door leaf swings open while someone is within a tile (door tiles are recomputed when a piece moves — found stale in the browser and fixed); hair/accessory/mug meshes are merged per material (worst case 15 → 8 meshes per character, 85 → 62 for eight); the committed character is the stripped GLB (3.6 → 2.2 MB via `scripts/strip-character.mjs`: six clips, six body meshes, quantised). 30 new tests (camera easing, flourishes, preview maths, door). The app is renamed Deskhaven (user-facing only; identifiers unchanged).
