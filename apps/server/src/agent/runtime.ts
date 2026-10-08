@@ -187,6 +187,11 @@ export class AgentRuntime {
     else this.setStatus('idle');
   }
 
+  /** The manager queued this agent for a desk without a prompt (start() at the concurrency cap). */
+  markWaiting(): void {
+    if (!this.session) this.setStatus('waiting');
+  }
+
   /** Queue without starting (the manager uses this when the concurrency cap is reached). */
   enqueueOnly(text: string, taskId: string | null): void {
     this.emit({ ...this.baseEvent(), type: 'message_sent', text, ...(taskId ? { taskId } : {}) });
@@ -220,9 +225,14 @@ export class AgentRuntime {
 
   /** End the input stream, interrupt, and abort after a grace period. Keeps `sessionId` for resume. */
   async stop(): Promise<void> {
+    // Drop queued prompts first: nothing may be dispatched while the process winds down, and an agent
+    // stopped while waiting for a desk must not wake up later and run them.
+    this.dropQueue('The agent was stopped before this task started.');
     const s = this.session;
     if (!s) {
+      this.currentTaskId = null;
       this.setStatus('stopped');
+      this.deps.onStopped(this.agent.id);
       return;
     }
     this.stopping = true;
@@ -243,6 +253,21 @@ export class AgentRuntime {
   }
 
   // ----- internals -------------------------------------------------------------------------------
+
+  /** Empties the prompt queue; queued task prompts are reported so the board can flag them. */
+  private dropQueue(message: string): void {
+    const dropped = this.queue.splice(0);
+    for (const q of dropped) {
+      if (!q.taskId) continue;
+      this.emit({
+        ...this.baseEvent(),
+        taskId: q.taskId,
+        type: 'notification',
+        kind: 'cancelled',
+        message,
+      });
+    }
+  }
 
   private async run(): Promise<void> {
     const s = this.session;

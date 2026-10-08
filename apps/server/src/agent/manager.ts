@@ -87,8 +87,18 @@ export class AgentManager {
   }
 
   private onStopped(agentId: string): void {
-    this.waiting.splice(0, this.waiting.length, ...this.waiting.filter((id) => id !== agentId));
+    this.unqueue(agentId);
     this.startWaiting();
+  }
+
+  /** Take an agent out of the line for a desk. */
+  private unqueue(agentId: string): void {
+    this.waiting.splice(0, this.waiting.length, ...this.waiting.filter((id) => id !== agentId));
+  }
+
+  /** Agents waiting for a desk, in order. */
+  waitingIds(): string[] {
+    return [...this.waiting];
   }
 
   private canStart(): boolean {
@@ -115,7 +125,7 @@ export class AgentManager {
     if (rt.isRunning()) return rt.getStatus();
     if (!this.canStart()) {
       if (!this.waiting.includes(agentId)) this.waiting.push(agentId);
-      this.onStatus(agentId, 'waiting', null);
+      rt.markWaiting();
       return 'waiting';
     }
     rt.start();
@@ -143,6 +153,8 @@ export class AgentManager {
   }
 
   async stop(agentId: string): Promise<void> {
+    // Leave the desk queue before anything async: a desk freeing up mid-stop must not start it.
+    this.unqueue(agentId);
     const rt = this.runtimes.get(agentId);
     if (!rt) {
       this.deps.agents.patch(agentId, (a) => ({ ...a, status: 'stopped', currentTaskId: null }));

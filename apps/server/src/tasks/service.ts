@@ -235,6 +235,17 @@ export class TaskService {
       case 'error':
         if (e.kind === 'auth' || e.kind === 'billing') this.setStatus(task, 'needs_input');
         break;
+      case 'notification':
+        // A queued task prompt was dropped (agent stopped): keep the card from being re-dispatched.
+        if (e.kind === 'cancelled' && task.status === 'assigned') {
+          this.write({
+            ...task,
+            status: 'needs_input',
+            resultSummary: e.message,
+            updatedAt: Date.now(),
+          });
+        }
+        break;
       default:
         break;
     }
