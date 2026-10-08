@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # Downloads the Agent SDK's native claude binary (~230 MB) and builds better-sqlite3.
+      # Downloads the Agent SDK's native claude binary (~230 MB); better-sqlite3 uses its prebuilt binary.
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
