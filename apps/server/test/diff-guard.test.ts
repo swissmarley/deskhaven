@@ -33,6 +33,15 @@ describe('workdir guard', () => {
     expect(isInside(linked, path.join(linked, 'escape', 'k'))).toBe(false);
   });
 
+  it('treats folders whose names start with ".." as ordinary folders', () => {
+    fs.mkdirSync(path.join(workdir, '..foo'));
+    expect(isInside(workdir, path.join(workdir, '..foo', 'a.ts'))).toBe(true);
+    expect(isInside(workdir, path.join(workdir, '...', 'b.ts'))).toBe(true);
+    expect(isInside(workdir, path.join(workdir, '..bar'))).toBe(true);
+    expect(isInside(workdir, path.join(base, '..foo'))).toBe(false);
+    expect(isInside(workdir, base)).toBe(false);
+  });
+
   it('realpathLoose keeps the missing tail', () => {
     expect(realpathLoose(path.join(workdir, 'escape', 'a', 'b'))).toBe(
       path.join(outside, 'a', 'b'),

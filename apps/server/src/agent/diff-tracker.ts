@@ -121,5 +121,7 @@ export function isInside(root: string, target: string): boolean {
   const r = realpathLoose(root);
   const t = realpathLoose(target);
   const rel = path.relative(r, t);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  // Compare whole segments: a folder literally named "..foo" inside the root is inside.
+  const escapes = rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+  return !escapes;
 }
