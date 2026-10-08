@@ -75,7 +75,8 @@ export class WorktreeService {
       throw new Error(`${workdir} is not a git repository; worktrees need git`);
     const repoDir = await this.toplevel(workdir);
     const rel = path.relative(repoDir, fs.realpathSync(workdir));
-    const subdir = rel && !rel.startsWith('..') ? rel.split(path.sep).join('/') : undefined;
+    const outside = rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+    const subdir = rel && !outside ? rel.split(path.sep).join('/') : undefined;
     const slug = `${slugify(agentName)}-${agentId.slice(0, 6)}`;
     const branch = `deskhaven/${slug}`;
     const target = path.join(this.root(), slug);

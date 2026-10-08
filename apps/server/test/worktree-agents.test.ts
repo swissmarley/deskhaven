@@ -121,6 +121,20 @@ describe('hiring a worktree agent for a subfolder', () => {
     expect(fs.existsSync(agent.worktree.path)).toBe(false);
   });
 
+  it('keeps a subfolder whose name starts with ".."', async () => {
+    const repo = tmpRepo();
+    fs.mkdirSync(path.join(repo, '..odd'));
+    fs.writeFileSync(path.join(repo, '..odd', 'x.txt'), 'x\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'odd'], {
+      cwd: repo,
+    });
+    const agent = (await hire(path.join(repo, '..odd'), 'Odd')).json();
+    expect(agent.worktree.subdir).toBe('..odd');
+    expect(fs.existsSync(path.join(agentCwd(agent), 'x.txt'))).toBe(true);
+    await req({ method: 'DELETE', url: `/api/agents/${agent.id}?force=true` });
+  });
+
   it('records no subdir when hired at the repository root', async () => {
     const repo = tmpRepo();
     const agent = (await hire(repo, 'Root')).json();
