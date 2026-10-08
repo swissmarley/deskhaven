@@ -146,13 +146,20 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
         error: err instanceof Error ? err.message : String(err),
         worktree: agent.worktree,
       });
-    // Refuse before stopping anything: firing an agent must not throw away uncommitted work.
+    // Refuse before stopping anything: firing an agent must not throw away uncommitted work, and a
+    // check that cannot run (source repository moved or deleted) counts as "might be dirty".
     if (agent.worktree && !q.force) {
-      const dirty = await ctx.worktrees.isDirty(agent.worktree.path).catch(() => false);
-      if (dirty)
+      const state = await ctx.worktrees.state(agent.workdir, agent.worktree);
+      if (state.kind === 'dirty')
         return conflict(
           new Error(
             `worktree ${agent.worktree.path} has uncommitted changes; commit them or force removal`,
+          ),
+        );
+      if (state.kind === 'unknown')
+        return conflict(
+          new Error(
+            `cannot check worktree ${agent.worktree.path} for uncommitted changes (${state.reason}); force removal to delete the folder anyway`,
           ),
         );
     }

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type Built, client, testApp } from './helpers.js';
 
 function tmpRepo(): string {
@@ -96,5 +96,84 @@ describe('hiring with a git worktree', () => {
     });
     expect(res.statusCode).toBe(400);
     await req({ method: 'DELETE', url: `/api/agents/${agent.id}?force=true` });
+  });
+});
+
+describe('firing a worktree agent whose source repository is gone', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const scenario = async (name: string, lose: (repo: string) => string | null) => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, name)).json();
+    expect(agent.worktree).toBeTruthy();
+    const movedTo = lose(repo);
+    const remove = vi.spyOn(built.ctx.manager, 'remove');
+    return { agent, movedTo, remove };
+  };
+
+  for (const [label, lose] of [
+    [
+      'deleted',
+      (repo: string) => {
+        fs.rmSync(repo, { recursive: true, force: true });
+        return null;
+      },
+    ],
+    [
+      'moved',
+      (repo: string) => {
+        const to = `${repo}-moved`;
+        fs.renameSync(repo, to);
+        return to;
+      },
+    ],
+  ] as const) {
+    it(`${label}: refuses without force (state unknown) and does not stop the agent`, async () => {
+      const { agent, remove } = await scenario(`Gone ${label}`, lose);
+      const res = await req({ method: 'DELETE', url: `/api/agents/${agent.id}` });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toMatch(/cannot check worktree .* moved or deleted.*force/);
+      expect(res.json().error).not.toMatch(/ENOENT/);
+      expect(remove).not.toHaveBeenCalled();
+      expect((await req({ method: 'GET', url: `/api/agents/${agent.id}` })).statusCode).toBe(200);
+      expect(fs.existsSync(agent.worktree.path)).toBe(true);
+      await req({ method: 'DELETE', url: `/api/agents/${agent.id}?force=true` });
+    });
+
+    it(`${label}: force deletes the worktree folder and the agent`, async () => {
+      const { agent, movedTo } = await scenario(`Force ${label}`, lose);
+      const res = await req({ method: 'DELETE', url: `/api/agents/${agent.id}?force=true` });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(fs.existsSync(agent.worktree.path)).toBe(false);
+      expect((await req({ method: 'GET', url: `/api/agents/${agent.id}` })).statusCode).toBe(404);
+      if (movedTo) {
+        // The moved repository's stale entry goes away with a prune.
+        execFileSync('git', ['worktree', 'prune'], { cwd: movedTo });
+        const list = execFileSync('git', ['worktree', 'list'], { cwd: movedTo }).toString();
+        expect(list).not.toContain(agent.worktree.path);
+      }
+    });
+  }
+
+  it('fires without force when the worktree folder itself is already gone', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Vanished')).json();
+    fs.rmSync(agent.worktree.path, { recursive: true, force: true });
+    const res = await req({ method: 'DELETE', url: `/api/agents/${agent.id}` });
+    expect(res.statusCode).toBe(200);
+    const list = execFileSync('git', ['worktree', 'list'], { cwd: repo }).toString();
+    expect(list).not.toContain(agent.worktree.path);
+  });
+
+  it('WorktreeService.state reports unknown instead of clean when git cannot run', async () => {
+    const repo = tmpRepo();
+    const wt = await built.ctx.worktrees.create(repo, 'abcdef999999', 'State');
+    expect(await built.ctx.worktrees.state(repo, wt)).toEqual({ kind: 'clean' });
+    fs.rmSync(repo, { recursive: true, force: true });
+    const state = await built.ctx.worktrees.state(repo, wt);
+    expect(state.kind).toBe('unknown');
+    await expect(built.ctx.worktrees.remove(repo, wt)).rejects.toThrow(/cannot check/);
+    await built.ctx.worktrees.remove(repo, wt, true);
+    expect(fs.existsSync(wt.path)).toBe(false);
   });
 });

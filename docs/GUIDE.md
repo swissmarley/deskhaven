@@ -228,7 +228,9 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
    the same repository. Hiring fails with a clear error if the folder is not a git repository. Uncommitted
    changes in your checkout are *not* copied into the worktree (the Feed shows a warning when there are
    some). **Fire** removes the worktree folder but keeps the branch; if the worktree has uncommitted
-   changes, firing is refused and the app asks before forcing it. A worktree agent's repository cannot be
+   changes, firing is refused and the app asks before forcing it. If you moved or deleted the source
+   repository, Deskhaven cannot check the worktree, so firing is refused the same way; forcing it deletes
+   the worktree folder directly (run `git worktree prune` in a moved repository to drop its stale entry). A worktree agent's repository cannot be
    changed afterwards: fire it and hire a new one.
 3. Choose the role. Start with **Reviewer** or **Architect** (read-only) to see how it behaves before you
    let an **Engineer** edit.
