@@ -18,6 +18,14 @@ async function main(): Promise<void> {
     },
     'Deskhaven server ready',
   );
+  if (ctx.security.remote && !config.sessionToken) {
+    // Remote binds cannot hand the session cookie to whoever asks, so the owner gets a login URL
+    // (valid for this launch) on the terminal. Written to stderr directly, never through the logger.
+    const host = config.allowedHosts[0] ?? config.host;
+    process.stderr.write(
+      `\nOpen Deskhaven with this login URL (valid until restart; keep it private):\n  http://${host.includes(':') ? host : `${host}:${config.port}`}/?token=${encodeURIComponent(ctx.security.token)}\n\n`,
+    );
+  }
 
   let closing = false;
   const shutdown = async (): Promise<void> => {

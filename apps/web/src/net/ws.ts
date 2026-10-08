@@ -1,4 +1,5 @@
 import { type ClientMessage, type ServerMessage, ServerMessageSchema } from '@deskhaven/shared';
+import { ensureSession, invalidateSession } from './session.js';
 
 export type ConnectionState = 'connecting' | 'open' | 'closed';
 
@@ -49,6 +50,23 @@ export class WsClient {
 
   private open(): void {
     this.opts.onState('connecting');
+    // The upgrade carries the session cookie; make sure it is set (a restart mints a new one).
+    ensureSession().then(
+      () => this.openSocket(),
+      () => this.scheduleReconnect(),
+    );
+  }
+
+  private scheduleReconnect(): void {
+    this.opts.onState('closed');
+    if (this.closed) return;
+    invalidateSession();
+    const delay = Math.min(MAX_BACKOFF_MS, 500 * 2 ** this.attempt++);
+    this.reconnectTimer = window.setTimeout(() => this.open(), delay);
+  }
+
+  private openSocket(): void {
+    if (this.closed) return;
     const socket = new WebSocket(this.opts.url);
     this.socket = socket;
     socket.onopen = () => {
@@ -81,10 +99,7 @@ export class WsClient {
     socket.onclose = () => {
       this.clearTimers();
       if (this.socket === socket) this.socket = null;
-      this.opts.onState('closed');
-      if (this.closed) return;
-      const delay = Math.min(MAX_BACKOFF_MS, 500 * 2 ** this.attempt++);
-      this.reconnectTimer = window.setTimeout(() => this.open(), delay);
+      this.scheduleReconnect();
     };
     socket.onerror = () => {
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)

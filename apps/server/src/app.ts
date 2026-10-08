@@ -30,6 +30,7 @@ import { type Db, openDb } from './db/client.js';
 import { EventStore } from './events/store.js';
 import { registerRoutes } from './http/routes.js';
 import { registerSampleRoutes } from './http/sample.js';
+import { generateToken, registerSecurity, type Security } from './http/security.js';
 import { loggerOptions } from './logger.js';
 import { createManagerMcpServer } from './manager/tools.js';
 import { PresetService } from './presets/service.js';
@@ -61,6 +62,7 @@ export interface AppContext {
   tasks: TaskService;
   models: () => { id: string; label: string }[];
   log: FastifyBaseLogger;
+  security: Security;
 }
 
 export const KNOWN_MODELS = [
@@ -73,6 +75,11 @@ export async function buildApp(
   config: ServerConfig,
 ): Promise<{ app: FastifyInstance; ctx: AppContext }> {
   const app = Fastify({ logger: loggerOptions(config.isProduction) });
+  // Before anything else: refuses a non-loopback bind without DESKHAVEN_ALLOW_REMOTE=1.
+  const security = registerSecurity(app, {
+    config,
+    token: config.sessionToken ?? generateToken(),
+  });
   const { db } = openDb(config.dbPath);
   const hub = new WsHub();
   const settings = new SettingsService(db);
@@ -209,6 +216,7 @@ export async function buildApp(
     tasks,
     models: () => KNOWN_MODELS,
     log: app.log,
+    security,
   };
 
   await app.register(websocket);

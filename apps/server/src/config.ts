@@ -11,6 +11,14 @@ export interface ServerConfig {
   isProduction: boolean;
   keyStore: 'keyring' | 'memory';
   probeOnBoot: boolean;
+  /** Extra Host values accepted besides loopback (DESKHAVEN_ALLOWED_HOSTS, comma-separated). */
+  allowedHosts: string[];
+  /** Explicit opt-in for binding to a non-loopback address (DESKHAVEN_ALLOW_REMOTE=1). */
+  allowRemote: boolean;
+  /** Port of the Vite dev server whose origin is accepted outside production. */
+  devWebPort: number;
+  /** Fixed session token (DESKHAVEN_SESSION_TOKEN); a random one is generated per launch otherwise. */
+  sessionToken: string | null;
 }
 
 /** Legacy prefix from before the rename (AgentHotel → Deskhaven, 2026-10-03); still honoured. */
@@ -48,6 +56,7 @@ export function defaultDbPath(
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const dataDir = envVar(env, 'DATA_DIR') ?? defaultDataDir();
   const port = Number.parseInt(envVar(env, 'PORT') ?? '8787', 10);
+  const devWebPort = Number.parseInt(envVar(env, 'DEV_WEB_PORT') ?? '5173', 10);
   return {
     host: envVar(env, 'HOST') ?? '127.0.0.1',
     port: Number.isFinite(port) ? port : 8787,
@@ -57,5 +66,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     isProduction: env.NODE_ENV === 'production',
     keyStore: envVar(env, 'KEYSTORE') === 'memory' ? 'memory' : 'keyring',
     probeOnBoot: (envVar(env, 'PROBE_ON_BOOT') ?? '1') !== '0',
+    allowedHosts: (envVar(env, 'ALLOWED_HOSTS') ?? '')
+      .split(',')
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean),
+    allowRemote: envVar(env, 'ALLOW_REMOTE') === '1',
+    devWebPort: Number.isFinite(devWebPort) ? devWebPort : 5173,
+    sessionToken: envVar(env, 'SESSION_TOKEN') || null,
   };
 }

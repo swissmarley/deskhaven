@@ -13,13 +13,28 @@ import type {
   UpdateTask,
   UsageSnapshot,
 } from '@deskhaven/shared';
+import { ensureSession, invalidateSession } from './session.js';
 
-async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const res = await fetch(url, {
+function send(method: string, url: string, body?: unknown): Promise<Response> {
+  // The server refuses writes that are not JSON (a cross-site "simple" request cannot be), so every
+  // non-GET call declares it, bodiless ones included.
+  return fetch(url, {
     method,
-    headers: body === undefined ? {} : { 'content-type': 'application/json' },
+    credentials: 'same-origin',
+    headers: method === 'GET' ? {} : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+}
+
+async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
+  await ensureSession();
+  let res = await send(method, url, body);
+  if (res.status === 401) {
+    // The server restarted and minted a new token: fetch it once and retry.
+    invalidateSession();
+    await ensureSession();
+    res = await send(method, url, body);
+  }
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
