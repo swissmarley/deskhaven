@@ -7,6 +7,7 @@ import {
   defaultDbPath,
   envVar,
   loadConfig,
+  MIN_SESSION_TOKEN_LENGTH,
   REPO_ROOT,
   resolveWebDist,
   webDistProblem,
@@ -46,5 +47,20 @@ describe('DESKHAVEN_WEB_DIST', () => {
     expect(webDistProblem(dir)).toMatch(/no index\.html/);
     fs.writeFileSync(path.join(dir, 'index.html'), '<!doctype html>');
     expect(webDistProblem(dir)).toBeNull();
+  });
+});
+
+describe('DESKHAVEN_SESSION_TOKEN', () => {
+  it('refuses tokens shorter than 32 characters', () => {
+    for (const t of ['1', 'short-token', 'x'.repeat(MIN_SESSION_TOKEN_LENGTH - 1)]) {
+      expect(() => loadConfig({ DESKHAVEN_SESSION_TOKEN: t }), t).toThrow(/at least 32 characters/);
+    }
+  });
+
+  it('accepts 32+ characters and defaults to a random token when unset', () => {
+    const t = 'x'.repeat(MIN_SESSION_TOKEN_LENGTH);
+    expect(loadConfig({ DESKHAVEN_SESSION_TOKEN: t }).sessionToken).toBe(t);
+    expect(loadConfig({}).sessionToken).toBeNull();
+    expect(loadConfig({ DESKHAVEN_SESSION_TOKEN: '' }).sessionToken).toBeNull();
   });
 });

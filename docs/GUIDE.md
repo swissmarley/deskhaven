@@ -267,7 +267,7 @@ accepted for every variable below.
 | `DESKHAVEN_HOST` | `127.0.0.1` | Bind address. A non-loopback address (e.g. `0.0.0.0`) is refused unless `DESKHAVEN_ALLOW_REMOTE=1`; subscription mode always refuses it. See section 11. |
 | `DESKHAVEN_ALLOW_REMOTE` | unset | `1` accepts a non-loopback `DESKHAVEN_HOST` (logs a warning; the session token is required as always). |
 | `DESKHAVEN_ALLOWED_HOSTS` | unset | Comma-separated extra `Host` names the server answers to (`box.lan` or `box.lan:8787`), besides `localhost`, `127.0.0.1` and `[::1]`. |
-| `DESKHAVEN_SESSION_TOKEN` | random per launch | Fixes the session token instead of generating one at start (for scripts; keep it secret). |
+| `DESKHAVEN_SESSION_TOKEN` | random per launch | Fixes the session token instead of generating one at start (for scripts; keep it secret). Must be at least 32 characters, or the server exits with an error; `openssl rand -base64 32` makes one. |
 | `DESKHAVEN_DEV_WEB_PORT` | `5173` | Port of the Vite dev server whose origin is accepted outside production. |
 | `DESKHAVEN_DATA_DIR` | `~/.deskhaven` | Data directory. An existing `~/.agenthotel` is reused until `~/.deskhaven` exists. |
 | `DESKHAVEN_DB` | `<data dir>/deskhaven.db` | SQLite file (`:memory:` for throwaway runs). |

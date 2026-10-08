@@ -74,6 +74,20 @@ export function webDistProblem(dir: string): string | null {
   return null;
 }
 
+/** Shortest DESKHAVEN_SESSION_TOKEN accepted (the generated one is 43 base64url characters). */
+export const MIN_SESSION_TOKEN_LENGTH = 32;
+
+/** The fixed session token, or null for a random per-launch one. Throws when it is too short. */
+export function sessionTokenFrom(value: string | undefined): string | null {
+  if (!value) return null;
+  if (value.length < MIN_SESSION_TOKEN_LENGTH)
+    throw new Error(
+      `DESKHAVEN_SESSION_TOKEN must be at least ${MIN_SESSION_TOKEN_LENGTH} characters (got ${value.length}). ` +
+        'Unset it to get a random token per launch, or generate one with `openssl rand -base64 32`.',
+    );
+  return value;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const dataDir = envVar(env, 'DATA_DIR') ?? defaultDataDir();
   const port = Number.parseInt(envVar(env, 'PORT') ?? '8787', 10);
@@ -93,6 +107,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       .filter(Boolean),
     allowRemote: envVar(env, 'ALLOW_REMOTE') === '1',
     devWebPort: Number.isFinite(devWebPort) ? devWebPort : 5173,
-    sessionToken: envVar(env, 'SESSION_TOKEN') || null,
+    sessionToken: sessionTokenFrom(envVar(env, 'SESSION_TOKEN')),
   };
 }
