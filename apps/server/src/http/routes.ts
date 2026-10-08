@@ -16,14 +16,19 @@ import type { WorktreeInfo } from '../worktree/service.js';
 const idParams = z.object({ id: z.string().min(1) });
 const messageBody = z.object({ text: z.string().min(1) });
 const apiKeyBody = z.object({ key: z.string().min(10) });
-const eventsQuery = z.object({
-  agentId: z.string().optional(),
-  sinceSeq: z.coerce.number().int().nonnegative().optional(),
-  limit: z.coerce.number().int().positive().max(5000).optional(),
-  asc: z.stringbool().optional(),
-  fromTs: z.coerce.number().int().nonnegative().optional(),
-  toTs: z.coerce.number().int().nonnegative().optional(),
-});
+const eventsQuery = z
+  .object({
+    agentId: z.string().optional(),
+    sinceSeq: z.coerce.number().int().nonnegative().optional(),
+    limit: z.coerce.number().int().positive().max(5000).optional(),
+    asc: z.stringbool().optional(),
+    fromTs: z.coerce.number().int().nonnegative().optional(),
+    toTs: z.coerce.number().int().nonnegative().optional(),
+  })
+  .refine((q) => q.fromTs === undefined || q.toTs === undefined || q.fromTs <= q.toTs, {
+    message: 'fromTs must not be after toTs',
+    path: ['fromTs'],
+  });
 
 function parse<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T | null {
   const r = schema.safeParse(value);
@@ -265,6 +270,8 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
       sinceSeq: q.sinceSeq,
       limit: q.limit,
       ascending: q.asc,
+      fromTs: q.fromTs,
+      toTs: q.toTs,
     });
   });
 
