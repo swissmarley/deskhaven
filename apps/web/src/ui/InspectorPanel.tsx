@@ -1,4 +1,4 @@
-import { type AgentEvent, agentCwd } from '@deskhaven/shared';
+import { type AgentEvent, agentCwd, WORKDIR_ERROR_PREFIX } from '@deskhaven/shared';
 import { type JSX, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { api } from '../net/api.js';
@@ -107,7 +107,17 @@ export function InspectorPanel(): JSX.Element {
         {agent.lastError ? (
           <>
             <dt>Error</dt>
-            <dd className="error">{agent.lastError}</dd>
+            <dd className="error">
+              {agent.lastError}
+              {agent.lastError.startsWith(WORKDIR_ERROR_PREFIX) && !editing ? (
+                <>
+                  {' '}
+                  <button type="button" className="link" onClick={() => setEditing(true)}>
+                    Change working directory
+                  </button>
+                </>
+              ) : null}
+            </dd>
           </>
         ) : null}
       </dl>

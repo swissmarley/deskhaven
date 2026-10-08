@@ -6,6 +6,7 @@ import {
   type AgentEventOf,
   AgentSchema,
   type Avatar,
+  agentCwd,
   type CreateAgent,
   DEFAULT_MODEL,
   DEFAULT_ROOM_ID,
@@ -15,6 +16,7 @@ import {
   type RolePreset,
   type Room,
   type UpdateAgent,
+  WORKDIR_ERROR_PREFIX,
 } from '@deskhaven/shared';
 import { and, eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
@@ -125,6 +127,20 @@ export function validateWorkdir(input: string, forbidden = forbiddenWorkdirs()):
   return real;
 }
 
+/**
+ * Why `agent` cannot run in its directory, as a user-facing `lastError`, or null when it can. Agents
+ * stored before the workdir rules existed are checked here, at boot and on every start.
+ */
+export function workdirProblem(agent: Pick<Agent, 'workdir' | 'worktree'>): string | null {
+  try {
+    validateWorkdir(agentCwd(agent));
+    return null;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return `${WORKDIR_ERROR_PREFIX}${reason}. Edit the agent to pick another folder, or fire it.`;
+  }
+}
+
 export class AgentService {
   constructor(
     private readonly db: Db,
@@ -200,6 +216,7 @@ export class AgentService {
   update(id: string, patch: UpdateAgent): Agent {
     const current = this.mustGet(id);
     if (patch.name !== undefined && !patch.name.trim()) throw new Error('Name must not be empty');
+    let fixesWorkdirError = false;
     if (patch.workdir !== undefined) {
       const workdir = validateWorkdir(patch.workdir);
       if (current.worktree && workdir !== current.workdir)
@@ -207,8 +224,17 @@ export class AgentService {
           'This agent works in its own git worktree; fire it and hire a new one to change the repository',
         );
       patch = { ...patch, workdir };
+      fixesWorkdirError = Boolean(current.lastError?.startsWith(WORKDIR_ERROR_PREFIX));
     }
-    const next = AgentSchema.parse({ ...current, ...patch, updatedAt: Date.now() });
+    const next = AgentSchema.parse({
+      ...current,
+      ...patch,
+      // A valid new workdir clears the "invalid working directory" error so the agent can start.
+      ...(fixesWorkdirError && !workdirProblem({ ...current, ...patch })
+        ? { status: 'stopped', lastError: null }
+        : {}),
+      updatedAt: Date.now(),
+    });
     this.write(next);
     return next;
   }

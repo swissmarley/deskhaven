@@ -10,6 +10,7 @@ import {
   newId,
   type Settings,
 } from '@deskhaven/shared';
+import { workdirProblem } from '../agents/service.js';
 import type { ChildEnv } from '../auth/env.js';
 import { type ExternalCredentials, externalCredentials } from '../auth/external.js';
 import type { AuthProvider } from '../auth/types.js';
@@ -133,6 +134,11 @@ export class AgentRuntime {
   start(): void {
     if (this.session || this.restarting) return;
     this.stopping = false;
+    const problem = workdirProblem(this.agent);
+    if (problem) {
+      this.failToStart(problem, 'other');
+      return;
+    }
     const auth = this.deps.auth();
     const settings = this.deps.settings();
     const env = auth.childEnv(this.deps.baseEnv());
@@ -310,9 +316,9 @@ export class AgentRuntime {
     this.start();
   }
 
-  private failToStart(message: string): void {
+  private failToStart(message: string, kind: 'auth' | 'other' = 'auth'): void {
     this.lastError = message;
-    this.emit({ ...this.baseEvent(), type: 'error', kind: 'auth', message });
+    this.emit({ ...this.baseEvent(), type: 'error', kind, message });
     this.dropQueue(message);
     this.currentTaskId = null;
     this.setStatus('error');

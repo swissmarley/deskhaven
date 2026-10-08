@@ -79,6 +79,12 @@ export const AgentSchema = z.object({
 });
 export type Agent = z.infer<typeof AgentSchema>;
 
+/**
+ * Prefix of `Agent.lastError` when the agent cannot run because its working directory is invalid
+ * (e.g. an agent saved before workdir validation existed, with workdir "/"). The UI keys off it.
+ */
+export const WORKDIR_ERROR_PREFIX = 'Invalid working directory: ';
+
 /** The directory an agent works in: its worktree (plus subfolder) or its workdir. */
 export function agentCwd(agent: Pick<Agent, 'workdir' | 'worktree'>): string {
   const wt = agent.worktree;
