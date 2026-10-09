@@ -5,11 +5,14 @@ import {
   type AgentEvent,
   type AgentEventOf,
   type AgentStatus,
+  agentCwd,
   classifyTool,
   newId,
   type Settings,
 } from '@deskhaven/shared';
+import { workdirProblem } from '../agents/service.js';
 import type { ChildEnv } from '../auth/env.js';
+import { type ExternalCredentials, externalCredentials } from '../auth/external.js';
 import type { AuthProvider } from '../auth/types.js';
 import { envVar } from '../config.js';
 import type { EventStore } from '../events/store.js';
@@ -81,6 +84,8 @@ export class AgentRuntime {
   private lastActivityAt = Date.now();
   /** The auth provider the live process was spawned with (its env is fixed at spawn). */
   private sessionAuth: AuthProvider | null = null;
+  /** Non-API-key credentials the user configured for API_KEY mode (Bedrock, Vertex, ...). */
+  private sessionExternal: ExternalCredentials | null = null;
   private restarting = false;
   /** Bumped by stop(), so a credentials restart that is still winding down does not respawn. */
   private stopGeneration = 0;
@@ -122,20 +127,26 @@ export class AgentRuntime {
   }
 
   private cwd(): string {
-    return this.agent.worktree?.path ?? this.agent.workdir;
+    return agentCwd(this.agent);
   }
 
   /** Spawn the Claude Code process (resuming the stored session when there is one). */
   start(): void {
     if (this.session || this.restarting) return;
     this.stopping = false;
+    const problem = workdirProblem(this.agent);
+    if (problem) {
+      this.failToStart(problem, 'other');
+      return;
+    }
     const auth = this.deps.auth();
     const settings = this.deps.settings();
     const env = auth.childEnv(this.deps.baseEnv());
-    if (auth.mode === 'API_KEY' && !env.ANTHROPIC_API_KEY) {
+    const external = auth.mode === 'API_KEY' ? externalCredentials(env, this.cwd()) : null;
+    if (auth.mode === 'API_KEY' && !env.ANTHROPIC_API_KEY && !external) {
       // Without a key the CLI would silently fall back to whatever else it finds (a claude.ai login).
       this.failToStart(
-        'API key mode is selected but no API key is configured. Add one in Settings (or set ANTHROPIC_API_KEY), or switch to subscription mode.',
+        'API key mode is selected but no API key is configured. Add one in Settings (or set ANTHROPIC_API_KEY), or switch to subscription mode. For Bedrock, Vertex or an apiKeyHelper, set CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX, configure apiKeyHelper in the project, or set DESKHAVEN_ALLOW_EXTERNAL_CREDENTIALS=1.',
       );
       return;
     }
@@ -167,6 +178,7 @@ export class AgentRuntime {
     const factory = this.deps.startSession ?? startAgentSession;
     this.session = factory(cfg, cb);
     this.sessionAuth = auth;
+    this.sessionExternal = external;
     this.deps.log.info(
       {
         agentId: this.agent.id,
@@ -174,6 +186,7 @@ export class AgentRuntime {
         model: cfg.model,
         resume: Boolean(cfg.resume),
         mode: auth.mode,
+        ...(external ? { credentials: external.label } : {}),
       },
       'agent session started',
     );
@@ -303,9 +316,9 @@ export class AgentRuntime {
     this.start();
   }
 
-  private failToStart(message: string): void {
+  private failToStart(message: string, kind: 'auth' | 'other' = 'auth'): void {
     this.lastError = message;
-    this.emit({ ...this.baseEvent(), type: 'error', kind: 'auth', message });
+    this.emit({ ...this.baseEvent(), type: 'error', kind, message });
     this.dropQueue(message);
     this.currentTaskId = null;
     this.setStatus('error');
@@ -427,8 +440,12 @@ export class AgentRuntime {
         let message: string | null = null;
         if (auth.mode === 'CLAUDE_SUBSCRIPTION' && ev.apiKeySource !== 'none')
           message = `Subscription mode expected the claude.ai login but the session reports apiKeySource="${ev.apiKeySource}". Stopping to avoid API billing.`;
-        else if (auth.mode === 'API_KEY' && ev.apiKeySource !== 'ANTHROPIC_API_KEY')
-          message = `API key mode expected the configured API key but the session reports apiKeySource="${ev.apiKeySource}". Stopping so it does not run on other credentials.`;
+        else if (
+          auth.mode === 'API_KEY' &&
+          ev.apiKeySource !== 'ANTHROPIC_API_KEY' &&
+          !this.sessionExternal?.accepts(ev.apiKeySource)
+        )
+          message = `API key mode expected the configured API key${this.sessionExternal ? ` or ${this.sessionExternal.label}` : ''} but the session reports apiKeySource="${ev.apiKeySource}". Stopping so it does not run on other credentials (set DESKHAVEN_ALLOW_EXTERNAL_CREDENTIALS=1 to allow them).`;
         if (message) {
           this.lastError = message;
           this.emit({ ...this.baseEvent(), type: 'error', kind: 'auth', message });

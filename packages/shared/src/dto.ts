@@ -59,7 +59,13 @@ export const AgentSchema = z.object({
   allowedTools: z.array(z.string()),
   permissionMode: PermissionModeSchema,
   workdir: z.string(),
-  worktree: z.object({ path: z.string(), branch: z.string() }).nullable(),
+  /**
+   * `path` is the worktree root (what git operates on); `subdir` is the agent's folder inside it
+   * when it was hired for a subfolder of the repository (relative, `/`-separated).
+   */
+  worktree: z
+    .object({ path: z.string(), branch: z.string(), subdir: z.string().optional() })
+    .nullable(),
   sessionId: z.string().nullable(),
   status: AgentStatusSchema,
   roomId: z.string(),
@@ -72,6 +78,19 @@ export const AgentSchema = z.object({
   updatedAt: z.number(),
 });
 export type Agent = z.infer<typeof AgentSchema>;
+
+/**
+ * Prefix of `Agent.lastError` when the agent cannot run because its working directory is invalid
+ * (e.g. an agent saved before workdir validation existed, with workdir "/"). The UI keys off it.
+ */
+export const WORKDIR_ERROR_PREFIX = 'Invalid working directory: ';
+
+/** The directory an agent works in: its worktree (plus subfolder) or its workdir. */
+export function agentCwd(agent: Pick<Agent, 'workdir' | 'worktree'>): string {
+  const wt = agent.worktree;
+  if (!wt) return agent.workdir;
+  return wt.subdir ? `${wt.path.replace(/[\\/]+$/, '')}/${wt.subdir}` : wt.path;
+}
 
 export const CreateAgentSchema = AgentSchema.pick({
   name: true,

@@ -4,7 +4,6 @@ import path from 'node:path';
 import type { InjectOptions, LightMyRequestResponse } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { SESSION_COOKIE } from '../src/http/security.js';
 
 export const TEST_HOST = '127.0.0.1:8787';
 export const TEST_ORIGIN = `http://${TEST_HOST}`;
@@ -38,7 +37,7 @@ export function client(built: Built) {
     const method = String(opts.method ?? 'GET').toUpperCase();
     const defaults: Record<string, string> = {
       host: TEST_HOST,
-      cookie: `${SESSION_COOKIE}=${built.ctx.security.token}`,
+      cookie: `${built.ctx.security.cookieName}=${built.ctx.security.token}`,
       ...(method === 'GET' ? {} : { origin: TEST_ORIGIN, 'content-type': 'application/json' }),
     };
     const merged: Record<string, string> = { ...defaults };

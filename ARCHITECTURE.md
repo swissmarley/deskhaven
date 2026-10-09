@@ -461,7 +461,7 @@ now runs one `onRequest` hook before every route, WebSocket upgrades included:
 | Host | `localhost`, `127.0.0.1`, `[::1]` on the server port; the Vite port outside production; `DESKHAVEN_ALLOWED_HOSTS` | 403 `forbidden_host` |
 | Origin | On `/ws` and every non-GET/HEAD/OPTIONS request, `Origin` (else `Referer`) must name an allowed host; a browser request with neither is refused; any `/api` or `/ws` request with `Sec-Fetch-Site: cross-site` is refused | 403 |
 | Content type | Writes must be `application/json` (an empty JSON body is accepted for bodiless actions) | 415 |
-| Session token | 32 random bytes per launch (or `DESKHAVEN_SESSION_TOKEN`); cookie `deskhaven_session` (HttpOnly, SameSite=Strict), `X-Deskhaven-Token` or `Authorization: Bearer`; required on `/api/*` except `/api/health` and `/api/session`, and on `/ws` | 401 |
+| Session token | 32 random bytes per launch (or `DESKHAVEN_SESSION_TOKEN`, at least 32 characters); cookie `deskhaven_session_<port>` (HttpOnly, SameSite=Strict; cookies ignore ports, so the name carries it; the old `deskhaven_session` is still read), `X-Deskhaven-Token` or `Authorization: Bearer`; required on `/api/*` except `/api/health` and `/api/session`, and on `/ws` | 401 |
 
 `GET /api/session` sets the cookie. On loopback any same-origin page may ask (cross-site callers fail the
 checks above and could not read or replay the cookie anyway); on a remote bind it also needs the token,

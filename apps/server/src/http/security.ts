@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import net from 'node:net';
+import os from 'node:os';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ServerConfig } from '../config.js';
 
@@ -17,7 +18,17 @@ import type { ServerConfig } from '../config.js';
  * 4. The per-launch session token (HttpOnly SameSite=Strict cookie, or a header) on /api and /ws.
  */
 
-export const SESSION_COOKIE = 'deskhaven_session';
+/**
+ * Pre-port cookie name. Cookies are not scoped by port, so a single name let two instances on one
+ * host (say dev on 8787 and a built copy on 8788) overwrite each other's token. Still read as a
+ * fallback; never set any more.
+ */
+export const LEGACY_SESSION_COOKIE = 'deskhaven_session';
+
+/** The session cookie name for a server port: `deskhaven_session_<port>`. */
+export function sessionCookieName(port: number): string {
+  return `${LEGACY_SESSION_COOKIE}_${port}`;
+}
 export const TOKEN_HEADER = 'x-deskhaven-token';
 
 const LOOPBACK_NAMES = ['localhost', '127.0.0.1', '[::1]'];
@@ -64,15 +75,41 @@ export function originHost(value: string): string | null {
   return `${url.hostname.toLowerCase()}:${port}`;
 }
 
+export type Interfaces = ReturnType<typeof os.networkInterfaces>;
+
+const isWildcard = (host: string) => host === '0.0.0.0' || host === '::';
+
+/**
+ * The machine addresses a non-loopback bind is reachable on, as Host names (IPv6 bracketed):
+ * the bind address itself, or for a wildcard bind every external interface address (IPv4 for
+ * 0.0.0.0, IPv4 and IPv6 for ::; link-local IPv6 is skipped since it needs a zone id).
+ */
+export function reachableAddresses(
+  host: string,
+  interfaces: Interfaces = os.networkInterfaces(),
+): string[] {
+  const bind = host.toLowerCase();
+  if (isLoopbackAddress(bind)) return [];
+  if (!isWildcard(bind)) return [net.isIPv6(bind) ? `[${bind}]` : bind];
+  const out: string[] = [];
+  for (const list of Object.values(interfaces)) {
+    for (const i of list ?? []) {
+      if (i.internal) continue;
+      if (i.family === 'IPv4') out.push(i.address);
+      else if (bind === '::' && !i.address.toLowerCase().startsWith('fe80'))
+        out.push(`[${i.address}]`);
+    }
+  }
+  return [...new Set(out)];
+}
+
 /** Every `name:port` this server answers to. */
 export function allowedHosts(
   config: Pick<ServerConfig, 'host' | 'port' | 'isProduction' | 'devWebPort' | 'allowedHosts'>,
+  interfaces?: Interfaces,
 ): Set<string> {
   const ports = [config.port, ...(config.isProduction ? [] : [config.devWebPort])];
-  const names = [...LOOPBACK_NAMES];
-  const bind = config.host.toLowerCase();
-  if (bind !== '0.0.0.0' && bind !== '::' && !isLoopbackAddress(bind))
-    names.push(net.isIPv6(bind) ? `[${bind}]` : bind);
+  const names = [...LOOPBACK_NAMES, ...reachableAddresses(config.host, interfaces)];
   const out = new Set<string>();
   for (const n of names) for (const p of ports) out.add(`${n}:${p}`);
   // Entries without a port ("myhost.lan") match the same ports as the loopback names.
@@ -105,13 +142,21 @@ export function readCookie(header: string | undefined, name: string): string | n
   return null;
 }
 
-/** Token from the cookie, the X-Deskhaven-Token header, or `Authorization: Bearer`. */
-export function presentedToken(req: FastifyRequest): string | null {
+/**
+ * Candidate tokens, in order: the X-Deskhaven-Token header, `Authorization: Bearer`, this port's
+ * cookie, then the legacy unported cookie.
+ */
+export function presentedTokens(req: FastifyRequest, cookieName: string): string[] {
+  const out: string[] = [];
   const header = req.headers[TOKEN_HEADER];
-  if (typeof header === 'string' && header) return header;
+  if (typeof header === 'string' && header) out.push(header);
   const auth = req.headers.authorization;
-  if (auth?.startsWith('Bearer ')) return auth.slice(7).trim();
-  return readCookie(req.headers.cookie, SESSION_COOKIE);
+  if (auth?.startsWith('Bearer ')) out.push(auth.slice(7).trim());
+  for (const name of [cookieName, LEGACY_SESSION_COOKIE]) {
+    const c = readCookie(req.headers.cookie, name);
+    if (c) out.push(c);
+  }
+  return out;
 }
 
 /** Heuristic for "a browser sent this": fetch metadata or a browser user agent. */
@@ -126,14 +171,33 @@ function fromBrowser(req: FastifyRequest): boolean {
 export interface SecurityOptions {
   config: ServerConfig;
   token: string;
+  /** Test seam: replaces os.networkInterfaces(). */
+  interfaces?: Interfaces;
 }
 
 export interface Security {
   token: string;
+  /** Name of this instance's session cookie (includes the port). */
+  cookieName: string;
   remote: boolean;
   hosts: Set<string>;
   hostAllowed(host: string | undefined): boolean;
   originAllowed(origin: string): boolean;
+  /** Base URLs (no token) a remote browser can use; empty on loopback. Never 0.0.0.0 or ::. */
+  loginUrls: string[];
+}
+
+/** `http://name:port/` for every allowed non-loopback host on the server port. */
+export function loginUrls(hosts: Set<string>, port: number): string[] {
+  const out: string[] = [];
+  for (const h of hosts) {
+    const i = h.lastIndexOf(':');
+    const name = h.slice(0, i);
+    if (Number(h.slice(i + 1)) !== port) continue;
+    if (isLoopbackAddress(name) || isWildcard(name.replace(/^\[|\]$/g, ''))) continue;
+    out.push(`http://${h}/`);
+  }
+  return out;
 }
 
 /**
@@ -153,9 +217,18 @@ export function checkBindPolicy(config: Pick<ServerConfig, 'host' | 'allowRemote
 export function registerSecurity(app: FastifyInstance, opts: SecurityOptions): Security {
   const { config, token } = opts;
   const remote = checkBindPolicy(config);
-  const hosts = allowedHosts(config);
+  const hosts = allowedHosts(config, opts.interfaces);
+  const urls = remote ? loginUrls(hosts, config.port) : [];
+  if (remote && urls.length === 0)
+    throw new Error(
+      `Listening on ${config.host} but no address to reach it was found (no external network ` +
+        'interface). Set DESKHAVEN_ALLOWED_HOSTS to the name or IP clients will use, or bind to it directly.',
+    );
+  const cookieName = sessionCookieName(config.port);
+  const hasToken = (candidates: string[]) => candidates.some((t) => sameToken(t, token));
   const sec: Security = {
     token,
+    cookieName,
     remote,
     hosts,
     hostAllowed: (host) => {
@@ -167,6 +240,7 @@ export function registerSecurity(app: FastifyInstance, opts: SecurityOptions): S
       const h = originHost(origin);
       return h !== null && hosts.has(h);
     },
+    loginUrls: urls,
   };
   if (remote)
     app.log.warn(
@@ -214,8 +288,7 @@ export function registerSecurity(app: FastifyInstance, opts: SecurityOptions): S
     }
 
     if ((isApi && !PUBLIC_API.has(pathname)) || isWs) {
-      const presented = presentedToken(req);
-      if (!presented || !sameToken(presented, token)) return deny(reply, 401, 'unauthorized');
+      if (!hasToken(presentedTokens(req, cookieName))) return deny(reply, 401, 'unauthorized');
     }
   });
 
@@ -227,13 +300,14 @@ export function registerSecurity(app: FastifyInstance, opts: SecurityOptions): S
   app.get('/api/session', async (req, reply) => {
     if (remote) {
       const q = (req.query ?? {}) as Record<string, unknown>;
-      const presented = typeof q.token === 'string' ? q.token : presentedToken(req);
-      if (!presented || !sameToken(presented, token)) return deny(reply, 401, 'token_required');
+      const candidates = presentedTokens(req, cookieName);
+      if (typeof q.token === 'string') candidates.unshift(q.token);
+      if (!hasToken(candidates)) return deny(reply, 401, 'token_required');
     }
     const secure = req.protocol === 'https' ? '; Secure' : '';
     void reply.header(
       'set-cookie',
-      `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict${secure}`,
+      `${cookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict${secure}`,
     );
     return { ok: true };
   });

@@ -1,4 +1,4 @@
-import type { AgentEvent } from '@deskhaven/shared';
+import { type AgentEvent, agentCwd, WORKDIR_ERROR_PREFIX } from '@deskhaven/shared';
 import { type JSX, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { api } from '../net/api.js';
@@ -99,7 +99,7 @@ export function InspectorPanel(): JSX.Element {
           {fmtTokens(agent.usage.outputTokens)} out · {agent.usage.turns} turns
         </dd>
         <dt>Workdir</dt>
-        <dd className="mono small">{agent.worktree?.path ?? agent.workdir}</dd>
+        <dd className="mono small">{agentCwd(agent)}</dd>
         <dt>Session</dt>
         <dd className="mono small">
           {agent.sessionId ? `${agent.sessionId.slice(0, 8)}… (resumable)` : 'none yet'}
@@ -107,7 +107,17 @@ export function InspectorPanel(): JSX.Element {
         {agent.lastError ? (
           <>
             <dt>Error</dt>
-            <dd className="error">{agent.lastError}</dd>
+            <dd className="error">
+              {agent.lastError}
+              {agent.lastError.startsWith(WORKDIR_ERROR_PREFIX) && !agent.worktree && !editing ? (
+                <>
+                  {' '}
+                  <button type="button" className="link" onClick={() => setEditing(true)}>
+                    Change working directory
+                  </button>
+                </>
+              ) : null}
+            </dd>
           </>
         ) : null}
       </dl>

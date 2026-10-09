@@ -11,6 +11,7 @@ describe('auth mode switch', () => {
     const built = await testApp({
       DESKHAVEN_HOST: '0.0.0.0',
       DESKHAVEN_ALLOW_REMOTE: '1',
+      DESKHAVEN_ALLOWED_HOSTS: 'box.lan',
     });
     try {
       const req = client(built);

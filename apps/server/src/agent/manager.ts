@@ -1,5 +1,5 @@
-import type { Agent, AgentStatus } from '@deskhaven/shared';
-import type { AgentService } from '../agents/service.js';
+import { type Agent, type AgentStatus, WORKDIR_ERROR_PREFIX } from '@deskhaven/shared';
+import { type AgentService, workdirProblem } from '../agents/service.js';
 import type { WsHub } from '../ws/hub.js';
 import { AgentRuntime, type RuntimeDeps } from './runtime.js';
 
@@ -17,6 +17,17 @@ export interface ManagerDeps {
   /** Returns a reason string when the agent must not spend more today, or null. */
   budgetCheck?: (agentId: string) => string | null;
   idleTimeoutMs?: () => number;
+}
+
+/**
+ * Stop and the kill switch report "stopped" for an agent that never ran because its workdir is
+ * invalid. While the folder is still unusable it stays in error with its message, so the UI keeps
+ * offering the fix. Returns null when there is nothing to keep.
+ */
+function keepWorkdirError(a: Agent): Agent | null {
+  if (!a.lastError?.startsWith(WORKDIR_ERROR_PREFIX)) return null;
+  const problem = workdirProblem(a);
+  return problem ? { ...a, status: 'error', lastError: problem, currentTaskId: null } : null;
 }
 
 /**
@@ -74,12 +85,18 @@ export class AgentManager {
 
   private onStatus(agentId: string, status: AgentStatus, lastError: string | null): void {
     const rt = this.runtimes.get(agentId);
-    this.deps.agents.patch(agentId, (a) => ({
-      ...a,
-      status,
-      lastError: lastError ?? (status === 'error' ? a.lastError : null),
-      currentTaskId: rt?.getCurrentTaskId() ?? null,
-    }));
+    this.deps.agents.patch(agentId, (a) => {
+      if (status === 'stopped') {
+        const kept = keepWorkdirError(a);
+        if (kept) return kept;
+      }
+      return {
+        ...a,
+        status,
+        lastError: lastError ?? (status === 'error' ? a.lastError : null),
+        currentTaskId: rt?.getCurrentTaskId() ?? null,
+      };
+    });
     // A desk frees up whenever an agent leaves the busy states.
     if (status === 'idle' || status === 'stopped' || status === 'error' || status === 'paused') {
       queueMicrotask(() => this.startWaiting());
@@ -157,7 +174,10 @@ export class AgentManager {
     this.unqueue(agentId);
     const rt = this.runtimes.get(agentId);
     if (!rt) {
-      this.deps.agents.patch(agentId, (a) => ({ ...a, status: 'stopped', currentTaskId: null }));
+      this.deps.agents.patch(
+        agentId,
+        (a) => keepWorkdirError(a) ?? { ...a, status: 'stopped', currentTaskId: null },
+      );
       return;
     }
     await rt.stop();

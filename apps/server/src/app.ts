@@ -9,6 +9,7 @@ import {
   type RolePreset,
   type Room,
   type Settings,
+  WORKDIR_ERROR_PREFIX,
 } from '@deskhaven/shared';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
@@ -16,7 +17,7 @@ import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import { createBudgetGuard } from './agent/budget.js';
 import { AgentManager } from './agent/manager.js';
 import { PermissionBroker } from './agent/permission-broker.js';
-import { AgentService } from './agents/service.js';
+import { AgentService, workdirProblem } from './agents/service.js';
 import {
   ApiKeyAuthProvider,
   type AuthProvider,
@@ -154,10 +155,27 @@ export async function buildApp(
   const roomService = new RoomService(db, hub, () => agents);
   const room = () => roomService.get(DEFAULT_ROOM_ID) ?? defaultRoom();
   agents = new AgentService(db, hub, settings, room, (id) => presetService.get(id));
-  // Agents from a previous process are not running anymore.
-  for (const a of agents.list())
-    if (a.status !== 'stopped')
-      agents.patch(a.id, (x) => ({ ...x, status: 'stopped', currentTaskId: null }));
+  // Agents from a previous process are not running anymore. Agents saved before the workdir rules
+  // (e.g. with workdir "/") are flagged now, so the UI asks for a new folder before they can start.
+  for (const a of agents.list()) {
+    const problem = workdirProblem(a);
+    if (problem) {
+      app.log.warn({ agentId: a.id, workdir: a.workdir }, problem);
+      agents.patch(a.id, (x) => ({
+        ...x,
+        status: 'error',
+        currentTaskId: null,
+        lastError: problem,
+      }));
+    } else if (a.status !== 'stopped' || a.lastError?.startsWith(WORKDIR_ERROR_PREFIX))
+      // Also clears an "invalid working directory" error once the folder is usable again.
+      agents.patch(a.id, (x) => ({
+        ...x,
+        status: 'stopped',
+        currentTaskId: null,
+        lastError: x.lastError?.startsWith(WORKDIR_ERROR_PREFIX) ? null : x.lastError,
+      }));
+  }
 
   let manager: AgentManager;
   const usage = new UsageService(agents, () => ({

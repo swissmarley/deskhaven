@@ -1,4 +1,4 @@
-import { type Agent, presetById } from '@deskhaven/shared';
+import { type Agent, agentCwd, presetById } from '@deskhaven/shared';
 import { z } from 'zod';
 import { createSdkMcpServer, type McpServerConfig, tool } from '../agent/sdk-adapter.js';
 import type { AgentService } from '../agents/service.js';
@@ -56,7 +56,7 @@ export function managerActions(deps: ManagerToolDeps) {
           name: a.name,
           role: a.rolePresetId,
           status: a.status,
-          workdir: a.worktree?.path ?? a.workdir,
+          workdir: agentCwd(a),
           currentTaskId: a.currentTaskId,
           model: a.model,
         })),

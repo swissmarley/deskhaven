@@ -20,25 +20,36 @@ Contents: [Requirements](#1-requirements) · [Install and start](#2-install-and-
 | Need | Details |
 |---|---|
 | Node.js | 22 or newer (`node --version`). |
-| pnpm | 10.x. The repo pins `pnpm@10.34.5`; the easiest way is `corepack enable` (ships with Node). If that fails with `EACCES`, see the user-local install below. |
+| pnpm | 10.x. The repo pins `pnpm@10.34.5`; the easiest way is `corepack enable` (ships with Node). If that fails with `EACCES` (Node installed system-wide), use the user-local install below. |
 | Git | Needed for the git worktree option and for the sample repository. |
 | A browser with WebGL 2 | Any current Chrome, Edge, Firefox or Safari. Without WebGL the app falls back to the pixel-art renderer. |
 | Network (first install) | `pnpm install` downloads about 230 MB: the Agent SDK ships its own native `claude` binary. The agents also need the Anthropic API at runtime. |
 | One way to pay for agents | Either an Anthropic API key, **or** a Claude Pro/Max plan logged in with the `claude` CLI (see section 3). |
-| No C/C++ toolchain | `better-sqlite3` ships prebuilt binaries for Linux (glibc and musl), macOS and Windows on x64 and arm64, and `pnpm install` uses them without compiling, so `make` and `g++` are not needed. Only on other platforms see "Install fails while compiling" in section 10. |
+| No C/C++ toolchain | `better-sqlite3` ships prebuilt binaries for Linux (glibc and musl), macOS and Windows on x64 and arm64, and `pnpm install` uses them without compiling, so `make` and `g++` are not needed. Only on other platforms see "Could not locate the bindings file" in section 10. |
 
 Everything runs on your machine. The server listens on `127.0.0.1` only and only answers the Deskhaven web
 app (see section 11 for how other websites are kept out). Nothing is sent anywhere except the Anthropic API
 calls your agents make.
 
 **pnpm without root.** `corepack enable` writes shims next to the `node` binary; with a system-wide Node
-(e.g. `/usr/local/bin`) it fails with `EACCES`. Install the shims into a folder you own instead:
+(e.g. `/usr/local/bin`) it fails with `EACCES`. The most reliable fix is a user-local pnpm from npm:
 
 ```bash
-mkdir -p ~/.local/bin
-corepack enable --install-directory ~/.local/bin   # or: npm install -g --prefix ~/.local pnpm@10.34.5
-export PATH="$HOME/.local/bin:$PATH"               # add this line to ~/.bashrc or ~/.zshrc
-pnpm --version                                     # 10.34.5
+npm install -g --prefix ~/.local pnpm@10.34.5   # installs ~/.local/bin/pnpm, no root needed
+export PATH="$HOME/.local/bin:$PATH"            # add this line to ~/.bashrc or ~/.zshrc
+pnpm --version                                  # 10.34.5
+```
+
+If you prefer corepack, point both its shims **and its cache** at folders you own. `--install-directory`
+alone is not enough when `COREPACK_HOME` (where corepack downloads pnpm) is root-owned, for example set by
+a system-wide profile:
+
+```bash
+mkdir -p ~/.local/bin ~/.cache/corepack
+export COREPACK_HOME="$HOME/.cache/corepack"    # add both exports to ~/.bashrc or ~/.zshrc
+export PATH="$HOME/.local/bin:$PATH"
+corepack enable --install-directory ~/.local/bin pnpm
+pnpm --version                                  # 10.34.5 (downloaded into $COREPACK_HOME)
 ```
 
 ## 2. Install and start
@@ -46,7 +57,7 @@ pnpm --version                                     # 10.34.5
 ```bash
 git clone <your repository URL> deskhaven
 cd deskhaven
-corepack enable            # once, if `pnpm --version` is not 10.x
+corepack enable            # once, if `pnpm --version` is not 10.x; EACCES? use the user-local pnpm (section 1)
 pnpm install               # downloads the native claude binary (better-sqlite3 uses a prebuilt one)
 pnpm dev                   # server on 127.0.0.1:8787, web UI on 127.0.0.1:5173
 ```
@@ -78,6 +89,18 @@ Open **Settings → Authentication**.
 3. Select **API key**. Agents are billed per token on your API account. Without a key, agents refuse to
    start instead of falling back to other credentials, and a session that reports anything but the API
    key as its credential source is stopped.
+
+**Bedrock, Vertex, Foundry or an `apiKeyHelper`.** These count as configured credentials in API key mode,
+so no `ANTHROPIC_API_KEY` is needed:
+
+- `CLAUDE_CODE_USE_BEDROCK=1`, `CLAUDE_CODE_USE_VERTEX=1` or `CLAUDE_CODE_USE_FOUNDRY=1` in the server's
+  environment (plus that provider's usual credentials and region variables): any credential source the
+  session reports is accepted.
+- An `apiKeyHelper` in the working directory's `.claude/settings.json` (the project settings agents load):
+  sessions reporting `apiKeyHelper` or `ANTHROPIC_API_KEY` are accepted.
+- Anything else (for example a helper configured elsewhere): set `DESKHAVEN_ALLOW_EXTERNAL_CREDENTIALS=1`.
+  Agents then start without a key and run on whatever Claude Code finds, **including your claude.ai
+  login**, so only use it when you know which credentials that will be.
 
 ### Option B: Claude Pro/Max subscription (your own machine only)
 
@@ -224,11 +247,15 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
 1. HR desk → fill **Working directory** with the **absolute path** of your repository.
 2. Tick **git worktree** to give the agent its own checkout under `~/.deskhaven/worktrees/<name>-<id>` on a
    new branch `deskhaven/<name>-<id>`, created from your repository's current commit. The agent runs and
-   edits only there; your own working copy stays untouched, and several engineers can work in parallel on
+   edits only there (if the working directory is a subfolder of the repository, such as `repo/src`, the
+   worktree still covers the whole repository but the agent works in, and may only edit, the same
+   subfolder inside it); your own working copy stays untouched, and several engineers can work in parallel on
    the same repository. Hiring fails with a clear error if the folder is not a git repository. Uncommitted
    changes in your checkout are *not* copied into the worktree (the Feed shows a warning when there are
    some). **Fire** removes the worktree folder but keeps the branch; if the worktree has uncommitted
-   changes, firing is refused and the app asks before forcing it. A worktree agent's repository cannot be
+   changes, firing is refused and the app asks before forcing it. If you moved or deleted the source
+   repository, Deskhaven cannot check the worktree, so firing is refused the same way; forcing it deletes
+   the worktree folder directly (run `git worktree prune` in a moved repository to drop its stale entry). A worktree agent's repository cannot be
    changed afterwards: fire it and hire a new one.
 3. Choose the role. Start with **Reviewer** or **Architect** (read-only) to see how it behaves before you
    let an **Engineer** edit.
@@ -266,9 +293,10 @@ accepted for every variable below.
 | `DESKHAVEN_PORT` | `8787` | Server port. |
 | `DESKHAVEN_HOST` | `127.0.0.1` | Bind address. A non-loopback address (e.g. `0.0.0.0`) is refused unless `DESKHAVEN_ALLOW_REMOTE=1`; subscription mode always refuses it. See section 11. |
 | `DESKHAVEN_ALLOW_REMOTE` | unset | `1` accepts a non-loopback `DESKHAVEN_HOST` (logs a warning; the session token is required as always). |
-| `DESKHAVEN_ALLOWED_HOSTS` | unset | Comma-separated extra `Host` names the server answers to (`box.lan` or `box.lan:8787`), besides `localhost`, `127.0.0.1` and `[::1]`. |
-| `DESKHAVEN_SESSION_TOKEN` | random per launch | Fixes the session token instead of generating one at start (for scripts; keep it secret). |
+| `DESKHAVEN_ALLOWED_HOSTS` | unset | Comma-separated extra `Host` names the server answers to (`box.lan` or `box.lan:8787`), besides `localhost`, `127.0.0.1`, `[::1]` and, on a remote bind, the machine's interface addresses. |
+| `DESKHAVEN_SESSION_TOKEN` | random per launch | Fixes the session token instead of generating one at start (for scripts; keep it secret). Must be at least 32 characters, or the server exits with an error; `openssl rand -base64 32` makes one. |
 | `DESKHAVEN_DEV_WEB_PORT` | `5173` | Port of the Vite dev server whose origin is accepted outside production. |
+| `DESKHAVEN_ALLOW_EXTERNAL_CREDENTIALS` | unset | `1` lets API key mode run agents without `ANTHROPIC_API_KEY` on whatever credentials Claude Code finds (section 3). Bedrock, Vertex, Foundry and a project `apiKeyHelper` are recognised without it. |
 | `DESKHAVEN_DATA_DIR` | `~/.deskhaven` | Data directory. An existing `~/.agenthotel` is reused until `~/.deskhaven` exists. |
 | `DESKHAVEN_DB` | `<data dir>/deskhaven.db` | SQLite file (`:memory:` for throwaway runs). |
 | `DESKHAVEN_WEB_DIST` | unset | Directory of the built UI to serve from the server port (see section 9). A relative path is resolved from the repository root; a missing folder or `index.html` is logged as an error at start. |
@@ -303,14 +331,16 @@ above. Section 11 explains what keeps other websites out and what `DESKHAVEN_ALL
 
 | Symptom | Fix |
 |---|---|
-| `pnpm: command not found` or the wrong version | `corepack enable`, then `corepack prepare pnpm@10.34.5 --activate`. |
-| `corepack enable` fails with `EACCES` | Node is installed system-wide; use the user-local install in section 1 (`corepack enable --install-directory ~/.local/bin`). |
+| `pnpm: command not found` or the wrong version | `corepack enable`, then `corepack prepare pnpm@10.34.5 --activate`. If either fails with `EACCES`, use the user-local install from section 1 (`npm install -g --prefix ~/.local pnpm@10.34.5`). |
+| `corepack enable` fails with `EACCES` | Node is installed system-wide; use the user-local install in section 1: `npm install -g --prefix ~/.local pnpm@10.34.5` and put `~/.local/bin` on `PATH`. |
+| `corepack enable --install-directory ...` still fails with `EACCES` | `COREPACK_HOME` points to a root-owned folder. Set `COREPACK_HOME="$HOME/.cache/corepack"` (section 1), or use the npm install above. |
 | `Could not locate the bindings file` for `better-sqlite3` | Your platform has no prebuilt binary (anything but Linux, macOS or Windows on x64/arm64). Install the build tools (macOS: `xcode-select --install`; Linux: `make`, `g++` and `python3`, e.g. `build-essential`) and run `pnpm rebuild better-sqlite3`. Node must be 22+. |
 | Install seems stuck | The first install downloads the 230 MB native `claude` binary; wait, or check your network. |
 | Port 5173 or 8787 already in use | Stop the other process, or set `DESKHAVEN_PORT` (and change the proxy target in `apps/web/vite.config.ts`). |
 | Settings says "not logged in" in subscription mode | Run `claude login` in a terminal, then reopen Settings. Check with `claude auth status`. |
 | An agent stops with "apiKeySource" or key error in subscription mode | An API key reached the agent process. Unset `ANTHROPIC_API_KEY` for the shell that starts the server, or use API key mode. |
-| An agent goes to error with "no API key is configured" | API key mode is selected but there is no key. Add one in Settings (running agents pick it up on their next task) or switch to subscription mode. Deskhaven refuses to start the agent rather than let the CLI fall back to other credentials. |
+| An agent goes to error with "no API key is configured" | API key mode is selected but there is no key. Add one in Settings (running agents pick it up on their next task) or switch to subscription mode. Deskhaven refuses to start the agent rather than let the CLI fall back to other credentials. Using Bedrock, Vertex or an `apiKeyHelper`? See section 3. |
+| An agent shows "Invalid working directory" | It was saved with a folder that is now refused (for example `/`, from before workdir validation existed) or its folder or worktree is gone. It cannot start until you click **Change working directory** in the Inspector and pick a project folder, or **Fire** it. |
 | The UI shows 401/403 errors, or curl gets `forbidden_host` / `unauthorized` | Open the app at `http://127.0.0.1:5173` (dev) or `:8787` (built) rather than another hostname, or add the name to `DESKHAVEN_ALLOWED_HOSTS`. Scripts need the session token (section 11). |
 | 401 or 429 emotes | 401: re-authenticate or fix the key. 429: you hit a rate limit; the avatar shows a cooldown and work resumes after the window. |
 | Black room or "WebGL" errors | Enable hardware acceleration in your browser, or switch to the pixel renderer in Settings → Renderer. |
@@ -352,8 +382,11 @@ Every request now passes these checks, in order:
    `/api/health` stays public.
 
 **Remote access** stays off by default. A non-loopback `DESKHAVEN_HOST` (such as `0.0.0.0`) refuses to
-start unless `DESKHAVEN_ALLOW_REMOTE=1` is set; then the server logs a loud warning, prints a login URL
-with the token on the terminal, and hands out the cookie only to a browser that presents that token.
+start unless `DESKHAVEN_ALLOW_REMOTE=1` is set; then the server logs a loud warning, prints one login URL
+per reachable address on the terminal (for `0.0.0.0` every external network interface, plus each
+`DESKHAVEN_ALLOWED_HOSTS` name; never `0.0.0.0` itself), and hands out the cookie only to a browser that
+presents the token. Those interface addresses are accepted as `Host` automatically; if the machine has no
+external interface the server exits and asks for `DESKHAVEN_ALLOWED_HOSTS`.
 Anyone with the token controls agents that can run commands on your machine; there is no TLS, so use it
 only on a network you trust (or behind an SSH tunnel, which needs none of this).
 
