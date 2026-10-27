@@ -4,9 +4,12 @@ import { presetIsReadOnly, taskTail } from '../src/taskPrompt.js';
 
 describe('taskPrompt', () => {
   it('treats QA and Reviewer as read-only', () => {
-    expect(presetIsReadOnly(presetById('qa')!)).toBe(true);
-    expect(presetIsReadOnly(presetById('reviewer')!)).toBe(true);
-    expect(presetIsReadOnly(presetById('engineer')!)).toBe(false);
+    const qa = presetById('qa');
+    const reviewer = presetById('reviewer');
+    const engineer = presetById('engineer');
+    expect(qa && presetIsReadOnly(qa)).toBe(true);
+    expect(reviewer && presetIsReadOnly(reviewer)).toBe(true);
+    expect(engineer && presetIsReadOnly(engineer)).toBe(false);
   });
 
   it('taskTail uses findings format for read-only presets', () => {

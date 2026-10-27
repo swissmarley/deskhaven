@@ -1,8 +1,4 @@
-import {
-  BUILTIN_PRESETS,
-  ENGINEER_PRESET_LEGACY,
-  type RolePreset,
-} from '@deskhaven/shared';
+import { BUILTIN_PRESETS, ENGINEER_PRESET_LEGACY, type RolePreset } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../src/db/client.js';
 import { rolePresets } from '../src/db/schema.js';

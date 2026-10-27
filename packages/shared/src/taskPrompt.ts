@@ -34,6 +34,7 @@ function summaryFormat(readOnlyOrReview: boolean): string {
 
 /** Closing instructions for a dispatched task; the format block is always last in the full prompt. */
 export function taskTail(task: Task, assigneePreset?: RolePreset): string {
-  const readOnlyOrReview = Boolean(task.reviewTarget) || (assigneePreset && presetIsReadOnly(assigneePreset));
+  const readOnlyOrReview =
+    Boolean(task.reviewTarget) || (assigneePreset && presetIsReadOnly(assigneePreset));
   return summaryFormat(Boolean(readOnlyOrReview));
 }

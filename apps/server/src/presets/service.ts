@@ -1,6 +1,6 @@
 import {
-  BUILTIN_PRESETS,
   BUILTIN_PRESET_LEGACY_HASH,
+  BUILTIN_PRESETS,
   hashRolePreset,
   type RolePreset,
   type RolePresetListItem,
