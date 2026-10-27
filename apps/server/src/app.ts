@@ -213,6 +213,7 @@ export async function buildApp(
         hub.broadcast({ type: 'usage', usage: usage.snapshot() });
       },
       onApiKeySource: () => hub.broadcast({ type: 'usage', usage: usage.snapshot() }),
+      presetLookup: (id) => presetService.get(id),
     },
   });
 

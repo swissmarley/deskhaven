@@ -38,6 +38,24 @@ function parse<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T 
   return null;
 }
 
+function parseAgentBody<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T | null {
+  const r = schema.safeParse(value);
+  if (r.success) return r.data;
+  const modelIssue = r.error.issues.find(
+    (i) => i.path[0] === 'model' && i.message === 'Unknown model',
+  );
+  if (modelIssue) {
+    const raw =
+      typeof value === 'object' && value !== null && 'model' in value
+        ? String((value as { model: unknown }).model)
+        : '';
+    void reply.code(400).send({ error: `Unknown model: ${raw}`, code: UNKNOWN_MODEL_CODE });
+    return null;
+  }
+  void reply.code(400).send({ error: 'invalid_request', issues: r.error.issues });
+  return null;
+}
+
 function fail(reply: FastifyReply, err: unknown, code = 400): void {
   void reply.code(code).send({ error: err instanceof Error ? err.message : String(err) });
 }
@@ -93,7 +111,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/api/agents', async () => ctx.agents.list());
 
   app.post('/api/agents', async (req, reply) => {
-    const body = parse(CreateAgentSchema, req.body, reply);
+    const body = parseAgentBody(CreateAgentSchema, req.body, reply);
     if (!body) return;
     const id = newId();
     let repo: string | null = null;
@@ -132,7 +150,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
 
   app.patch('/api/agents/:id', async (req, reply) => {
     const p = parse(idParams, req.params, reply);
-    const body = p && parse(UpdateAgentSchema, req.body, reply);
+    const body = p && parseAgentBody(UpdateAgentSchema, req.body, reply);
     if (!p || !body) return;
     try {
       const agent = ctx.agents.update(p.id, body);

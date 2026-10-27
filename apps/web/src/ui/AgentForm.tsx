@@ -11,6 +11,7 @@ import { type JSX, useEffect, useState } from 'react';
 import { api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
 import { AvatarPicker, randomAvatar } from './AvatarPicker.js';
+import { agentModelPatchForEdit, legacyModelOption } from './agentModelPatch.js';
 
 const PERMISSION_MODES: { id: PermissionMode; label: string }[] = [
   { id: 'default', label: 'Ask (default)' },
@@ -72,6 +73,8 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
 
   const preset = presets.find((p) => p.id === rolePresetId);
   const roleIsManager = Boolean(preset?.manager);
+  const catalogIds = new Set(models.map((m) => m.id));
+  const legacyModel = legacyModelOption(agent?.model, catalogIds);
   const room = Object.values(rooms)[0];
   const desks = room?.furniture.filter((f) => f.kind === 'desk') ?? [];
   const deskOwner = (id: string) =>
@@ -107,7 +110,7 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
           avatar,
           rolePresetId,
           workdir,
-          model: model ? model : null,
+          ...agentModelPatchForEdit(agent.model, model),
           permissionMode: permissionMode || agent.permissionMode,
           systemPrompt,
           allowedTools: list(allowedTools),
@@ -211,6 +214,9 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
               ? `Manager default (${settings?.managerModel ?? ''})`
               : `Default (${settings?.defaultModel ?? ''})`}
           </option>
+          {legacyModel ? (
+            <option value={legacyModel}>{legacyModel} (no longer available)</option>
+          ) : null}
           {models.map((m) => (
             <option key={m.id} value={m.id}>
               {m.label}

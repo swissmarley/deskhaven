@@ -13,7 +13,7 @@ describe('agent model validation', () => {
     const built = await testApp();
     try {
       const req = client(built);
-      for (const model of ['', '   ', 'pippo']) {
+      for (const model of ['', '   ']) {
         const res = await req({
           method: 'POST',
           url: '/api/agents',
@@ -21,6 +21,16 @@ describe('agent model validation', () => {
         });
         expect(res.statusCode, model).toBe(400);
       }
+      const unknown = await req({
+        method: 'POST',
+        url: '/api/agents',
+        payload: { ...hire, model: 'pippo' },
+      });
+      expect(unknown.statusCode).toBe(400);
+      expect(unknown.json()).toMatchObject({
+        error: 'Unknown model: pippo',
+        code: UNKNOWN_MODEL_CODE,
+      });
     } finally {
       await built.app.close();
     }
@@ -39,7 +49,10 @@ describe('agent model validation', () => {
         payload: { model: 'pippo' },
       });
       expect(res.statusCode).toBe(400);
-      expect(res.json()).toMatchObject({ error: 'invalid_request' });
+      expect(res.json()).toMatchObject({
+        error: 'Unknown model: pippo',
+        code: UNKNOWN_MODEL_CODE,
+      });
     } finally {
       await built.app.close();
     }
@@ -109,6 +122,62 @@ describe('agent model validation', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(res.json().model).toBe('claude-sonnet-5-5');
+    } finally {
+      await built.app.close();
+    }
+  });
+});
+
+describe('agent preset edge cases', () => {
+  it('allows editing an agent whose custom preset was deleted', async () => {
+    const built = await testApp();
+    try {
+      const req = client(built);
+      const custom = {
+        id: 'gone-role',
+        name: 'Gone',
+        description: 'Will be deleted',
+        systemPrompt: 'hi',
+        tools: ['Read'],
+        allowedTools: ['Read'],
+        permissionMode: 'default',
+      };
+      await req({ method: 'PUT', url: '/api/presets/gone-role', payload: custom });
+      const created = await req({
+        method: 'POST',
+        url: '/api/agents',
+        payload: { ...hire, name: 'Orphan', rolePresetId: 'gone-role' },
+      });
+      expect(created.statusCode).toBe(201);
+      const id = created.json().id;
+      await req({ method: 'DELETE', url: '/api/presets/gone-role' });
+      const renamed = await req({
+        method: 'PATCH',
+        url: `/api/agents/${id}`,
+        payload: { name: 'Still here' },
+      });
+      expect(renamed.statusCode).toBe(200);
+      expect(renamed.json().name).toBe('Still here');
+      expect(renamed.json().rolePresetId).toBe('gone-role');
+    } finally {
+      await built.app.close();
+    }
+  });
+
+  it('allows patch without model when the agent keeps a legacy catalog id', async () => {
+    const built = await testApp();
+    try {
+      const req = client(built);
+      const created = await req({ method: 'POST', url: '/api/agents', payload: hire });
+      const id = created.json().id;
+      built.ctx.agents.patch(id, (a) => ({ ...a, model: 'claude-sonnet-4-5' }));
+      const renamed = await req({
+        method: 'PATCH',
+        url: `/api/agents/${id}`,
+        payload: { name: 'Legacy model kept' },
+      });
+      expect(renamed.statusCode).toBe(200);
+      expect(renamed.json().model).toBe('claude-sonnet-4-5');
     } finally {
       await built.app.close();
     }

@@ -9,6 +9,7 @@ import {
   classifyTool,
   newId,
   presetById,
+  type RolePreset,
   type Settings,
   sessionModel,
 } from '@deskhaven/shared';
@@ -55,6 +56,8 @@ export interface RuntimeDeps {
   mcpServers?: (agent: Agent) => Record<string, McpServerConfig> | undefined;
   /** Test seam: replaces the SDK session factory. */
   startSession?: (cfg: SessionConfig, cb: SessionCallbacks) => AgentSession;
+  /** Resolves role presets from the DB (built-ins + custom); falls back to shipped presets in tests. */
+  presetLookup?: (id: string) => RolePreset | undefined;
   /** How long `stop()` waits for the process to exit before aborting it. */
   stopGraceMs?: number;
 }
@@ -153,7 +156,10 @@ export class AgentRuntime {
     }
     const cfg: SessionConfig = {
       cwd: this.cwd(),
-      model: sessionModel(this.agent, presetById(this.agent.rolePresetId)),
+      model: sessionModel(
+        this.agent,
+        this.deps.presetLookup?.(this.agent.rolePresetId) ?? presetById(this.agent.rolePresetId),
+      ),
       systemPromptAppend: this.agent.systemPrompt,
       tools: this.agent.tools,
       allowedTools: this.agent.allowedTools,

@@ -170,6 +170,10 @@ Roles (editable JSON under Settings → Role presets):
 | QA | Test commands pre-approved. |
 | Manager | Delegates: lists agents, creates tasks and assigns them through the board. One level only. |
 
+**Models:** Settings → Models sets the defaults for new hires. Per-agent overrides are stored on the agent.
+Custom role presets with `manager: true` follow the Manager default from Settings when you leave Model on
+Default; any `model` field in the preset JSON is ignored (same as the built-in Manager).
+
 ### Task board
 
 - **New task** takes a title and a prompt. Drag a card onto a character, or onto another column to change

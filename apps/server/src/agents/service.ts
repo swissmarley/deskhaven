@@ -216,10 +216,17 @@ export class AgentService {
   update(id: string, patch: UpdateAgent): Agent {
     const current = this.mustGet(id);
     if (patch.name !== undefined && !patch.name.trim()) throw new Error('Name must not be empty');
-    const rolePresetId = patch.rolePresetId ?? current.rolePresetId;
-    const preset = this.presetLookup(rolePresetId);
-    if (!preset) throw new Error(`Unknown role preset ${rolePresetId}`);
+    if (
+      patch.rolePresetId !== undefined &&
+      patch.rolePresetId !== current.rolePresetId &&
+      !this.presetLookup(patch.rolePresetId)
+    ) {
+      throw new Error(`Unknown role preset ${patch.rolePresetId}`);
+    }
     if (patch.model === null) {
+      const rolePresetId = patch.rolePresetId ?? current.rolePresetId;
+      const preset = this.presetLookup(rolePresetId);
+      if (!preset) throw new Error(`Unknown role preset ${rolePresetId}`);
       patch = {
         ...patch,
         model: resolveAgentModel(undefined, preset, this.settings.get()),
