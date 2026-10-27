@@ -82,13 +82,13 @@ async function mergePayload(taskId: string, extra: Record<string, unknown> = {})
   expect(preview.statusCode).toBe(200);
   const p = preview.json() as {
     branchSha: string;
+    previewTree: string;
     hookFiles?: string[];
-    dirty: boolean;
   };
   return {
     expectedBranchSha: p.branchSha,
     consentedHookFiles: p.hookFiles ?? [],
-    previewDirty: p.dirty,
+    previewTree: p.previewTree,
     ...extra,
   };
 }
@@ -211,7 +211,7 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
       payload: {
         expectedBranchSha: 'abc1234567890',
         consentedHookFiles: [],
-        previewDirty: false,
+        previewTree: '0000000000000000000000000000000000000000',
       },
     });
     expect(missing.statusCode).toBe(400);
@@ -781,6 +781,29 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     expect(allowed.statusCode).toBe(200);
   });
 
+  it('returns 409 merge_preview_stale when worktree content changes after preview', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'TreeStale', true)).json();
+    fs.writeFileSync(path.join(agent.worktree.path, 'b.txt'), 'v1\n');
+    const id = await reviewTask(agent.id, 'Tree bind');
+    const body = await mergePayload(id);
+    fs.writeFileSync(path.join(agent.worktree.path, 'b.txt'), 'v2\n');
+    const stale = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: body });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error).toBe('merge_preview_stale');
+  });
+
+  it('returns 400 when previewTree is omitted', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'NoTree', true)).json();
+    fs.writeFileSync(path.join(agent.worktree.path, 'b.txt'), 'x\n');
+    const id = await reviewTask(agent.id, 'No preview tree');
+    const partial = await mergePayload(id);
+    delete (partial as { previewTree?: string }).previewTree;
+    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: partial });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('returns 409 merge_preview_stale after the branch moves', async () => {
     const repo = tmpRepo();
     const agent = (await hire(repo, 'Stale', true)).json();
@@ -792,6 +815,43 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     const stale = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: body });
     expect(stale.statusCode).toBe(409);
     expect(stale.json().error).toBe('merge_preview_stale');
+  });
+
+  it('does not run worktree hooks during Deskhaven git commands', async () => {
+    const repo = tmpRepo();
+    git(repo, 'config', 'core.hooksPath', '.githooks');
+    const hooks = path.join(repo, '.githooks');
+    fs.mkdirSync(hooks, { recursive: true });
+    const marker = path.join(repo, 'wt-hook-fired.txt');
+    fs.writeFileSync(
+      path.join(hooks, 'post-index-change'),
+      `#!/bin/sh\necho fired > '${marker}'\n`,
+    );
+    fs.chmodSync(path.join(hooks, 'post-index-change'), 0o755);
+    const agent = (await hire(repo, 'WtHooks', true)).json();
+    fs.writeFileSync(path.join(agent.worktree.path, 'b.txt'), 'touch index\n');
+    const id = await reviewTask(agent.id, 'No wt hooks');
+    if (fs.existsSync(marker)) fs.unlinkSync(marker);
+    const merged = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id, { skipHooks: true }),
+    });
+    expect(merged.statusCode).toBe(200);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it('lists untracked hook files individually in the preview', async () => {
+    const repo = tmpRepo();
+    git(repo, 'config', 'core.hooksPath', '.githooks');
+    const agent = (await hire(repo, 'UntrackedHook', true)).json();
+    const dir = path.join(agent.worktree.path, '.githooks');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pre-commit'), '#!/bin/sh\nexit 0\n');
+    fs.chmodSync(path.join(dir, 'pre-commit'), 0o755);
+    const id = await reviewTask(agent.id, 'Untracked');
+    const preview = await req({ method: 'GET', url: `/api/tasks/${id}/merge-preview` });
+    expect(preview.json().hookFiles).toContain('.githooks/pre-commit');
   });
 
   it('merges with skipHooks without running hook scripts', async () => {

@@ -232,14 +232,11 @@ export const MergeTaskSchema = z.object({
   /** When true, the source merge commit skips git hooks (`core.hooksPath=/dev/null`, `--no-verify`). */
   skipHooks: z.boolean().optional(),
   /** Worktree `HEAD` from the merge preview; must still match at merge time. */
-  expectedBranchSha: z
-    .string()
-    .regex(/^[0-9a-f]{7,64}$/i)
-    .optional(),
+  expectedBranchSha: z.string().regex(/^[0-9a-f]{7,64}$/i),
   /** Hook paths the user consented to from the preview; must match the current hook set. */
   consentedHookFiles: z.array(z.string()).optional(),
-  /** Whether the preview saw uncommitted worktree changes (must match at merge time). */
-  previewDirty: z.boolean().optional(),
+  /** Tree hash of the staged worktree content from the merge preview (`write-tree` after `add -A`). */
+  previewTree: z.string().regex(/^[0-9a-f]{40}$/i),
 });
 export type MergeTask = z.infer<typeof MergeTaskSchema>;
 
@@ -267,6 +264,7 @@ export const MergePreviewSchema = z.object({
     .string()
     .regex(/^[0-9a-f]{7,64}$/i)
     .optional(),
+  previewTree: z.string().regex(/^[0-9a-f]{40}$/i),
 });
 export type MergePreview = z.infer<typeof MergePreviewSchema>;
 

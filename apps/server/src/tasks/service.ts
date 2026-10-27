@@ -205,7 +205,11 @@ export class TaskService {
       });
     } catch (err) {
       if (err instanceof TaskHttpError) {
-        if (err.code === 'assign_superseded') return this.mustGet(taskId);
+        if (err.code === 'assign_superseded') {
+          const now = this.mustGet(taskId);
+          if (now.assigneeAgentId !== agentId) return now;
+          throw err;
+        }
         const now = this.mustGet(taskId);
         if (
           now.assigneeAgentId === agentId &&
@@ -221,9 +225,11 @@ export class TaskService {
         throw err;
       }
       // Budget cap or kill switch: keep the assignment but ask a human.
+      const now = this.mustGet(taskId);
+      if (now.dispatchSeq !== dispatchSeq) return now;
       const message = err instanceof Error ? err.message : String(err);
       this.write({
-        ...this.mustGet(taskId),
+        ...now,
         status: 'needs_input',
         resultSummary: message,
         updatedAt: Date.now(),
@@ -310,6 +316,7 @@ export class TaskService {
       runnerFiles.length > 0
         ? `This merge also changes hook runner config (${runnerFiles.join(', ')}). Unchanged hook scripts may still run new commands from those files during the merge commit.`
         : undefined;
+    const previewTree = await this.deps.worktrees.previewTree(wt.path);
     return {
       branch: wt.branch,
       targetBranch,
@@ -326,6 +333,7 @@ export class TaskService {
       ...(runnerFiles.length ? { runnerFiles } : {}),
       ...(runnerWarning ? { runnerWarning } : {}),
       branchSha,
+      previewTree,
     };
   }
 
@@ -333,7 +341,7 @@ export class TaskService {
    * Commit the agent worktree and merge it into the source checkout. The source checkout is never
    * switched or stashed; a conflict aborts and leaves it as it was.
    */
-  async merge(taskId: string, input: MergeTask = {}): Promise<Task> {
+  async merge(taskId: string, input: MergeTask): Promise<Task> {
     const located = await this.locateWorktree(taskId);
     if (!located.ok) throw located.error;
     const { task, agent, sourceRoot, targetBranch } = located;
@@ -415,6 +423,14 @@ export class TaskService {
         throw new TaskHttpError(409, 'worktree_moved', err.message);
       }
       throw err;
+    }
+    const treeAfterCommit = await this.deps.worktrees.headTree(wt.path);
+    if (treeAfterCommit !== input.previewTree) {
+      throw new TaskHttpError(
+        409,
+        'merge_preview_stale',
+        'The worktree content changed after the preview. Refresh the merge preview and try again.',
+      );
     }
     const outcome = await this.deps.worktrees.mergeInto(
       sourceRoot,
@@ -611,7 +627,7 @@ export class TaskService {
     targetBranch: string,
     input: MergeTask,
   ): Promise<void> {
-    if (!input.expectedBranchSha) {
+    if (!input.expectedBranchSha || !input.previewTree) {
       throw new TaskHttpError(
         400,
         'missing_preview',
@@ -626,19 +642,12 @@ export class TaskService {
         'The branch changed after the preview. Refresh the merge preview and try again.',
       );
     }
-    const dirty = await this.deps.worktrees.isDirty(wt.path);
-    if (input.previewDirty === false && dirty) {
+    const previewTreeNow = await this.deps.worktrees.previewTree(wt.path);
+    if (previewTreeNow !== input.previewTree) {
       throw new TaskHttpError(
         409,
         'merge_preview_stale',
-        'The worktree has new uncommitted changes since the preview. Refresh the merge preview and try again.',
-      );
-    }
-    if (input.previewDirty === true && !dirty) {
-      throw new TaskHttpError(
-        409,
-        'merge_preview_stale',
-        'The worktree no longer matches the preview. Refresh the merge preview and try again.',
+        'The worktree content does not match the preview. Refresh the merge preview and try again.',
       );
     }
     const hookCheck = await this.deps.worktrees.hookConsentSnapshot(
@@ -666,6 +675,14 @@ export class TaskService {
     }
   }
 
+  private assertAssignDispatch(taskId: string, dispatchSeq: number | undefined): void {
+    if (dispatchSeq === undefined) return;
+    const before = this.get(taskId);
+    if (!before || before.dispatchSeq !== dispatchSeq) {
+      throw new TaskHttpError(409, 'assign_superseded', 'A newer assign superseded this dispatch.');
+    }
+  }
+
   private async dispatch(task: Task, dispatchSeq?: number): Promise<void> {
     if (!task.assigneeAgentId) return;
     if (this.merging.has(task.assigneeAgentId)) return;
@@ -678,21 +695,9 @@ export class TaskService {
     if (!latest || latest.status === 'done' || !latest.assigneeAgentId) return;
     if (this.merging.has(latest.assigneeAgentId)) return;
     this.syncReadDirs(latest.assigneeAgentId);
+    this.assertAssignDispatch(task.id, dispatchSeq);
     await Promise.resolve(this.deps.manager.sendPrompt(latest.assigneeAgentId, text, latest.id));
-    if (dispatchSeq !== undefined) {
-      const after = this.get(task.id);
-      if (
-        !after ||
-        after.dispatchSeq !== dispatchSeq ||
-        after.assigneeAgentId !== latest.assigneeAgentId
-      ) {
-        throw new TaskHttpError(
-          409,
-          'assign_superseded',
-          'A newer assign superseded this dispatch.',
-        );
-      }
-    }
+    this.assertAssignDispatch(task.id, dispatchSeq);
   }
 
   private async promptFor(task: Task): Promise<string> {

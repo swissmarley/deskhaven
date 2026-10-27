@@ -69,18 +69,18 @@ export async function collectHookFilesInMerge(
   }
 }
 
-/** Basenames (or full relative paths) of files that can change what hooks run. */
+/** Basenames of files that can change what hooks run. */
 export const HOOK_RUNNER_BASENAME =
-  /^(?:package\.json|\.lintstagedrc(?:\..+)?|lint-staged\.config\..+|lefthook(?:-local)?\.(?:ya?ml)|\.lefthook(?:\..*)?|commitlint\.config\..+|\.commitlintrc(?:\..+)?|\.huskyrc(?:\..+)?|simple-git-hooks\.(?:ya?ml|json)|\.pre-commit-config\.(?:ya?ml|yml))$/i;
+  /^(?:package\.(?:json|ya?ml)|\.lintstagedrc(?:\..+)?|lint-staged\.config\..+|\.?lefthook(?:-local)?(?:\..+|rc)?|commitlint\.config\..+|\.commitlintrc(?:\..+)?|\.huskyrc(?:\..+)?|\.?simple-git-hooks(?:\..+)?|\.pre-commit-config\.ya?ml)$/i;
 
 export function isHookRunnerPath(filePath: string, ignoreCase: boolean): boolean {
   const norm = normPath(filePath);
-  const parts = norm.split('/');
-  const base = parts.at(-1) ?? '';
+  const withSlash = `/${norm}`;
+  if (norm === '.lefthook' || norm.startsWith('.lefthook/')) return true;
+  if (withSlash.includes('/.lefthook/')) return true;
+  if (withSlash.includes('/.config/lefthook.')) return true;
+  const base = norm.split('/').at(-1) ?? '';
   const baseCmp = ignoreCase ? base.toLowerCase() : base;
-  if (baseCmp === 'package.json') return true;
-  if (norm.includes('/.config/lefthook.')) return true;
-  if (norm.includes('/.lefthook/')) return true;
   return HOOK_RUNNER_BASENAME.test(baseCmp);
 }
 

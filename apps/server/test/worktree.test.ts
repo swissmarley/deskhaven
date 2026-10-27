@@ -450,6 +450,34 @@ describe('merging a worktree branch', { timeout: 20_000 }, () => {
     fs.rmSync(data, { recursive: true, force: true });
   });
 
+  it('detects hook edits through a chained symlink hook entry', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    git(repo, 'config', 'core.hooksPath', '.husky');
+    const script = path.join(repo, 'scripts', 'run.sh');
+    fs.mkdirSync(path.dirname(script), { recursive: true });
+    fs.writeFileSync(script, '#!/bin/sh\nexit 0\n');
+    fs.chmodSync(script, 0o755);
+    const linkB = path.join(repo, 'link-b');
+    fs.symlinkSync('scripts/run.sh', linkB);
+    fs.mkdirSync(path.join(repo, '.husky'));
+    fs.symlinkSync('../link-b', path.join(repo, '.husky', 'pre-commit'));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'chained hook symlink');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(repo, 'chainhook9999', 'Chain');
+    fs.writeFileSync(path.join(wt.path, 'scripts', 'run.sh'), '#!/bin/sh\necho evil\n');
+    fs.chmodSync(path.join(wt.path, 'scripts', 'run.sh'), 0o755);
+    await svc.commitAll(wt, 'change chained target');
+    const blocked = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'nope', {
+      consentedHookFiles: [],
+    });
+    expect(blocked).toMatchObject({ ok: false, code: 'hooks_changed' });
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
   it('detects hook edits through a symlink hook entry in the hooks directory', async () => {
     const repo = tmpRepo();
     identity(repo);

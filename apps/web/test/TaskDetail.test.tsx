@@ -102,6 +102,7 @@ const preview = {
   files: [{ path: 'b.txt', status: 'A' }],
   canMerge: true,
   branchSha: 'abc1234567890',
+  previewTree: '0000000000000000000000000000000000000001',
 };
 
 describe('TaskDetail merge conflict', () => {
@@ -154,7 +155,7 @@ describe('TaskDetail merge conflict', () => {
       strategy: 'merge',
       expectedBranchSha: 'abc1234567890',
       consentedHookFiles: [],
-      previewDirty: false,
+      previewTree: '0000000000000000000000000000000000000001',
     });
   });
 
@@ -191,7 +192,7 @@ describe('TaskDetail merge conflict', () => {
       strategy: 'squash',
       expectedBranchSha: 'abc1234567890',
       consentedHookFiles: ['.husky/pre-commit'],
-      previewDirty: false,
+      previewTree: '0000000000000000000000000000000000000001',
       allowHookChanges: true,
     });
   });

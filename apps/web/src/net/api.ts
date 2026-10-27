@@ -5,7 +5,7 @@ import type {
   CreateAgent,
   CreateTask,
   MergePreview,
-  MergeStrategy,
+  MergeTask,
   PermissionRequest,
   RolePreset,
   Room,
@@ -101,18 +101,8 @@ export const api = {
   nudgeTask: (id: string, text: string) =>
     call<{ ok: true }>('POST', `/api/tasks/${id}/nudge`, { text }),
   mergePreview: (id: string) => call<MergePreview>('GET', `/api/tasks/${id}/merge-preview`),
-  mergeTask: (
-    id: string,
-    body: {
-      strategy?: MergeStrategy;
-      message?: string;
-      allowHookChanges?: boolean;
-      skipHooks?: boolean;
-      expectedBranchSha?: string;
-      consentedHookFiles?: string[];
-      previewDirty?: boolean;
-    } = {},
-  ) => call<{ task: Task }>('POST', `/api/tasks/${id}/merge`, body),
+  mergeTask: (id: string, body: MergeTask) =>
+    call<{ task: Task }>('POST', `/api/tasks/${id}/merge`, body),
   resolveMerge: (id: string) =>
     call<{ ok: true }>('POST', `/api/tasks/${id}/merge/resolve-with-agent`, {}),
   rooms: () => call<Room[]>('GET', '/api/rooms'),

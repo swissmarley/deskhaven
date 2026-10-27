@@ -55,6 +55,10 @@ describe('hook-detect', () => {
     expect(isHookRunnerPath('lefthook-local.yaml', false)).toBe(true);
     expect(isHookRunnerPath('.config/lefthook.yml', false)).toBe(true);
     expect(isHookRunnerPath('simple-git-hooks.json', false)).toBe(true);
+    expect(isHookRunnerPath('.simple-git-hooks.js', false)).toBe(true);
+    expect(isHookRunnerPath('lefthook.toml', false)).toBe(true);
+    expect(isHookRunnerPath('.lefthook/pre-commit', false)).toBe(true);
+    expect(isHookRunnerPath('package.yaml', false)).toBe(true);
     expect(hookRunnerFilesInDiff(['commitlint.config.cjs', 'README.md'], false)).toEqual([
       'commitlint.config.cjs',
     ]);

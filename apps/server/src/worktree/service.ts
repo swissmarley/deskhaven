@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { isInside } from '../agent/diff-tracker.js';
@@ -8,7 +10,6 @@ import {
   hookFileSetsEqual,
   hookFilesFromDiffNames,
   hookRunnerFilesInDiff,
-  pathMatchesHookPrefix,
   splitNameOnlyZ,
 } from './hook-detect.js';
 
@@ -226,11 +227,7 @@ export class WorktreeService {
   }
 
   async isDirty(worktreePath: string): Promise<boolean> {
-    const { stdout } = await run('git', ['status', '--porcelain'], {
-      cwd: worktreePath,
-      timeout: 20_000,
-    });
-    return stdout.trim().length > 0;
+    return (await this.git(worktreePath, ['status', '--porcelain'])).trim().length > 0;
   }
 
   /**
@@ -433,20 +430,61 @@ export class WorktreeService {
     await this.git(wt.path, ['add', '-A'], 60_000);
     if (!(await this.isDirty(wt.path))) return { committed: false };
     const identity = await this.identityArgs(wt.path, { sign: false });
-    await this.git(
-      wt.path,
-      ['-c', 'core.hooksPath=/dev/null', ...identity, 'commit', '--no-verify', '-m', message],
-      60_000,
-    );
+    await this.git(wt.path, [...identity, 'commit', '--no-verify', '-m', message], 60_000);
     return { committed: true, commit: (await this.git(wt.path, ['rev-parse', 'HEAD'])).trim() };
+  }
+
+  async headSha(dir: string): Promise<string> {
+    return (await this.git(dir, ['rev-parse', 'HEAD'])).trim();
+  }
+
+  async headTree(dir: string): Promise<string> {
+    return (await this.git(dir, ['rev-parse', 'HEAD^{tree}'])).trim();
+  }
+
+  /**
+   * Tree that `commitAll` would write: `read-tree HEAD`, `add -A`, `write-tree`, with hooks disabled.
+   * Binds merge consent to exact worktree content, not only paths.
+   */
+  async previewTree(worktreePath: string): Promise<string> {
+    const indexPath = path.join(os.tmpdir(), `deskhaven-idx-${randomUUID()}`);
+    const env = { ...process.env, GIT_INDEX_FILE: indexPath };
+    const runIndex = async (args: string[]) => {
+      const { stdout } = await run('git', ['-c', 'core.hooksPath=/dev/null', ...args], {
+        cwd: worktreePath,
+        timeout: 60_000,
+        env,
+      });
+      return stdout;
+    };
+    try {
+      await runIndex(['read-tree', 'HEAD']);
+      await runIndex(['add', '-A']);
+      return (await runIndex(['write-tree'])).trim();
+    } finally {
+      for (const p of [indexPath, `${indexPath}.lock`]) {
+        try {
+          fs.unlinkSync(p);
+        } catch {
+          // ignore
+        }
+      }
+    }
   }
 
   /**
    * Paths under the source hooks directory that differ on `branch` from `target`, plus hook-runner
    * config files in the same merge range. Fails closed when the diff cannot be computed.
    */
-  async headSha(dir: string): Promise<string> {
-    return (await this.git(dir, ['rev-parse', 'HEAD'])).trim();
+  async hookFilesInMerge(
+    sourceRoot: string,
+    branch: string,
+    target: string,
+  ): Promise<HookMergeCheck & { runnerFiles?: string[] }> {
+    assertBranchName(branch);
+    assertBranchName(target);
+    const branchSha = await this.resolveBranchCommit(sourceRoot, branch);
+    return this.hookFilesInMergeAt(sourceRoot, target, branchSha);
   }
 
   /**
@@ -463,12 +501,15 @@ export class WorktreeService {
     try {
       const names = await this.mergeRangeNames(sourceRoot, target, branchSha);
       const fromRange = hookFilesFromDiffNames(names, prefixes, ignoreCase);
-      const fromWorktree = await this.uncommittedHookPaths(worktreePath, prefixes, ignoreCase);
+      const porcelainPaths = await this.uncommittedPaths(worktreePath);
+      const fromWorktree = hookFilesFromDiffNames(porcelainPaths, prefixes, ignoreCase);
       const files = [...new Set([...fromRange, ...fromWorktree])].sort();
+      const runnersFromRange = hookRunnerFilesInDiff(names, ignoreCase);
+      const runnersFromWt = hookRunnerFilesInDiff(porcelainPaths, ignoreCase);
       return {
         ok: true,
         files,
-        runnerFiles: hookRunnerFilesInDiff(names, ignoreCase),
+        runnerFiles: [...new Set([...runnersFromRange, ...runnersFromWt])].sort(),
       };
     } catch {
       return {
@@ -477,17 +518,6 @@ export class WorktreeService {
         message: 'Could not verify whether this merge changes git hook scripts.',
       };
     }
-  }
-
-  async hookFilesInMerge(
-    sourceRoot: string,
-    branch: string,
-    target: string,
-  ): Promise<HookMergeCheck & { runnerFiles?: string[] }> {
-    assertBranchName(branch);
-    assertBranchName(target);
-    const branchSha = await this.resolveBranchCommit(sourceRoot, branch);
-    return this.hookFilesInMergeAt(sourceRoot, target, branchSha);
   }
 
   private async hookFilesInMergeAt(
@@ -612,11 +642,11 @@ export class WorktreeService {
       };
     }
     const identity = await this.identityArgs(sourceRoot);
-    const hookSkip = options.skipHooks ? ['-c', 'core.hooksPath=/dev/null'] : ([] as string[]);
     const verifyOff = options.skipHooks ? ['--no-verify'] : ([] as string[]);
+    const hooksOn = !options.skipHooks;
     try {
       if (strategy === 'squash') {
-        await this.git(sourceRoot, [...hookSkip, 'merge', '--squash', '--', branchSha], 60_000);
+        await this.git(sourceRoot, ['merge', '--squash', '--', branchSha], 60_000);
         const staged = (await this.git(sourceRoot, ['diff', '--cached', '--name-only'])).trim();
         const headNow = (await this.git(sourceRoot, ['rev-parse', 'HEAD'])).trim();
         if (!staged && headNow === headBefore) {
@@ -630,8 +660,10 @@ export class WorktreeService {
         try {
           await this.git(
             sourceRoot,
-            [...hookSkip, ...identity, 'commit', ...verifyOff, '-m', message],
+            [...identity, 'commit', ...verifyOff, '-m', message],
             60_000,
+            1024 * 1024,
+            { allowRepoHooks: hooksOn },
           );
         } catch (err) {
           await this.restoreSource(sourceRoot, 'squash');
@@ -645,18 +677,10 @@ export class WorktreeService {
       } else {
         await this.git(
           sourceRoot,
-          [
-            ...hookSkip,
-            ...identity,
-            'merge',
-            '--no-ff',
-            ...verifyOff,
-            '-m',
-            message,
-            '--',
-            branchSha,
-          ],
+          [...identity, 'merge', '--no-ff', ...verifyOff, '-m', message, '--', branchSha],
           60_000,
+          1024 * 1024,
+          { allowRepoHooks: hooksOn },
         );
         const headNow = (await this.git(sourceRoot, ['rev-parse', 'HEAD'])).trim();
         if (headNow === headBefore) {
@@ -812,13 +836,9 @@ export class WorktreeService {
   private async hookDirMeta(
     sourceRoot: string,
   ): Promise<{ prefixes: string[]; ignoreCase: boolean }> {
-    const ignoreCase =
-      (await this.optionalGit(sourceRoot, ['config', '--get', 'core.ignorecase'])).trim() ===
-      'true';
+    const ignoreCase = (await this.readConfig(sourceRoot, 'core.ignorecase')) === 'true';
     const out = new Set<string>();
-    const configured = (
-      await this.optionalGit(sourceRoot, ['config', '--get', 'core.hooksPath'])
-    ).trim();
+    const configured = await this.readConfig(sourceRoot, 'core.hooksPath');
     const addPrefix = (hooksPath: string) => {
       if (!hooksPath) return;
       const abs = path.isAbsolute(hooksPath) ? hooksPath : path.resolve(sourceRoot, hooksPath);
@@ -863,38 +883,78 @@ export class WorktreeService {
         const meta = entry.slice(0, tab);
         const filePath = entry.slice(tab + 1);
         if (!meta.startsWith('120000 ')) continue;
-        let target = '';
-        try {
-          target = (await this.git(sourceRoot, ['show', `HEAD:${filePath}`])).trim();
-        } catch {
-          continue;
-        }
-        const dir = path.posix.dirname(filePath.replace(/\\/g, '/'));
-        const resolved = path.posix.normalize(dir === '.' ? target : path.posix.join(dir, target));
-        if (resolved.startsWith('../')) continue;
+        const resolved = await this.resolveSymlinkChain(sourceRoot, filePath);
+        if (!resolved || resolved.startsWith('../')) continue;
         out.add(resolved);
-        const parent = path.posix.dirname(resolved);
-        if (parent && parent !== '.') out.add(parent);
+        if (await this.isTreeAtHead(sourceRoot, resolved)) {
+          const parent = path.posix.dirname(resolved);
+          if (parent && parent !== '.') out.add(parent);
+        }
       }
     }
     return [...out];
   }
 
-  private async uncommittedHookPaths(
-    worktreePath: string,
-    prefixes: string[],
-    ignoreCase: boolean,
-  ): Promise<string[]> {
-    const out: string[] = [];
-    try {
-      const porcelain = await this.git(worktreePath, ['status', '--porcelain=v1', '-z']);
-      for (const file of parsePorcelainZ(porcelain)) {
-        if (pathMatchesHookPrefix(file.path, prefixes, ignoreCase)) out.push(file.path);
+  private async resolveSymlinkChain(sourceRoot: string, startPath: string): Promise<string | null> {
+    let current = startPath.replace(/\\/g, '/');
+    for (let depth = 0; depth < 8; depth++) {
+      const entry = await this.lsTreeEntry(sourceRoot, current);
+      if (!entry) return null;
+      if (!entry.mode.startsWith('120000')) {
+        return path.posix.normalize(current);
       }
-    } catch {
-      // ignore
+      let target = '';
+      try {
+        target = (await this.git(sourceRoot, ['show', `HEAD:${current}`])).trim();
+      } catch {
+        return null;
+      }
+      const dir = path.posix.dirname(current);
+      current = path.posix.normalize(dir === '.' ? target : path.posix.join(dir, target));
+      if (current.startsWith('../')) return null;
     }
-    return out;
+    return null;
+  }
+
+  private async lsTreeEntry(
+    sourceRoot: string,
+    filePath: string,
+  ): Promise<{ mode: string } | null> {
+    try {
+      const out = await this.git(sourceRoot, ['ls-tree', 'HEAD', '--', filePath]);
+      const line = out
+        .split('\n')
+        .map((l) => l.trim())
+        .find(Boolean);
+      if (!line) return null;
+      const mode = line.split(/\s+/)[0] ?? '';
+      return { mode };
+    } catch {
+      return null;
+    }
+  }
+
+  private async isTreeAtHead(sourceRoot: string, filePath: string): Promise<boolean> {
+    try {
+      const kind = (await this.git(sourceRoot, ['cat-file', '-t', `HEAD:${filePath}`])).trim();
+      return kind === 'tree';
+    } catch {
+      return false;
+    }
+  }
+
+  private async uncommittedPaths(worktreePath: string): Promise<string[]> {
+    try {
+      const porcelain = await this.git(worktreePath, [
+        'status',
+        '--porcelain=v1',
+        '-z',
+        '--untracked-files=all',
+      ]);
+      return parsePorcelainZ(porcelain).map((f) => f.path);
+    } catch {
+      return [];
+    }
   }
 
   private async assertOnBranch(wt: WorktreeInfo): Promise<void> {
@@ -955,19 +1015,35 @@ export class WorktreeService {
     return args;
   }
 
+  /** Read repository config without `core.hooksPath=/dev/null`, which would mask the real hooksPath. */
+  private async readConfig(cwd: string, key: string): Promise<string> {
+    try {
+      const { stdout } = await run('git', ['config', '--get', key], { cwd, timeout: 20_000 });
+      return stdout.trim();
+    } catch {
+      return '';
+    }
+  }
+
   private async git(
     cwd: string,
     args: string[],
     timeout = 20_000,
     maxBuffer = 1024 * 1024,
+    opts?: { allowRepoHooks?: boolean },
   ): Promise<string> {
-    const { stdout } = await run('git', args, { cwd, timeout, maxBuffer });
+    const prefix = opts?.allowRepoHooks ? [] : ['-c', 'core.hooksPath=/dev/null'];
+    const { stdout } = await run('git', [...prefix, ...args], { cwd, timeout, maxBuffer });
     return stdout;
   }
 
-  private async optionalGit(cwd: string, args: string[]): Promise<string> {
+  private async optionalGit(
+    cwd: string,
+    args: string[],
+    opts?: { allowRepoHooks?: boolean },
+  ): Promise<string> {
     try {
-      return await this.git(cwd, args);
+      return await this.git(cwd, args, 20_000, 1024 * 1024, opts);
     } catch {
       return '';
     }

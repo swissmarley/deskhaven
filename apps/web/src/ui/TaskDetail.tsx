@@ -43,7 +43,7 @@ export function TaskDetail({
         .map((f) => `${f.status}:${f.path}`)
         .join(
           '|',
-        )}:${preview.branchSha ?? ''}:${(preview.hookFiles ?? []).join('|')}:${(preview.runnerFiles ?? []).join('|')}`
+        )}:${preview.branchSha ?? ''}:${preview.previewTree}:${(preview.hookFiles ?? []).join('|')}:${(preview.runnerFiles ?? []).join('|')}`
     : 'none';
   const previewKey = `${taskId}:${strategy}:${previewSig}`;
   const confirmKey = `${previewKey}:${allowHookChanges}:${skipHooks}`;
@@ -125,7 +125,7 @@ export function TaskDetail({
         strategy,
         expectedBranchSha: preview.branchSha,
         consentedHookFiles: preview.hookFiles ?? [],
-        previewDirty: preview.dirty,
+        previewTree: preview.previewTree,
         ...(allowHookChanges ? { allowHookChanges: true } : {}),
         ...(skipHooks ? { skipHooks: true } : {}),
       });
