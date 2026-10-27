@@ -49,7 +49,11 @@ describe('stopping an agent that waits for a desk', () => {
     const busy = h.hire('Busy');
     const queued = h.hire('Queued');
     h.manager.sendPrompt(busy.id, 'first', null);
-    const task = h.tasks.create({ title: 'Later', prompt: 'do it', assigneeAgentId: queued.id });
+    const task = await h.tasks.create({
+      title: 'Later',
+      prompt: 'do it',
+      assigneeAgentId: queued.id,
+    });
     expect(h.tasks.get(task.id)?.status).toBe('assigned');
     await h.manager.stop(queued.id);
     expect(h.tasks.get(task.id)?.status).toBe('needs_input');

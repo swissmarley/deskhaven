@@ -26,6 +26,7 @@ export function InspectorPanel(): JSX.Element {
   const selectAgent = useAppStore((s) => s.selectAgent);
   const [text, setText] = useState('');
   const [editing, setEditing] = useState(false);
+  const [deleteBranch, setDeleteBranch] = useState(false);
 
   if (!agent || !id)
     return <p className="muted">Click an avatar or pick an agent from the HR desk.</p>;
@@ -46,11 +47,14 @@ export function InspectorPanel(): JSX.Element {
       pushNotice('error', String(err instanceof Error ? err.message : err), id);
     }
   };
+  const finishRemove = (res: { warning?: string }) => {
+    if (res.warning) pushNotice('warn', res.warning, id);
+    selectAgent(null);
+  };
   const remove = async () => {
     if (!confirm(`Fire ${agent.name}? The session transcript stays on disk.`)) return;
     try {
-      await api.deleteAgent(id);
-      selectAgent(null);
+      finishRemove(await api.deleteAgent(id, false, deleteBranch));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (
@@ -58,8 +62,7 @@ export function InspectorPanel(): JSX.Element {
         confirm(`${message}\n\nRemove the worktree anyway and lose those changes?`)
       ) {
         try {
-          await api.deleteAgent(id, true);
-          selectAgent(null);
+          finishRemove(await api.deleteAgent(id, true, deleteBranch));
           return;
         } catch (err2) {
           pushNotice('error', String(err2 instanceof Error ? err2.message : err2), id);
@@ -155,6 +158,16 @@ export function InspectorPanel(): JSX.Element {
           Fire
         </button>
       </div>
+      {agent.worktree ? (
+        <label className="small">
+          <input
+            type="checkbox"
+            checked={deleteBranch}
+            onChange={(e) => setDeleteBranch(e.target.checked)}
+          />{' '}
+          Also delete the branch if it is already merged
+        </label>
+      ) : null}
       {pending.map((p) => (
         <PermissionCard key={p.id} request={p} compact />
       ))}

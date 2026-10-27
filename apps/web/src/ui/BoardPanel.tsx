@@ -155,6 +155,9 @@ function Card({ task, onOpen }: { task: Task; onOpen: (id: string) => void }): J
         {task.filesChanged.length ? (
           <span className="muted">{task.filesChanged.length} files</span>
         ) : null}
+        {task.merge?.status === 'merged' && task.merge.commit ? (
+          <span className="pill ok">merged {task.merge.commit.slice(0, 7)}</span>
+        ) : null}
       </div>
       {task.resultSummary &&
       (task.status === 'review' || task.status === 'done' || task.status === 'needs_input') ? (
@@ -170,11 +173,17 @@ function CreateTaskForm({ onDone }: { onDone: () => void }): JSX.Element {
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
   const [assignee, setAssignee] = useState('');
+  const [reviewOf, setReviewOf] = useState('');
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     setBusy(true);
     try {
-      await api.createTask({ title, prompt, assigneeAgentId: assignee || null });
+      await api.createTask({
+        title,
+        prompt,
+        assigneeAgentId: assignee || null,
+        reviewOfAgentId: reviewOf || null,
+      });
       onDone();
     } catch (err) {
       pushNotice('error', String(err instanceof Error ? err.message : err));
@@ -220,6 +229,17 @@ function CreateTaskForm({ onDone }: { onDone: () => void }): JSX.Element {
         placeholder="What should the agent do? This becomes the prompt."
         required
       />
+      <label className="small">
+        Review work of{' '}
+        <select value={reviewOf} onChange={(e) => setReviewOf(e.target.value)}>
+          <option value="">None</option>
+          {agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name} · {a.rolePresetId}
+            </option>
+          ))}
+        </select>
+      </label>
     </form>
   );
 }

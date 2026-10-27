@@ -89,6 +89,14 @@ export class AgentRuntime {
   private restarting = false;
   /** Bumped by stop(), so a credentials restart that is still winding down does not respawn. */
   private stopGeneration = 0;
+  /**
+   * Directories the session may read besides its cwd (a reviewer's view of an engineer worktree).
+   * The CLI only honours these as `--add-dir` at process start, including when `--resume` is set, so a
+   * change restarts the process on the same session id.
+   */
+  private extraReadDirs: string[] = [];
+  /** Directories the live process was spawned with. */
+  private sessionReadDirs: string[] = [];
 
   constructor(
     private agent: Agent,
@@ -126,6 +134,21 @@ export class AgentRuntime {
     this.diffs = new DiffTracker(this.cwd());
   }
 
+  /**
+   * Extra directories passed to the CLI as `--add-dir`. Read/Grep/Glob can use them; the edit guard
+   * still refuses writes outside cwd. A running session is restarted (and resumed) before the next
+   * prompt when the list changes.
+   */
+  setExtraReadDirs(dirs: string[]): void {
+    const next = [...new Set(dirs.filter((d) => d.length > 0))].sort();
+    if (
+      next.length === this.extraReadDirs.length &&
+      next.every((d, i) => d === this.extraReadDirs[i])
+    )
+      return;
+    this.extraReadDirs = next;
+  }
+
   private cwd(): string {
     return agentCwd(this.agent);
   }
@@ -158,7 +181,7 @@ export class AgentRuntime {
       allowedTools: this.agent.allowedTools,
       permissionMode: this.agent.permissionMode,
       env,
-      additionalDirectories: [],
+      additionalDirectories: this.extraReadDirs,
       // Only Deskhaven's own MCP servers: the user's global connectors must not leak into agents.
       strictMcpConfig: true,
       ...(this.sessionId ? { resume: this.sessionId } : {}),
@@ -167,6 +190,7 @@ export class AgentRuntime {
     };
     const mcp = this.deps.mcpServers?.(this.agent);
     if (mcp) cfg.mcpServers = mcp;
+    this.sessionReadDirs = [...this.extraReadDirs];
     const cb: SessionCallbacks = {
       onMessage: (m) => this.handleMessage(m),
       onHook: (input, toolUseId) => this.handleHook(input, toolUseId),
@@ -287,20 +311,22 @@ export class AgentRuntime {
     return this.sessionAuth !== null && this.deps.auth() !== this.sessionAuth;
   }
 
+  private readDirsChanged(): boolean {
+    if (this.sessionReadDirs.length !== this.extraReadDirs.length) return true;
+    return this.sessionReadDirs.some((d, i) => d !== this.extraReadDirs[i]);
+  }
+
   /**
-   * The SDK fixes the subprocess env at spawn, so a key added (or removed, or a mode switch) in
-   * Settings would never reach a running agent. Between turns the process is ended and respawned on
-   * the same session id; the queued prompt then runs with the current credentials.
+   * The SDK fixes subprocess options at spawn (env, and `--add-dir`). Between turns the process is
+   * ended and respawned on the same session id; the queued prompt then runs with the new options.
+   * `--resume` does not drop `--add-dir`: both are launch flags of the new process.
    */
-  private async restartForCredentials(): Promise<void> {
+  private async restartBeforeTurn(reason: string): Promise<void> {
     const s = this.session;
     if (!s || this.restarting) return;
     this.restarting = true;
     const generation = this.stopGeneration;
-    this.deps.log.info(
-      { agentId: this.agent.id },
-      'credentials changed; restarting the session before the next turn',
-    );
+    this.deps.log.info({ agentId: this.agent.id }, reason);
     this.stopping = true;
     s.prompts.end();
     const timeout = new Promise<void>((r) => setTimeout(r, this.deps.stopGraceMs ?? 5000));
@@ -377,7 +403,15 @@ export class AgentRuntime {
   private dispatchNext(): void {
     if (!this.session || !this.queue.length) return;
     if (this.credentialsChanged()) {
-      void this.restartForCredentials();
+      void this.restartBeforeTurn(
+        'credentials changed; restarting the session before the next turn',
+      );
+      return;
+    }
+    if (this.readDirsChanged()) {
+      void this.restartBeforeTurn(
+        'read directories changed; restarting the session before the next turn',
+      );
       return;
     }
     const next = this.queue.shift();

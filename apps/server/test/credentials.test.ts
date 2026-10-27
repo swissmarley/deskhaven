@@ -84,7 +84,7 @@ describe('API key mode without a key', () => {
     const h = managerHarness({ cap: 2, auth: () => noKey });
     const noKey = apiKeyAuth(null);
     const a = h.hire('Ada');
-    const task = h.tasks.create({ title: 't', prompt: 'p', assigneeAgentId: a.id });
+    const task = await h.tasks.create({ title: 't', prompt: 'p', assigneeAgentId: a.id });
     await tick();
     expect(h.sessions).toHaveLength(0);
     expect(h.agents.get(a.id)?.status).toBe('error');

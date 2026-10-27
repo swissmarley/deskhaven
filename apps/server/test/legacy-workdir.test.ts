@@ -65,7 +65,7 @@ describe('agents stored with a now-forbidden workdir', () => {
     const h = managerHarness({ cap: 2 });
     const a = h.hire('Legacy');
     h.agents.patch(a.id, (x) => ({ ...x, workdir: '/' }));
-    const task = h.tasks.create({ title: 't', prompt: 'p', assigneeAgentId: a.id });
+    const task = await h.tasks.create({ title: 't', prompt: 'p', assigneeAgentId: a.id });
     await tick();
     expect(h.sessions).toHaveLength(0);
     const stored = h.agents.get(a.id);

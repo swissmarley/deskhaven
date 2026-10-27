@@ -252,7 +252,9 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
    subfolder inside it); your own working copy stays untouched, and several engineers can work in parallel on
    the same repository. Hiring fails with a clear error if the folder is not a git repository. Uncommitted
    changes in your checkout are *not* copied into the worktree (the Feed shows a warning when there are
-   some). **Fire** removes the worktree folder but keeps the branch; if the worktree has uncommitted
+   some). **Fire** removes the worktree folder. The branch stays unless you tick **Also delete the
+   branch if it is already merged**, which runs `git branch -d` (never a force delete): a branch that
+   still has work is kept and the app warns you. If the worktree has uncommitted
    changes, firing is refused and the app asks before forcing it. If you moved or deleted the source
    repository, Deskhaven cannot check the worktree, so firing is refused the same way; forcing it deletes
    the worktree folder directly (run `git worktree prune` in a moved repository to drop its stale entry). A worktree agent's repository cannot be
@@ -261,8 +263,22 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
    let an **Engineer** edit.
 4. Keep the permission mode on **ask** for the first session, and lower the agent's daily cap in
    **Advanced** (for example 2 USD) so a runaway task stops early.
-5. Create a small, concrete task and assign it. Review the diff in the Inspector before merging anything
-   from the worktree branch yourself (`git log` and `git diff` in that directory work as usual).
+5. Create a small, concrete task and assign it. When the task is in **Review** or **Done** and the
+   assignee has a worktree, the task detail shows **Merge**: the branch, how far ahead it is, and the
+   files. **Accept & merge** commits whatever is still uncommitted in the worktree, then integrates
+   that branch into the branch your own checkout is on. The default is a squash commit (one commit per
+   merge, easy to undo); choose **Merge commit (--no-ff)** if you want a merge commit instead.
+   Deskhaven never switches your branch and never merges into a checkout that has uncommitted tracked
+   changes or a detached HEAD — it refuses with a clear error and leaves your files as they were.
+   A conflict is aborted automatically (your checkout is unchanged); the dialog lists the files and
+   offers **Ask agent to resolve**, which tells the agent to integrate your branch inside its own
+   worktree, and **Copy git commands** if you would rather finish the merge yourself. The merge covers
+   every change on that agent's branch, not only the one task, because the worktree belongs to the
+   agent. After a successful merge the worktree is realigned to your branch so the next task starts
+   clean, and the card shows `merged` plus the short commit id. **Only mark done** skips git.
+   To have someone else read the work first, use **Request review** (or **Review work of** on a new
+   task). The reviewer is pointed at the engineer's worktree and diff, and still cannot edit it.
+   `git log` and `git diff` in the worktree directory work as usual.
 
 If the repository contains a `CLAUDE.md`, agents load it (project settings only; your personal
 `~/.claude` settings and MCP servers are deliberately not loaded into agents).

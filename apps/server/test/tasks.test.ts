@@ -1,10 +1,17 @@
-import { type Agent, type AgentEvent, AgentSchema, emptyUsage } from '@deskhaven/shared';
+import {
+  type Agent,
+  type AgentEvent,
+  AgentSchema,
+  emptyUsage,
+  TaskSchema,
+} from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import type { AgentManager } from '../src/agent/manager.js';
 import type { AgentService } from '../src/agents/service.js';
 import { openDb } from '../src/db/client.js';
+import { tasks as tasksTable } from '../src/db/schema.js';
 import { EventStore } from '../src/events/store.js';
-import { buildTaskPrompt, TaskService } from '../src/tasks/service.js';
+import { buildTaskPrompt, REVIEW_DIFF_LIMIT, TaskService } from '../src/tasks/service.js';
 import type { WorktreeService } from '../src/worktree/service.js';
 import { WsHub } from '../src/ws/hub.js';
 
@@ -46,6 +53,8 @@ function setup() {
   const manager = {
     sendPrompt: (agentId: string, text: string, taskId: string | null) =>
       sent.push({ agentId, text, taskId }),
+    setExtraReadDirs: () => {},
+    get: () => undefined,
   } as unknown as AgentManager;
   const agents = {
     get: (id: string) => (id === 'a1' ? agent : undefined),
@@ -61,18 +70,18 @@ function setup() {
     log: { warn() {} },
   });
   events.onEvent((e) => tasks.onEvent(e));
-  return { tasks, events, sent };
+  return { tasks, events, sent, db };
 }
 
 const ev = (partial: Partial<AgentEvent> & { type: AgentEvent['type'] }): AgentEvent =>
   ({ id: Math.random().toString(36).slice(2), ts: 1, agentId: 'a1', ...partial }) as AgentEvent;
 
 describe('TaskService', () => {
-  it('creates in backlog, assigns, and dispatches the prompt tagged with the task id', () => {
+  it('creates in backlog, assigns, and dispatches the prompt tagged with the task id', async () => {
     const { tasks, sent, events } = setup();
-    const t = tasks.create({ title: 'Fix mean', prompt: 'mean() divides by n+1' });
+    const t = await tasks.create({ title: 'Fix mean', prompt: 'mean() divides by n+1' });
     expect(t.status).toBe('backlog');
-    const assigned = tasks.assign(t.id, 'a1');
+    const assigned = await tasks.assign(t.id, 'a1');
     expect(assigned.status).toBe('assigned');
     expect(assigned.assigneeAgentId).toBe('a1');
     expect(sent).toEqual([{ agentId: 'a1', text: buildTaskPrompt(assigned), taskId: t.id }]);
@@ -81,12 +90,12 @@ describe('TaskService', () => {
       taskId: t.id,
       title: 'Fix mean',
     });
-    expect(() => tasks.assign(t.id, 'nope')).toThrow(/Unknown agent/);
+    await expect(tasks.assign(t.id, 'nope')).rejects.toThrow(/Unknown agent/);
   });
 
   it('moves across columns from agent events and captures result, cost and files', async () => {
     const { tasks, events } = setup();
-    const t = tasks.create({ title: 'T', prompt: 'p', assigneeAgentId: 'a1' });
+    const t = await tasks.create({ title: 'T', prompt: 'p', assigneeAgentId: 'a1' });
     expect(tasks.get(t.id)?.status).toBe('assigned');
     events.append(ev({ type: 'status', status: 'working', taskId: t.id }));
     expect(tasks.get(t.id)?.status).toBe('in_progress');
@@ -142,16 +151,16 @@ describe('TaskService', () => {
       { path: 'src/stats.ts', additions: 1, deletions: 1 },
     ]);
     expect(events.list({ types: ['task_done'] })[0]).toMatchObject({ taskId: t.id, ok: true });
-    tasks.update(t.id, { status: 'done' });
+    await tasks.update(t.id, { status: 'done' });
     expect(tasks.get(t.id)?.completedAt).not.toBeNull();
     // done tasks ignore later events
     events.append(ev({ type: 'status', status: 'working', taskId: t.id }));
     expect(tasks.get(t.id)?.status).toBe('done');
   });
 
-  it('a failed turn lands in needs_input with the error as summary', () => {
+  it('a failed turn lands in needs_input with the error as summary', async () => {
     const { tasks, events } = setup();
-    const t = tasks.create({ title: 'T', prompt: 'p', assigneeAgentId: 'a1' });
+    const t = await tasks.create({ title: 'T', prompt: 'p', assigneeAgentId: 'a1' });
     events.append(
       ev({
         type: 'turn_completed',
@@ -171,9 +180,9 @@ describe('TaskService', () => {
     expect(tasks.get(t.id)).toMatchObject({ status: 'needs_input', resultSummary: 'max turns' });
   });
 
-  it('ignores SDK diagnostic strings as result summaries', () => {
+  it('ignores SDK diagnostic strings as result summaries', async () => {
     const { tasks, events } = setup();
-    const t = tasks.create({ title: 'T', prompt: 'p', assigneeAgentId: 'a1' });
+    const t = await tasks.create({ title: 'T', prompt: 'p', assigneeAgentId: 'a1' });
     events.append(ev({ type: 'assistant_text', taskId: t.id, text: 'halfway there' }));
     events.append(
       ev({
@@ -194,15 +203,86 @@ describe('TaskService', () => {
     expect(tasks.get(t.id)?.resultSummary).toBe('halfway there');
   });
 
-  it('reassigning through update dispatches to the new agent and nudge re-sends', () => {
+  it('reassigning through update dispatches to the new agent and nudge re-sends', async () => {
     const { tasks, sent } = setup();
-    const t = tasks.create({ title: 'T', prompt: 'p' });
-    tasks.update(t.id, { assigneeAgentId: 'a1' });
+    const t = await tasks.create({ title: 'T', prompt: 'p' });
+    await tasks.update(t.id, { assigneeAgentId: 'a1' });
     expect(sent).toHaveLength(1);
     tasks.nudge(t.id, 'please continue');
     expect(sent[1]).toEqual({ agentId: 'a1', text: 'please continue', taskId: t.id });
     expect(tasks.get(t.id)?.status).toBe('in_progress');
     tasks.remove(t.id);
     expect(tasks.get(t.id)).toBeUndefined();
+  });
+
+  it('loads a task saved before merge and reviewTarget existed', () => {
+    const { tasks, db } = setup();
+    const old = {
+      id: 'old-task',
+      title: 'Old',
+      prompt: 'p',
+      status: 'backlog',
+      assigneeAgentId: null,
+      parentTaskId: null,
+      resultSummary: null,
+      filesChanged: [],
+      costUsd: 0,
+      position: 0,
+      createdAt: 1,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: 1,
+    };
+    db.insert(tasksTable)
+      .values({
+        id: old.id,
+        json: JSON.stringify(old),
+        status: 'backlog',
+        assigneeAgentId: null,
+        position: 0,
+        updatedAt: 1,
+      })
+      .run();
+    expect(TaskSchema.parse(old).merge).toBeUndefined();
+    expect(tasks.get('old-task')).toMatchObject({ title: 'Old', status: 'backlog' });
+    expect(() => tasks.reconcileOnBoot()).not.toThrow();
+  });
+
+  it('states when a review diff is truncated', () => {
+    const task = {
+      id: 't',
+      title: 'Review',
+      prompt: 'look',
+      status: 'assigned',
+      assigneeAgentId: 'rev',
+      parentTaskId: null,
+      resultSummary: null,
+      filesChanged: [],
+      costUsd: 0,
+      position: 1,
+      createdAt: 1,
+      startedAt: 1,
+      completedAt: null,
+      updatedAt: 1,
+      reviewTarget: {
+        agentId: 'eng',
+        agentName: 'Ada',
+        path: '/wt/ada',
+        branch: 'deskhaven/ada',
+        baseBranch: 'main',
+      },
+    } as const;
+    const parsed = TaskSchema.parse(task);
+    const short = buildTaskPrompt(parsed, { diff: '+ kept\n', files: ['a.txt'] });
+    expect(short).toContain('/wt/ada');
+    expect(short).toContain('deskhaven/ada');
+    expect(short).toContain('+ kept');
+    expect(short).not.toContain('diff truncated');
+    const long = buildTaskPrompt(parsed, {
+      diff: 'x'.repeat(REVIEW_DIFF_LIMIT + 10),
+      files: ['a.txt'],
+    });
+    expect(long).toContain('[diff truncated, read the files from the path]');
+    expect(long).toContain('The diff above is truncated');
   });
 });

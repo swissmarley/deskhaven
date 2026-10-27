@@ -2,6 +2,7 @@ import {
   APP_VERSION,
   CreateAgentSchema,
   CreateTaskSchema,
+  MergeTaskSchema,
   newId,
   ResolvePermissionSchema,
   UpdateAgentSchema,
@@ -11,6 +12,7 @@ import {
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.js';
+import { TaskHttpError } from '../tasks/service.js';
 import type { WorktreeInfo } from '../worktree/service.js';
 
 const idParams = z.object({ id: z.string().min(1) });
@@ -38,6 +40,14 @@ function parse<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T 
 }
 
 function fail(reply: FastifyReply, err: unknown, code = 400): void {
+  if (err instanceof TaskHttpError) {
+    void reply.code(err.statusCode).send({
+      error: err.code,
+      message: err.message,
+      ...err.details,
+    });
+    return;
+  }
   void reply.code(code).send({ error: err instanceof Error ? err.message : String(err) });
 }
 
@@ -137,7 +147,13 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
 
   app.delete('/api/agents/:id', async (req, reply) => {
     const p = parse(idParams, req.params, reply);
-    const q = p && parse(z.object({ force: z.stringbool().optional() }), req.query, reply);
+    const q =
+      p &&
+      parse(
+        z.object({ force: z.stringbool().optional(), deleteBranch: z.stringbool().optional() }),
+        req.query,
+        reply,
+      );
     if (!p || !q) return;
     const agent = ctx.agents.get(p.id);
     if (!agent) return reply.code(404).send({ error: 'not_found' });
@@ -172,6 +188,23 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
       }
     }
     ctx.agents.remove(p.id);
+    if (q.deleteBranch && agent.worktree) {
+      const source = ctx.worktrees.sourceRoot(agent.workdir, agent.worktree);
+      try {
+        const dropped = await ctx.worktrees.deleteBranch(source, agent.worktree.branch);
+        return {
+          ok: true,
+          branchDeleted: dropped.deleted,
+          ...(dropped.warning ? { warning: dropped.warning } : {}),
+        };
+      } catch (err) {
+        return {
+          ok: true,
+          branchDeleted: false,
+          warning: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
     return { ok: true };
   });
 
@@ -221,7 +254,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(CreateTaskSchema, req.body, reply);
     if (!body) return;
     try {
-      return reply.code(201).send(ctx.tasks.create(body));
+      return reply.code(201).send(await ctx.tasks.create(body));
     } catch (err) {
       fail(reply, err);
     }
@@ -232,7 +265,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = p && parse(UpdateTaskSchema, req.body, reply);
     if (!p || !body) return;
     try {
-      return ctx.tasks.update(p.id, body);
+      return await ctx.tasks.update(p.id, body);
     } catch (err) {
       fail(reply, err);
     }
@@ -251,7 +284,39 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = p && parse(z.object({ agentId: z.string().min(1) }), req.body, reply);
     if (!p || !body) return;
     try {
-      return ctx.tasks.assign(p.id, body.agentId);
+      return await ctx.tasks.assign(p.id, body.agentId);
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  app.get('/api/tasks/:id/merge-preview', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    if (!p) return;
+    try {
+      return await ctx.tasks.mergePreview(p.id);
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  app.post('/api/tasks/:id/merge', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    const body = p && parse(MergeTaskSchema, req.body ?? {}, reply);
+    if (!p || !body) return;
+    try {
+      return { task: await ctx.tasks.merge(p.id, body) };
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  app.post('/api/tasks/:id/merge/resolve-with-agent', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    if (!p) return;
+    try {
+      ctx.tasks.resolveMergeWithAgent(p.id);
+      return { ok: true };
     } catch (err) {
       fail(reply, err);
     }
