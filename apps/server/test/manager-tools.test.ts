@@ -7,11 +7,11 @@ import type { TaskService } from '../src/tasks/service.js';
 const agent = (id: string, role: string): Agent =>
   ({
     id,
-    name: id,
+    name: id === 'eng' ? 'Ada' : id,
     rolePresetId: role,
     status: 'idle',
     workdir: '/w',
-    worktree: null,
+    worktree: id === 'eng' ? { path: '/wt/ada', branch: 'deskhaven/ada' } : null,
     currentTaskId: null,
     model: 'm',
   }) as unknown as Agent;
@@ -31,8 +31,20 @@ function setup(withIsManager = true) {
     get: (id: string) => all().find((a) => a.id === id),
   } as unknown as AgentService;
   const store = new Map<string, Task>();
+  const created: {
+    title: string;
+    prompt: string;
+    assigneeAgentId?: string | null;
+    reviewOfAgentId?: string;
+  }[] = [];
   const tasks = {
-    create: (input: { title: string; prompt: string; assigneeAgentId?: string | null }) => {
+    create: (input: {
+      title: string;
+      prompt: string;
+      assigneeAgentId?: string | null;
+      reviewOfAgentId?: string;
+    }) => {
+      created.push(input);
       const t = {
         id: `t${store.size + 1}`,
         title: input.title,
@@ -57,12 +69,17 @@ function setup(withIsManager = true) {
     get: (id: string) => store.get(id),
     list: () => [...store.values()],
   } as unknown as TaskService;
-  return managerActions({
-    agents,
-    tasks,
-    selfId: 'mgr',
-    ...(withIsManager ? { isManager: (a: Agent) => presetIsManager[a.rolePresetId] === true } : {}),
-  });
+  return {
+    ...managerActions({
+      agents,
+      tasks,
+      selfId: 'mgr',
+      ...(withIsManager
+        ? { isManager: (a: Agent) => presetIsManager[a.rolePresetId] === true }
+        : {}),
+    }),
+    created,
+  };
 }
 
 describe('manager delegation tools', () => {
@@ -73,14 +90,21 @@ describe('manager delegation tools', () => {
         .map((a) => a.id),
     ).toEqual(['eng', 'qa']);
     expect(managerToolNames()).toContain('mcp__deskhaven__create_task');
+    expect(
+      setup()
+        .listAgents()
+        .find((a) => a.id === 'eng'),
+    ).toMatchObject({
+      branch: 'deskhaven/ada',
+    });
   });
-  it('creates and assigns tasks and reports status', () => {
+  it('creates and assigns tasks and reports status', async () => {
     const a = setup();
-    const created = a.createTask({ title: 'Fix', prompt: 'do it', assigneeAgentId: 'eng' });
+    const created = await a.createTask({ title: 'Fix', prompt: 'do it', assigneeAgentId: 'eng' });
     expect(created).toMatchObject({ status: 'assigned', assigneeAgentId: 'eng' });
-    const backlog = a.createTask({ title: 'Later', prompt: 'later' });
+    const backlog = await a.createTask({ title: 'Later', prompt: 'later' });
     expect(backlog.status).toBe('backlog');
-    expect(a.assignTask({ taskId: backlog.taskId, agentId: 'qa' })).toMatchObject({
+    expect(await a.assignTask({ taskId: backlog.taskId, agentId: 'qa' })).toMatchObject({
       assigneeAgentId: 'qa',
     });
     expect(a.taskStatus({ taskId: created.taskId })).toMatchObject({
@@ -90,25 +114,43 @@ describe('manager delegation tools', () => {
     expect((a.taskStatus({}) as unknown[]).length).toBe(2);
     expect(a.taskStatus({ taskId: 'nope' })).toEqual({ error: 'unknown task nope' });
   });
-  it('keeps delegation flat', () => {
+  it('keeps delegation flat', async () => {
     const a = setup();
-    expect(() => a.createTask({ title: 'x', prompt: 'y', assigneeAgentId: 'mgr' })).toThrow(
+    await expect(a.createTask({ title: 'x', prompt: 'y', assigneeAgentId: 'mgr' })).rejects.toThrow(
       /itself/,
     );
-    expect(() => a.assignTask({ taskId: 'any', agentId: 'ghost' })).toThrow(/Unknown employee/);
+    await expect(a.assignTask({ taskId: 'any', agentId: 'ghost' })).rejects.toThrow(
+      /Unknown employee/,
+    );
   });
-  it('treats any agent whose preset has the manager flag as a manager, not just id "manager"', () => {
+  it('treats any agent whose preset has the manager flag as a manager, not just id "manager"', async () => {
     const a = setup();
     expect(a.listAgents().map((x) => x.id)).not.toContain('boss');
-    expect(() => a.createTask({ title: 'x', prompt: 'y', assigneeAgentId: 'boss' })).toThrow(
-      /flat/,
-    );
-    const backlog = a.createTask({ title: 'Later', prompt: 'later' });
-    expect(() => a.assignTask({ taskId: backlog.taskId, agentId: 'boss' })).toThrow(/flat/);
+    await expect(
+      a.createTask({ title: 'x', prompt: 'y', assigneeAgentId: 'boss' }),
+    ).rejects.toThrow(/flat/);
+    const backlog = await a.createTask({ title: 'Later', prompt: 'later' });
+    await expect(a.assignTask({ taskId: backlog.taskId, agentId: 'boss' })).rejects.toThrow(/flat/);
   });
-  it('falls back to the built-in presets when no lookup is given', () => {
+  it('falls back to the built-in presets when no lookup is given', async () => {
     const a = setup(false);
-    expect(() => a.assignTask({ taskId: 'any', agentId: 'mgr' })).toThrow(/itself/);
+    await expect(a.assignTask({ taskId: 'any', agentId: 'mgr' })).rejects.toThrow(/itself/);
     expect(a.listAgents().map((x) => x.id)).toEqual(['eng', 'qa', 'boss']);
+  });
+  it('resolves reviewOfAgentId by name and passes the employee id to create', async () => {
+    const a = setup();
+    await a.createTask({
+      title: 'Review',
+      prompt: 'look at the branch',
+      assigneeAgentId: 'qa',
+      reviewOfAgentId: 'Ada',
+    });
+    expect(a.created[a.created.length - 1]).toMatchObject({
+      assigneeAgentId: 'qa',
+      reviewOfAgentId: 'eng',
+    });
+    await expect(
+      a.createTask({ title: 'Review', prompt: 'x', reviewOfAgentId: 'nobody' }),
+    ).rejects.toThrow(/Unknown employee/);
   });
 });

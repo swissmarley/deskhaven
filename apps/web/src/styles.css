@@ -670,6 +670,22 @@ textarea.mono {
   max-height: 86vh;
   overflow: auto;
 }
+.merge-box {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 10px 0;
+}
+.merge-box.conflict {
+  border-color: var(--danger);
+}
+.pill.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.warn-text {
+  color: var(--warn, #ffbe0b);
+}
 .files {
   margin: 0;
   padding-left: 16px;

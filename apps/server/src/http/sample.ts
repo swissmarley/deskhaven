@@ -30,6 +30,8 @@ export function ensureSampleRepo(dataDir: string, source = bundledSamplePath()):
         'user.name=Deskhaven',
         '-c',
         'user.email=deskhaven@localhost',
+        '-c',
+        'commit.gpgsign=false',
         'commit',
         '-q',
         '-m',

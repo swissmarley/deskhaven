@@ -256,7 +256,9 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
    subfolder inside it); your own working copy stays untouched, and several engineers can work in parallel on
    the same repository. Hiring fails with a clear error if the folder is not a git repository. Uncommitted
    changes in your checkout are *not* copied into the worktree (the Feed shows a warning when there are
-   some). **Fire** removes the worktree folder but keeps the branch; if the worktree has uncommitted
+   some). **Fire** removes the worktree folder. The branch stays unless you tick **Also delete the
+   branch if it is already merged**, which runs `git branch -d` (never a force delete): a branch that
+   still has work is kept and the app warns you. If the worktree has uncommitted
    changes, firing is refused and the app asks before forcing it. If you moved or deleted the source
    repository, Deskhaven cannot check the worktree, so firing is refused the same way; forcing it deletes
    the worktree folder directly (run `git worktree prune` in a moved repository to drop its stale entry). A worktree agent's repository cannot be
@@ -265,8 +267,44 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
    let an **Engineer** edit.
 4. Keep the permission mode on **ask** for the first session, and lower the agent's daily cap in
    **Advanced** (for example 2 USD) so a runaway task stops early.
-5. Create a small, concrete task and assign it. Review the diff in the Inspector before merging anything
-   from the worktree branch yourself (`git log` and `git diff` in that directory work as usual).
+5. Create a small, concrete task and assign it. When the task is in **Review** or **Done** and the
+   assignee has a worktree, the task detail shows **Merge**: the branch, how far ahead it is, and the
+   files. **Accept & merge** asks you to confirm, then commits whatever is still uncommitted in the
+   worktree and integrates that branch into the base branch recorded when the agent was hired. If
+   your checkout is on a different branch, or in detached HEAD, the merge is refused (`wrong_branch`)
+   and nothing is switched for you. The default is a squash commit (one commit per
+   merge, easy to undo); choose **Merge commit (--no-ff)** if you want a merge commit instead.
+   Deskhaven never switches your branch and never merges into a checkout that has uncommitted tracked
+   changes — it refuses with a clear error and leaves your files as they were. Worktree commits skip
+   git hooks (`core.hooksPath` is cleared and `--no-verify` is passed) and are not GPG-signed, because
+   those hooks live in a tree the agent can edit. The merge commit in your source checkout still
+   uses your signing setup and may run hook scripts from `core.hooksPath` (including scripts the
+   agent added on its branch under a relative path such as `.husky`). The merge preview warns when
+   hook files would change; Deskhaven refuses with `hooks_changed` unless you explicitly allow
+   hook changes on that merge, or choose **merge without hooks** (the source merge commit uses
+   `core.hooksPath=/dev/null` and `--no-verify`). Skipping hooks does not remove hook files from
+   your checkout — new or updated hooks from the branch stay installed and will run on later
+   commits. The merge preview records the branch commit and hook paths you consent to; if the
+   worktree or hook set changes before you merge, Deskhaven refuses with `merge_preview_stale` or
+   `hooks_changed`. Detection follows `core.hooksPath` (including
+   symlinked directories and non-ASCII paths), `.husky`, and obeys `core.ignorecase` on
+   case-insensitive volumes. If git cannot compute the merge diff, the merge is refused
+   (`hooks_verify_failed`) instead of proceeding blindly. Even when no hook *files* change, the
+   preview warns when hook-runner config changes (`package.json`, lint-staged, lefthook,
+   pre-commit, and similar): an unchanged `pre-commit` script can still run new commands from
+   those files during your merge commit. Hook scripts that only `source` other files are not
+   scanned; treat those helpers as residual risk. If the worktree HEAD is no longer its `deskhaven/…` branch,
+   the merge is refused (`worktree_moved`) so that work is not committed somewhere else and then
+   discarded. An already-integrated branch returns `nothing_to_merge` and the task stays unmerged.
+   A conflict is aborted automatically (your checkout is unchanged); the dialog lists the files and
+   offers **Ask agent to resolve**, which tells the agent to integrate your branch inside its own
+   worktree, and **Copy git commands** if you would rather finish the merge yourself. The merge covers
+   every change on that agent's branch, not only the one task, because the worktree belongs to the
+   agent. After a successful merge the worktree is realigned to your branch so the next task starts
+   clean, and the card shows `merged` plus the short commit id. **Only mark done** skips git.
+   To have someone else read the work first, use **Request review** (or **Review work of** on a new
+   task). The reviewer is pointed at the engineer's worktree and diff, and still cannot edit it.
+   `git log` and `git diff` in the worktree directory work as usual.
 
 If the repository contains a `CLAUDE.md`, agents load it (project settings only; your personal
 `~/.claude` settings and MCP servers are deliberately not loaded into agents).

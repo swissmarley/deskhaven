@@ -5,15 +5,16 @@ import { type Agent, AgentSchema, emptyUsage } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { PermissionBroker } from '../src/agent/permission-broker.js';
 import { AgentRuntime, type RuntimeDeps } from '../src/agent/runtime.js';
-import type {
-  AgentSession,
-  HookInput,
-  Query,
-  SDKMessage,
-  SessionCallbacks,
-  SessionConfig,
+import {
+  type AgentSession,
+  buildOptions,
+  createPromptQueue,
+  type HookInput,
+  type Query,
+  type SDKMessage,
+  type SessionCallbacks,
+  type SessionConfig,
 } from '../src/agent/sdk-adapter.js';
-import { createPromptQueue } from '../src/agent/sdk-adapter.js';
 import { ClaudeSubscriptionAuthProvider } from '../src/auth/subscription.js';
 import { openDb } from '../src/db/client.js';
 import { EventStore } from '../src/events/store.js';
@@ -345,6 +346,74 @@ describe('AgentRuntime', () => {
     });
     expect(rt.getStatus()).toBe('working');
     await rt.stop();
+  });
+
+  it('passes extra read dirs at spawn and again on resume when they change', async () => {
+    const engineer = fakeWorktree();
+    const { rt, sessions } = setup({ sessionId: 'sess-keep' });
+    rt.setExtraReadDirs([engineer, engineer]);
+    rt.start();
+    const first = sessions[0];
+    if (!first) throw new Error('no session');
+    expect(first.cfg.additionalDirectories).toEqual([engineer]);
+    expect(first.cfg.resume).toBe('sess-keep');
+    rt.setExtraReadDirs([`${engineer}/nested`]);
+    rt.sendPrompt('review the branch', 'task-review');
+    const deadline = Date.now() + 1000;
+    while (sessions.length < 2 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const second = sessions[1];
+    if (!second) throw new Error('session was not restarted');
+    expect(second.cfg.resume).toBe('sess-keep');
+    expect(second.cfg.additionalDirectories).toEqual([`${engineer}/nested`]);
+    const edit = second.cb.preToolGuard?.({
+      session_id: 's',
+      transcript_path: '/t',
+      cwd: second.cfg.cwd,
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Edit',
+      tool_input: { file_path: path.join(engineer, 'secret.ts') },
+      tool_use_id: 'e',
+    } as HookInput);
+    expect(edit).toMatch(/not allowed/);
+    const read = second.cb.preToolGuard?.({
+      session_id: 's',
+      transcript_path: '/t',
+      cwd: second.cfg.cwd,
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Read',
+      tool_input: { file_path: path.join(engineer, 'secret.ts') },
+      tool_use_id: 'r',
+    } as HookInput);
+    expect(read).toBeNull();
+    await rt.stop();
+  });
+
+  it('asks the SDK for resume and additionalDirectories on the same process', () => {
+    const options = buildOptions(
+      {
+        cwd: '/reviewer',
+        model: 'm',
+        systemPromptAppend: '',
+        tools: null,
+        allowedTools: [],
+        permissionMode: 'default',
+        env: {},
+        resume: 'sess-9',
+        additionalDirectories: ['/engineer/wt'],
+        strictMcpConfig: true,
+      },
+      {
+        onMessage: () => {},
+        onHook: () => {},
+        canUseTool: () => Promise.resolve({ behavior: 'deny', message: 'no' }),
+      },
+      new AbortController(),
+    );
+    expect(options.resume).toBe('sess-9');
+    expect(options.additionalDirectories).toEqual(['/engineer/wt']);
+    expect(options.strictMcpConfig).toBe(true);
   });
 
   it('blocks edits outside the working directory via the PreToolUse guard', () => {

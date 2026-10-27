@@ -2,6 +2,7 @@ import {
   APP_VERSION,
   CreateAgentSchema,
   CreateTaskSchema,
+  MergeTaskSchema,
   newId,
   ResolvePermissionSchema,
   UNKNOWN_MODEL_CODE,
@@ -12,6 +13,7 @@ import {
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.js';
+import { TaskHttpError } from '../tasks/service.js';
 import type { WorktreeInfo } from '../worktree/service.js';
 
 const idParams = z.object({ id: z.string().min(1) });
@@ -57,6 +59,14 @@ function parseAgentBody<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyR
 }
 
 function fail(reply: FastifyReply, err: unknown, code = 400): void {
+  if (err instanceof TaskHttpError) {
+    void reply.code(err.statusCode).send({
+      error: err.code,
+      message: err.message,
+      ...err.details,
+    });
+    return;
+  }
   void reply.code(code).send({ error: err instanceof Error ? err.message : String(err) });
 }
 
@@ -163,7 +173,13 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
 
   app.delete('/api/agents/:id', async (req, reply) => {
     const p = parse(idParams, req.params, reply);
-    const q = p && parse(z.object({ force: z.stringbool().optional() }), req.query, reply);
+    const q =
+      p &&
+      parse(
+        z.object({ force: z.stringbool().optional(), deleteBranch: z.stringbool().optional() }),
+        req.query,
+        reply,
+      );
     if (!p || !q) return;
     const agent = ctx.agents.get(p.id);
     if (!agent) return reply.code(404).send({ error: 'not_found' });
@@ -172,33 +188,63 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
         error: err instanceof Error ? err.message : String(err),
         worktree: agent.worktree,
       });
-    // Refuse before stopping anything: firing an agent must not throw away uncommitted work, and a
-    // check that cannot run (source repository moved or deleted) counts as "might be dirty".
-    if (agent.worktree && !q.force) {
-      const state = await ctx.worktrees.state(agent.workdir, agent.worktree);
-      if (state.kind === 'dirty')
-        return conflict(
-          new Error(
-            `worktree ${agent.worktree.path} has uncommitted changes; commit them or force removal`,
-          ),
-        );
-      if (state.kind === 'unknown')
-        return conflict(
-          new Error(
-            `cannot check worktree ${agent.worktree.path} for uncommitted changes (${state.reason}); force removal to delete the folder anyway`,
-          ),
-        );
-    }
-    await ctx.manager.remove(p.id);
-    if (agent.worktree) {
-      try {
-        await ctx.worktrees.remove(agent.workdir, agent.worktree, q.force ?? false);
-      } catch (err) {
-        return conflict(err);
+    const finish = async () => {
+      // Refuse before stopping anything: firing an agent must not throw away uncommitted work, and a
+      // check that cannot run (source repository moved or deleted) counts as "might be dirty".
+      if (agent.worktree && !q.force) {
+        const state = await ctx.worktrees.state(agent.workdir, agent.worktree);
+        if (state.kind === 'dirty')
+          return conflict(
+            new Error(
+              `worktree ${agent.worktree.path} has uncommitted changes; commit them or force removal`,
+            ),
+          );
+        if (state.kind === 'unknown')
+          return conflict(
+            new Error(
+              `cannot check worktree ${agent.worktree.path} for uncommitted changes (${state.reason}); force removal to delete the folder anyway`,
+            ),
+          );
       }
+      await ctx.manager.remove(p.id);
+      if (agent.worktree) {
+        try {
+          await ctx.worktrees.remove(agent.workdir, agent.worktree, q.force ?? false);
+        } catch (err) {
+          return conflict(err);
+        }
+      }
+      ctx.agents.remove(p.id);
+      if (q.deleteBranch && agent.worktree) {
+        const source = ctx.worktrees.resolvedSource(agent.workdir, agent.worktree);
+        try {
+          const dropped = await ctx.worktrees.deleteBranch(
+            source,
+            agent.worktree.branch,
+            agent.worktree.baseBranch,
+          );
+          return {
+            ok: true,
+            branchDeleted: dropped.deleted,
+            ...(dropped.warning ? { warning: dropped.warning } : {}),
+          };
+        } catch (err) {
+          return {
+            ok: true,
+            branchDeleted: false,
+            warning: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+      return { ok: true };
+    };
+    // Share the source lock with merge so a fire cannot remove the worktree between the merge's
+    // cleanliness check and its reset.
+    if (agent.worktree) {
+      const source = ctx.worktrees.resolvedSource(agent.workdir, agent.worktree);
+      return ctx.worktrees.withSourceLock(source, finish);
     }
-    ctx.agents.remove(p.id);
-    return { ok: true };
+    return finish();
   });
 
   for (const action of ['start', 'stop', 'pause', 'resume', 'interrupt'] as const) {
@@ -247,7 +293,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(CreateTaskSchema, req.body, reply);
     if (!body) return;
     try {
-      return reply.code(201).send(ctx.tasks.create(body));
+      return reply.code(201).send(await ctx.tasks.create(body));
     } catch (err) {
       fail(reply, err);
     }
@@ -258,7 +304,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = p && parse(UpdateTaskSchema, req.body, reply);
     if (!p || !body) return;
     try {
-      return ctx.tasks.update(p.id, body);
+      return await ctx.tasks.update(p.id, body);
     } catch (err) {
       fail(reply, err);
     }
@@ -277,7 +323,39 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = p && parse(z.object({ agentId: z.string().min(1) }), req.body, reply);
     if (!p || !body) return;
     try {
-      return ctx.tasks.assign(p.id, body.agentId);
+      return await ctx.tasks.assign(p.id, body.agentId);
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  app.get('/api/tasks/:id/merge-preview', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    if (!p) return;
+    try {
+      return await ctx.tasks.mergePreview(p.id);
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  app.post('/api/tasks/:id/merge', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    const body = p && parse(MergeTaskSchema, req.body ?? {}, reply);
+    if (!p || !body) return;
+    try {
+      return { task: await ctx.tasks.merge(p.id, body) };
+    } catch (err) {
+      fail(reply, err);
+    }
+  });
+
+  app.post('/api/tasks/:id/merge/resolve-with-agent', async (req, reply) => {
+    const p = parse(idParams, req.params, reply);
+    if (!p) return;
+    try {
+      ctx.tasks.resolveMergeWithAgent(p.id);
+      return { ok: true };
     } catch (err) {
       fail(reply, err);
     }

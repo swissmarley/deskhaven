@@ -134,6 +134,11 @@ export class AgentManager {
     }
   }
 
+  /** Directories a reviewer may read outside its cwd. Applied on the next session start. */
+  setExtraReadDirs(agentId: string, dirs: string[]): void {
+    this.ensure(this.mustGet(agentId)).setExtraReadDirs(dirs);
+  }
+
   /** Start (or resume) an agent's session now, or queue it behind the concurrency cap. */
   start(agentId: string): AgentStatus {
     if (this.killSwitch) throw new Error('Kill switch is active');

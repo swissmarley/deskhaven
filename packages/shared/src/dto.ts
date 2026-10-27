@@ -64,8 +64,20 @@ export const AgentSchema = z.object({
    * `path` is the worktree root (what git operates on); `subdir` is the agent's folder inside it
    * when it was hired for a subfolder of the repository (relative, `/`-separated).
    */
+  /**
+   * `baseBranch` / `baseCommit` are the source checkout at hire time. Optional so agents saved
+   * before merge support still parse; a missing base falls back to the branch checked out now.
+   */
   worktree: z
-    .object({ path: z.string(), branch: z.string(), subdir: z.string().optional() })
+    .object({
+      path: z.string(),
+      branch: z.string(),
+      subdir: z.string().optional(),
+      baseBranch: z.string().optional(),
+      baseCommit: z.string().optional(),
+      /** Repository root at hire time. Optional so agents saved before it existed still parse. */
+      sourceRoot: z.string().optional(),
+    })
     .nullable(),
   sessionId: z.string().nullable(),
   status: AgentStatusSchema,
@@ -174,6 +186,42 @@ export const FileChangeSchema = z.object({
   deletions: z.number().int().nonnegative().optional(),
 });
 
+/** How a task's branch was integrated into the source checkout. Absent on tasks saved before merge. */
+export const MergeStrategySchema = z.enum(['squash', 'merge']);
+export type MergeStrategy = z.infer<typeof MergeStrategySchema>;
+
+export const TaskMergeSchema = z.object({
+  status: z.enum(['merged', 'conflict', 'failed']),
+  strategy: MergeStrategySchema,
+  branch: z.string(),
+  targetBranch: z.string(),
+  commit: z.string().nullable().optional(),
+  conflictFiles: z.array(z.string()).optional(),
+  error: z.string().nullable().optional(),
+  mergedAt: z.number().nullable().optional(),
+});
+export type TaskMerge = z.infer<typeof TaskMergeSchema>;
+
+/**
+ * Who a review task should read. The agent, path and branch are recorded when the task is created
+ * so they stay readable after the engineer is fired. The diff itself is taken when the review is
+ * dispatched. Nullable/optional so older task rows still load.
+ */
+export const ReviewTargetSchema = z.object({
+  agentId: z.string(),
+  agentName: z.string(),
+  path: z.string(),
+  branch: z.string().nullable(),
+  baseBranch: z.string().nullable(),
+});
+export type ReviewTarget = z.infer<typeof ReviewTargetSchema>;
+
+/** Default squash/merge subject. Shared so the server and the copy-commands panel stay identical. */
+export function defaultMergeMessage(task: { id: string; title: string }): string {
+  const title = task.title.replace(/\s+/g, ' ').trim().slice(0, 200);
+  return `deskhaven: ${title} (task ${task.id})`;
+}
+
 export const TaskSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -189,6 +237,10 @@ export const TaskSchema = z.object({
   startedAt: z.number().nullable(),
   completedAt: z.number().nullable(),
   updatedAt: z.number(),
+  merge: TaskMergeSchema.nullable().optional(),
+  reviewTarget: ReviewTargetSchema.nullable().optional(),
+  /** Bumped on each assign; stale dispatch failures must not roll back a newer assign. */
+  dispatchSeq: z.number().int().nonnegative().optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;
 
@@ -197,8 +249,56 @@ export const CreateTaskSchema = z.object({
   prompt: z.string().min(1),
   assigneeAgentId: z.string().nullable().optional(),
   parentTaskId: z.string().nullable().optional(),
+  /** Engineer (id) whose checkout this task reviews. */
+  reviewOfAgentId: z.string().nullable().optional(),
+  /** Task whose assignee is the engineer to review, when the caller has a task id rather than an agent id. */
+  reviewOfTaskId: z.string().nullable().optional(),
 });
 export type CreateTask = z.infer<typeof CreateTaskSchema>;
+
+export const MergeTaskSchema = z.object({
+  strategy: MergeStrategySchema.optional(),
+  message: z.string().trim().min(1).max(500).optional(),
+  /** When false or omitted, a merge that changes hook scripts under core.hooksPath is refused. */
+  allowHookChanges: z.boolean().optional(),
+  /** When true, the source merge commit skips git hooks (`core.hooksPath=/dev/null`, `--no-verify`). */
+  skipHooks: z.boolean().optional(),
+  /** Worktree `HEAD` from the merge preview; must still match at merge time. */
+  expectedBranchSha: z.string().regex(/^[0-9a-f]{7,64}$/i),
+  /** Hook paths the user consented to from the preview; must match the current hook set. */
+  consentedHookFiles: z.array(z.string()).optional(),
+  /** Tree hash of the staged worktree content from the merge preview (`write-tree` after `add -A`). */
+  previewTree: z.string().regex(/^[0-9a-f]{40}$/i),
+});
+export type MergeTask = z.infer<typeof MergeTaskSchema>;
+
+export const MergeFileSchema = z.object({
+  path: z.string(),
+  status: z.string(),
+});
+
+export const MergePreviewSchema = z.object({
+  branch: z.string(),
+  targetBranch: z.string(),
+  sourceRoot: z.string(),
+  worktreePath: z.string(),
+  ahead: z.number().int().nonnegative(),
+  behind: z.number().int().nonnegative(),
+  dirty: z.boolean(),
+  files: z.array(MergeFileSchema),
+  canMerge: z.boolean(),
+  reason: z.string().optional(),
+  hookFiles: z.array(z.string()).optional(),
+  hooksWarning: z.string().optional(),
+  runnerFiles: z.array(z.string()).optional(),
+  runnerWarning: z.string().optional(),
+  branchSha: z
+    .string()
+    .regex(/^[0-9a-f]{7,64}$/i)
+    .optional(),
+  previewTree: z.string().regex(/^[0-9a-f]{40}$/i),
+});
+export type MergePreview = z.infer<typeof MergePreviewSchema>;
 
 export const UpdateTaskSchema = z.object({
   title: z.string().trim().min(1, 'Title must not be empty').optional(),

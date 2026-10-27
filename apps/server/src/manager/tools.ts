@@ -30,6 +30,15 @@ export function managerActions(deps: ManagerToolDeps) {
   const isManager =
     deps.isManager ??
     ((a: Agent) => Boolean(presetById(a.rolePresetId)?.manager) || a.rolePresetId === 'manager');
+  const resolveAgent = (idOrName: string) => {
+    const byId = deps.agents.get(idOrName);
+    if (byId) return byId;
+    const matches = deps.agents.list().filter((a) => a.name === idOrName);
+    if (matches.length === 1 && matches[0]) return matches[0];
+    if (matches.length > 1)
+      throw new Error(`More than one employee is named ${idOrName}; pass an id from list_agents`);
+    throw new Error(`Unknown employee ${idOrName}; call list_agents first`);
+  };
   const guardAssignee = (agentId: string) => {
     const a = deps.agents.get(agentId);
     if (!a) throw new Error(`Unknown employee ${agentId}; call list_agents first`);
@@ -57,21 +66,29 @@ export function managerActions(deps: ManagerToolDeps) {
           role: a.rolePresetId,
           status: a.status,
           workdir: agentCwd(a),
+          ...(a.worktree ? { branch: a.worktree.branch } : {}),
           currentTaskId: a.currentTaskId,
           model: a.model,
         })),
-    createTask: (args: { title: string; prompt: string; assigneeAgentId?: string }) => {
+    createTask: async (args: {
+      title: string;
+      prompt: string;
+      assigneeAgentId?: string;
+      reviewOfAgentId?: string;
+    }) => {
       if (args.assigneeAgentId) guardAssignee(args.assigneeAgentId);
-      const task = deps.tasks.create({
+      const reviewOf = args.reviewOfAgentId ? resolveAgent(args.reviewOfAgentId).id : undefined;
+      const task = await deps.tasks.create({
         title: args.title,
         prompt: args.prompt,
         assigneeAgentId: args.assigneeAgentId ?? null,
+        ...(reviewOf ? { reviewOfAgentId: reviewOf } : {}),
       });
       return { taskId: task.id, status: task.status, assigneeAgentId: task.assigneeAgentId };
     },
-    assignTask: (args: { taskId: string; agentId: string }) => {
+    assignTask: async (args: { taskId: string; agentId: string }) => {
       guardAssignee(args.agentId);
-      const task = deps.tasks.assign(args.taskId, args.agentId);
+      const task = await deps.tasks.assign(args.taskId, args.agentId);
       return { taskId: task.id, status: task.status, assigneeAgentId: task.assigneeAgentId };
     },
     taskStatus: (args: { taskId?: string }) => {
@@ -93,9 +110,9 @@ export function createManagerMcpServer(deps: ManagerToolDeps): McpServerConfig {
   const text = (value: unknown) => ({
     content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
   });
-  const safe = <T>(fn: () => T) => {
+  const safe = async <T>(fn: () => T | Promise<T>) => {
     try {
-      return text(fn());
+      return text(await fn());
     } catch (err) {
       return {
         content: [
@@ -120,7 +137,7 @@ export function createManagerMcpServer(deps: ManagerToolDeps): McpServerConfig {
       ),
       tool(
         'create_task',
-        'Create a task on the board. Optionally assign it right away to an employee by id (the prompt is sent to that agent).',
+        'Create a task on the board. Optionally assign it right away to an employee by id (the prompt is sent to that agent). Pass reviewOfAgentId (id or name) so a reviewer reads that employee worktree instead of their own checkout.',
         {
           title: z.string().min(1).max(120).describe('Short title shown on the card'),
           prompt: z
@@ -128,6 +145,10 @@ export function createManagerMcpServer(deps: ManagerToolDeps): McpServerConfig {
             .min(1)
             .describe('Full instructions for the employee, including acceptance criteria'),
           assigneeAgentId: z.string().optional().describe('Employee id from list_agents'),
+          reviewOfAgentId: z
+            .string()
+            .optional()
+            .describe('Employee id or name whose checkout this task should review'),
         },
         async (args) => safe(() => actions.createTask(args)),
       ),
