@@ -1,8 +1,10 @@
+import fs from 'node:fs';
 import {
   type Agent,
   type AgentEvent,
   agentCwd,
   type CreateTask,
+  defaultMergeMessage,
   type MergePreview,
   type MergeStrategy,
   type MergeTask,
@@ -20,7 +22,7 @@ import type { AgentService } from '../agents/service.js';
 import type { Db } from '../db/client.js';
 import { tasks as tasksTable } from '../db/schema.js';
 import type { EventStore } from '../events/store.js';
-import type { WorktreeService } from '../worktree/service.js';
+import { WorktreeMovedError, type WorktreeService } from '../worktree/service.js';
 import type { WsHub } from '../ws/hub.js';
 
 /** Review diffs longer than this are cut, and the prompt says so. */
@@ -55,6 +57,8 @@ interface TaskDeps {
 export class TaskService {
   /** Last assistant text seen per task, used as the result summary when the turn completes. */
   private readonly lastText = new Map<string, string>();
+  /** Agents whose branch merge is in progress. Checked by agentBusy so other work waits. */
+  private readonly merging = new Set<string>();
 
   constructor(
     private readonly db: Db,
@@ -81,10 +85,19 @@ export class TaskService {
     const now = Date.now();
     const position = Math.max(0, ...this.list().map((t) => t.position)) + 1;
     const id = newId();
+    if (
+      input.assigneeAgentId &&
+      input.reviewOfAgentId &&
+      input.assigneeAgentId === input.reviewOfAgentId
+    ) {
+      throw new TaskHttpError(
+        400,
+        'self_review',
+        'An agent cannot review its own worktree. Pick a different reviewer.',
+      );
+    }
     const reviewTarget =
-      input.reviewOfAgentId || input.reviewOfTaskId
-        ? await this.snapshotReviewTarget(id, input)
-        : null;
+      input.reviewOfAgentId || input.reviewOfTaskId ? await this.recordReviewTarget(input) : null;
     const task: Task = TaskSchema.parse({
       id,
       title: input.title.trim(),
@@ -139,6 +152,13 @@ export class TaskService {
     const task = this.mustGet(taskId);
     const agent = this.deps.agents.get(agentId);
     if (!agent) throw new Error(`Unknown agent ${agentId}`);
+    if (task.reviewTarget?.agentId === agentId) {
+      throw new TaskHttpError(
+        400,
+        'self_review',
+        'An agent cannot review its own worktree. Pick a different reviewer.',
+      );
+    }
     const assigned: Task = {
       ...task,
       assigneeAgentId: agentId,
@@ -210,6 +230,13 @@ export class TaskService {
   nudge(taskId: string, text: string): void {
     const task = this.mustGet(taskId);
     if (!task.assigneeAgentId) throw new Error('Task has no assignee');
+    if (this.merging.has(task.assigneeAgentId)) {
+      throw new TaskHttpError(
+        409,
+        'agent_busy',
+        'The agent is merging a branch. Wait until that finishes.',
+      );
+    }
     this.setStatus(task, 'in_progress');
     this.syncReadDirs(task.assigneeAgentId);
     this.deps.manager.sendPrompt(task.assigneeAgentId, text, taskId);
@@ -257,76 +284,124 @@ export class TaskService {
     }
     const strategy: MergeStrategy = input.strategy ?? 'squash';
     const message = input.message?.trim() || defaultMergeMessage(task);
-    return this.deps.worktrees.withSourceLock(sourceRoot, async () => {
-      const busyNow = this.agentBusy(agent.id);
-      if (busyNow) throw new TaskHttpError(409, 'agent_busy', busyNow);
-      await this.deps.worktrees.commitAll(wt, message);
-      const outcome = await this.deps.worktrees.mergeInto(
-        sourceRoot,
-        wt.branch,
-        targetBranch,
-        strategy,
-        message,
+    if (this.merging.has(agent.id)) {
+      throw new TaskHttpError(
+        409,
+        'agent_busy',
+        'The agent is merging a branch. Wait until that finishes.',
       );
-      if (!outcome.ok) {
-        if (outcome.code === 'conflict' || outcome.code === 'failed') {
-          const saved = this.write({
-            ...this.mustGet(taskId),
-            merge: {
-              status: outcome.code === 'conflict' ? 'conflict' : 'failed',
-              strategy,
-              branch: wt.branch,
-              targetBranch,
-              commit: null,
-              conflictFiles: outcome.conflictFiles ?? [],
-              error: outcome.message,
-              mergedAt: null,
-            },
-            updatedAt: Date.now(),
-          });
-          throw new TaskHttpError(409, outcome.code, outcome.message, {
-            conflictFiles: outcome.conflictFiles ?? [],
-            task: saved,
-          });
+    }
+    this.merging.add(agent.id);
+    try {
+      const saved = await this.deps.worktrees.withSourceLock(sourceRoot, async () => {
+        try {
+          return await this.mergeLocked(
+            taskId,
+            agent,
+            wt,
+            sourceRoot,
+            targetBranch,
+            strategy,
+            message,
+          );
+        } finally {
+          // Clear before the lock is released so a snapshot waiting on it does not see a stale flag.
+          this.merging.delete(agent.id);
         }
-        throw new TaskHttpError(409, outcome.code, outcome.message);
-      }
-      let realign: string | null = null;
-      try {
-        await this.deps.worktrees.syncToTarget(wt, outcome.commit);
-      } catch (err) {
-        realign = err instanceof Error ? err.message : String(err);
-        this.deps.log.warn({ taskId, err: realign }, 'merged, but the worktree was not realigned');
-      }
-      const saved = this.write({
-        ...this.mustGet(taskId),
-        status: 'done',
-        completedAt: this.mustGet(taskId).completedAt ?? Date.now(),
-        merge: {
-          status: 'merged',
-          strategy,
-          branch: wt.branch,
-          targetBranch,
-          commit: outcome.commit,
-          conflictFiles: [],
-          error: realign,
-          mergedAt: Date.now(),
-        },
-        updatedAt: Date.now(),
       });
-      this.deps.events.append({
-        id: newId(),
-        ts: Date.now(),
-        agentId: agent.id,
-        taskId,
-        type: 'notification',
-        kind: 'worktree',
-        message: realign
-          ? `Merged ${wt.branch} into ${targetBranch} (${outcome.commit.slice(0, 7)}), but the worktree was not realigned: ${realign}`
-          : `Merged ${wt.branch} into ${targetBranch} (${outcome.commit.slice(0, 7)}).`,
-      });
+      await this.redispatchAssigned(agent.id);
       return saved;
+    } catch (err) {
+      this.merging.delete(agent.id);
+      await this.redispatchAssigned(agent.id);
+      throw err;
+    }
+  }
+
+  private async mergeLocked(
+    taskId: string,
+    agent: Agent,
+    wt: NonNullable<Agent['worktree']>,
+    sourceRoot: string,
+    targetBranch: string,
+    strategy: MergeStrategy,
+    message: string,
+  ): Promise<Task> {
+    const busyNow = this.runtimeBusy(agent.id);
+    if (busyNow) throw new TaskHttpError(409, 'agent_busy', busyNow);
+    try {
+      await this.deps.worktrees.commitAll(wt, message);
+    } catch (err) {
+      if (err instanceof WorktreeMovedError) {
+        throw new TaskHttpError(409, 'worktree_moved', err.message);
+      }
+      throw err;
+    }
+    const outcome = await this.deps.worktrees.mergeInto(
+      sourceRoot,
+      wt.branch,
+      targetBranch,
+      strategy,
+      message,
+    );
+    if (!outcome.ok) {
+      if (outcome.code === 'conflict' || outcome.code === 'failed') {
+        const saved = this.write({
+          ...this.mustGet(taskId),
+          merge: {
+            status: outcome.code === 'conflict' ? 'conflict' : 'failed',
+            strategy,
+            branch: wt.branch,
+            targetBranch,
+            commit: null,
+            conflictFiles: outcome.conflictFiles ?? [],
+            error: outcome.message,
+            mergedAt: null,
+          },
+          updatedAt: Date.now(),
+        });
+        throw new TaskHttpError(409, outcome.code, outcome.message, {
+          conflictFiles: outcome.conflictFiles ?? [],
+          task: saved,
+        });
+      }
+      throw new TaskHttpError(409, outcome.code, outcome.message);
+    }
+    let realign: string | null = null;
+    try {
+      await this.deps.worktrees.syncToTarget(wt, outcome.commit);
+    } catch (err) {
+      realign = err instanceof Error ? err.message : String(err);
+      this.deps.log.warn({ taskId, err: realign }, 'merged, but the worktree was not realigned');
+    }
+    const saved = this.write({
+      ...this.mustGet(taskId),
+      status: 'done',
+      completedAt: this.mustGet(taskId).completedAt ?? Date.now(),
+      merge: {
+        status: 'merged',
+        strategy,
+        branch: wt.branch,
+        targetBranch,
+        commit: outcome.commit,
+        conflictFiles: [],
+        error: realign,
+        mergedAt: Date.now(),
+      },
+      updatedAt: Date.now(),
     });
+    this.deps.events.append({
+      id: newId(),
+      ts: Date.now(),
+      agentId: agent.id,
+      taskId,
+      type: 'notification',
+      kind: 'worktree',
+      message: realign
+        ? `Merged ${wt.branch} into ${targetBranch} (${outcome.commit.slice(0, 7)}), but the worktree was not realigned: ${realign}`
+        : `Merged ${wt.branch} into ${targetBranch} (${outcome.commit.slice(0, 7)}).`,
+    });
+    return saved;
   }
 
   /** Ask the assignee to integrate the target branch inside their own worktree. */
@@ -436,13 +511,27 @@ export class TaskService {
     }
   }
 
+  private async redispatchAssigned(agentId: string): Promise<void> {
+    for (const task of this.list()) {
+      if (task.assigneeAgentId === agentId && task.status === 'assigned') {
+        await this.redispatch(task);
+      }
+    }
+  }
+
   private async dispatch(task: Task): Promise<void> {
     if (!task.assigneeAgentId) return;
-    const text = await this.promptFor(task);
+    if (this.merging.has(task.assigneeAgentId)) return;
+    await this.snapshotForReview(task);
     const current = this.get(task.id);
     if (!current || current.status === 'done' || !current.assigneeAgentId) return;
-    this.syncReadDirs(current.assigneeAgentId);
-    this.deps.manager.sendPrompt(current.assigneeAgentId, text, current.id);
+    if (this.merging.has(current.assigneeAgentId)) return;
+    const text = await this.promptFor(current);
+    const latest = this.get(task.id);
+    if (!latest || latest.status === 'done' || !latest.assigneeAgentId) return;
+    if (this.merging.has(latest.assigneeAgentId)) return;
+    this.syncReadDirs(latest.assigneeAgentId);
+    this.deps.manager.sendPrompt(latest.assigneeAgentId, text, latest.id);
   }
 
   private async promptFor(task: Task): Promise<string> {
@@ -475,14 +564,73 @@ export class TaskService {
     const dirs = new Set<string>();
     for (const t of this.list()) {
       if (t.assigneeAgentId !== agentId || !t.reviewTarget) continue;
-      dirs.add(t.reviewTarget.path);
+      if (t.status === 'done' || t.status === 'backlog') continue;
       const subject = this.deps.agents.get(t.reviewTarget.agentId);
-      if (subject?.worktree) dirs.add(subject.worktree.path);
+      for (const dir of [t.reviewTarget.path, subject?.worktree?.path]) {
+        if (dir && fs.existsSync(dir)) dirs.add(dir);
+      }
     }
     this.deps.manager.setExtraReadDirs(agentId, [...dirs]);
   }
 
-  private async snapshotReviewTarget(taskId: string, input: CreateTask): Promise<ReviewTarget> {
+  /** Record who is being reviewed. The diff is taken later, at dispatch, so it matches the prompt. */
+  private async recordReviewTarget(input: CreateTask): Promise<ReviewTarget> {
+    const agent = await this.reviewSubject(input);
+    if (input.assigneeAgentId === agent.id) {
+      throw new TaskHttpError(
+        400,
+        'self_review',
+        'An agent cannot review its own worktree. Pick a different reviewer.',
+      );
+    }
+    let baseBranch = agent.worktree?.baseBranch ?? null;
+    if (agent.worktree && !baseBranch) {
+      const source = this.deps.worktrees.resolvedSource(agent.workdir, agent.worktree);
+      try {
+        baseBranch = (await this.deps.worktrees.currentBranch(source))?.branch ?? null;
+      } catch {
+        baseBranch = null;
+      }
+    }
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      path: agentCwd(agent),
+      branch: agent.worktree?.branch ?? null,
+      baseBranch,
+    };
+  }
+
+  /** Commit the subject's worktree immediately before the review prompt is built. */
+  private async snapshotForReview(task: Task): Promise<void> {
+    const target = task.reviewTarget;
+    if (!target) return;
+    const agent = this.deps.agents.get(target.agentId);
+    if (!agent?.worktree) return;
+    const wt = agent.worktree;
+    const source = this.deps.worktrees.resolvedSource(agent.workdir, wt);
+    await this.deps.worktrees.withSourceLock(source, async () => {
+      if (this.merging.has(agent.id)) {
+        throw new TaskHttpError(
+          409,
+          'agent_busy',
+          'The agent is merging a branch. Wait until that finishes.',
+        );
+      }
+      const busy = this.runtimeBusy(agent.id);
+      if (busy) throw new TaskHttpError(409, 'agent_busy', busy);
+      try {
+        await this.deps.worktrees.commitAll(wt, `deskhaven: snapshot for review (task ${task.id})`);
+      } catch (err) {
+        if (err instanceof WorktreeMovedError) {
+          throw new TaskHttpError(409, 'worktree_moved', err.message);
+        }
+        throw err;
+      }
+    });
+  }
+
+  private async reviewSubject(input: CreateTask): Promise<Agent> {
     let agentId = input.reviewOfAgentId ?? null;
     if (!agentId && input.reviewOfTaskId) {
       const src = this.get(input.reviewOfTaskId);
@@ -495,26 +643,7 @@ export class TaskService {
     if (!agentId) throw new TaskHttpError(400, 'no_review_target', 'No agent to review.');
     const agent = this.deps.agents.get(agentId);
     if (!agent) throw new TaskHttpError(400, 'unknown_agent', `Unknown agent ${agentId}`);
-    const busy = this.agentBusy(agent.id);
-    if (busy) throw new TaskHttpError(409, 'agent_busy', busy);
-    let baseBranch = agent.worktree?.baseBranch ?? null;
-    if (agent.worktree) {
-      if (!baseBranch) {
-        const source = this.deps.worktrees.sourceRoot(agent.workdir, agent.worktree);
-        baseBranch = (await this.deps.worktrees.currentBranch(source))?.branch ?? null;
-      }
-      await this.deps.worktrees.commitAll(
-        agent.worktree,
-        `deskhaven: snapshot for review (task ${taskId})`,
-      );
-    }
-    return {
-      agentId: agent.id,
-      agentName: agent.name,
-      path: agentCwd(agent),
-      branch: agent.worktree?.branch ?? null,
-      baseBranch,
-    };
+    return agent;
   }
 
   private async locateWorktree(taskId: string): Promise<
@@ -549,11 +678,23 @@ export class TaskService {
           'This agent was not hired with a git worktree, so there is no branch to merge.',
         ),
       };
-    const sourceRoot = this.deps.worktrees.sourceRoot(agent.workdir, agent.worktree);
+    const sourceRoot = this.deps.worktrees.resolvedSource(agent.workdir, agent.worktree);
     let targetBranch = agent.worktree.baseBranch ?? null;
     if (!targetBranch) {
       // Agents hired before baseBranch was stored: use whatever is checked out now.
-      targetBranch = (await this.deps.worktrees.currentBranch(sourceRoot))?.branch ?? null;
+      try {
+        targetBranch = (await this.deps.worktrees.currentBranch(sourceRoot))?.branch ?? null;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false,
+          error: new TaskHttpError(
+            409,
+            'invalid_branch',
+            message.replace(/^invalid_branch:\s*/, ''),
+          ),
+        };
+      }
     }
     if (!targetBranch) {
       return {
@@ -569,6 +710,13 @@ export class TaskService {
   }
 
   private agentBusy(agentId: string): string | null {
+    if (this.merging.has(agentId))
+      return 'The agent is merging a branch. Wait until that finishes.';
+    return this.runtimeBusy(agentId);
+  }
+
+  /** Busy for a reason other than the merge this service is currently running. */
+  private runtimeBusy(agentId: string): string | null {
     const rt = this.deps.manager.get(agentId);
     const live = rt?.getStatus();
     if (live === 'working' || live === 'needs_input')
@@ -668,11 +816,6 @@ ${diff || '(empty)'}
 \`\`\`
 ${truncated ? '\nThe diff above is truncated. Read the files from the path.\n' : ''}
 Also flag changes that fall outside the original task's scope.`;
-}
-
-function defaultMergeMessage(task: Task): string {
-  const title = task.title.replace(/\s+/g, ' ').trim().slice(0, 200);
-  return `deskhaven: ${title} (task ${task.id})`;
 }
 
 function stripUndefined<T extends object>(o: T): Partial<T> {

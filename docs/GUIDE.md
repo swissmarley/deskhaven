@@ -265,11 +265,18 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
    **Advanced** (for example 2 USD) so a runaway task stops early.
 5. Create a small, concrete task and assign it. When the task is in **Review** or **Done** and the
    assignee has a worktree, the task detail shows **Merge**: the branch, how far ahead it is, and the
-   files. **Accept & merge** commits whatever is still uncommitted in the worktree, then integrates
-   that branch into the branch your own checkout is on. The default is a squash commit (one commit per
+   files. **Accept & merge** asks you to confirm, then commits whatever is still uncommitted in the
+   worktree and integrates that branch into the base branch recorded when the agent was hired. If
+   your checkout is on a different branch, or in detached HEAD, the merge is refused (`wrong_branch`)
+   and nothing is switched for you. The default is a squash commit (one commit per
    merge, easy to undo); choose **Merge commit (--no-ff)** if you want a merge commit instead.
    Deskhaven never switches your branch and never merges into a checkout that has uncommitted tracked
-   changes or a detached HEAD — it refuses with a clear error and leaves your files as they were.
+   changes — it refuses with a clear error and leaves your files as they were. Worktree commits skip
+   git hooks (`core.hooksPath` is cleared and `--no-verify` is passed) and are not GPG-signed, because
+   those hooks live in a tree the agent can edit. The merge commit in your own checkout still runs
+   your hooks and your signing setup. If the worktree HEAD is no longer its `deskhaven/…` branch,
+   the merge is refused (`worktree_moved`) so that work is not committed somewhere else and then
+   discarded. An already-integrated branch returns `nothing_to_merge` and the task stays unmerged.
    A conflict is aborted automatically (your checkout is unchanged); the dialog lists the files and
    offers **Ask agent to resolve**, which tells the agent to integrate your branch inside its own
    worktree, and **Copy git commands** if you would rather finish the merge yourself. The merge covers

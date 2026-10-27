@@ -280,4 +280,320 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     expect(text).toContain('The diff above is truncated');
     expect(text.length).toBeLessThan(huge.length);
   });
+
+  it('returns 409 worktree_moved and does not mark the task merged', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Moved', true)).json();
+    git(agent.worktree.path, 'checkout', '--detach', '-q');
+    fs.writeFileSync(path.join(agent.worktree.path, 'lost.txt'), 'keep me\n');
+    const sourceBefore = git(repo, 'rev-parse', 'HEAD').trim();
+    const id = await reviewTask(agent.id, 'Moved');
+    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('worktree_moved');
+    const task = (await req({ method: 'GET', url: '/api/tasks' })).json() as {
+      id: string;
+      status: string;
+      merge?: { status?: string } | null;
+    }[];
+    const saved = task.find((t) => t.id === id);
+    expect(saved?.status).toBe('review');
+    expect(saved?.merge?.status).not.toBe('merged');
+    expect(fs.readFileSync(path.join(agent.worktree.path, 'lost.txt'), 'utf8')).toBe('keep me\n');
+    expect(git(repo, 'rev-parse', 'HEAD').trim()).toBe(sourceBefore);
+    expect(git(repo, 'status', '--porcelain')).toBe('');
+  });
+
+  it('rejects a nudge and holds a new assignment until the merge finishes', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Lock', true)).json();
+    fs.writeFileSync(path.join(agent.worktree.path, 'b.txt'), 'lock\n');
+    const id = await reviewTask(agent.id, 'Lock merge');
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held = built.ctx.worktrees.withSourceLock(repo, () => gate);
+    let settled = false;
+    const pending = req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} }).then(
+      (res) => {
+        settled = true;
+        return res;
+      },
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    expect(settled).toBe(false);
+    const nudged = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/nudge`,
+      payload: { text: 'while merging' },
+    });
+    expect(nudged.statusCode).toBe(409);
+    expect(nudged.json().error).toBe('agent_busy');
+    prompts.length = 0;
+    const other = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { title: 'During merge', prompt: 'wait for the merge', assigneeAgentId: agent.id },
+    });
+    expect(other.statusCode).toBe(201);
+    const otherId = other.json().id as string;
+    expect(other.json().status).toBe('assigned');
+    expect(prompts.some((p) => p.taskId === otherId)).toBe(false);
+    release();
+    await held;
+    const merged = await pending;
+    expect(merged.statusCode).toBe(200);
+    const until = Date.now() + 2000;
+    while (!prompts.some((p) => p.taskId === otherId) && Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(prompts.some((p) => p.taskId === otherId)).toBe(true);
+    expect(fs.readFileSync(path.join(repo, 'b.txt'), 'utf8')).toBe('lock\n');
+  });
+
+  it('snapshots the engineer at dispatch, not when an unassigned review is created', async () => {
+    const repo = tmpRepo();
+    const engineer = (await hire(repo, 'Ned', true)).json();
+    const reviewerDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-rev-')));
+    const reviewer = (await hire(reviewerDir, 'Nell', false)).json();
+    const busy = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { title: 'Still writing', prompt: 'not done', assigneeAgentId: engineer.id },
+    });
+    expect(
+      (
+        await req({
+          method: 'PATCH',
+          url: `/api/tasks/${busy.json().id}`,
+          payload: { status: 'in_progress' },
+        })
+      ).statusCode,
+    ).toBe(200);
+    fs.writeFileSync(path.join(engineer.worktree.path, 'early.txt'), 'early\n');
+    const created = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: {
+        title: 'Review Ned',
+        prompt: 'read the branch',
+        reviewOfAgentId: engineer.id,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().reviewTarget).toMatchObject({
+      agentId: engineer.id,
+      path: engineer.worktree.path,
+      branch: engineer.worktree.branch,
+    });
+    expect(created.json().status).toBe('backlog');
+    expect(git(engineer.worktree.path, 'status', '--porcelain')).toContain('early.txt');
+    fs.writeFileSync(path.join(engineer.worktree.path, 'later.txt'), 'later\n');
+    expect(
+      (
+        await req({
+          method: 'PATCH',
+          url: `/api/tasks/${busy.json().id}`,
+          payload: { status: 'done' },
+        })
+      ).statusCode,
+    ).toBe(200);
+    prompts.length = 0;
+    const assigned = await req({
+      method: 'POST',
+      url: `/api/tasks/${created.json().id}/assign`,
+      payload: { agentId: reviewer.id },
+    });
+    expect(assigned.statusCode).toBe(200);
+    const sent = prompts.find((p) => p.taskId === created.json().id);
+    expect(sent?.text).toContain('early.txt');
+    expect(sent?.text).toContain('later.txt');
+    expect(sent?.text).toContain('+later');
+    expect(git(engineer.worktree.path, 'status', '--porcelain')).toBe('');
+  });
+
+  it('forgets done and removed review paths when refreshing read dirs', async () => {
+    const repo = tmpRepo();
+    const engineer = (await hire(repo, 'Old', true)).json();
+    const reviewerDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-rev-')));
+    const reviewer = (await hire(reviewerDir, 'Pat', false)).json();
+    fs.writeFileSync(path.join(engineer.worktree.path, 'old.txt'), 'old\n');
+    const done = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: {
+        title: 'Review Old',
+        prompt: 'old review',
+        assigneeAgentId: reviewer.id,
+        reviewOfAgentId: engineer.id,
+      },
+    });
+    expect(done.statusCode).toBe(201);
+    expect(
+      (
+        await req({
+          method: 'PATCH',
+          url: `/api/tasks/${done.json().id}`,
+          payload: { status: 'done' },
+        })
+      ).statusCode,
+    ).toBe(200);
+    const repo2 = tmpRepo();
+    const engineer2 = (await hire(repo2, 'New', true)).json();
+    fs.writeFileSync(path.join(engineer2.worktree.path, 'new.txt'), 'new\n');
+    readDirs.length = 0;
+    const live = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: {
+        title: 'Review New',
+        prompt: 'new review',
+        assigneeAgentId: reviewer.id,
+        reviewOfAgentId: engineer2.id,
+      },
+    });
+    expect(live.statusCode).toBe(201);
+    const watched = readDirs.filter((r) => r.agentId === reviewer.id).at(-1);
+    expect(watched?.dirs).toContain(engineer2.worktree.path);
+    expect(watched?.dirs ?? []).not.toContain(engineer.worktree.path);
+    const gone = engineer2.worktree.path as string;
+    expect(
+      (await req({ method: 'DELETE', url: `/api/agents/${engineer2.id}?force=1` })).statusCode,
+    ).toBe(200);
+    readDirs.length = 0;
+    const nudged = await req({
+      method: 'POST',
+      url: `/api/tasks/${live.json().id}/nudge`,
+      payload: { text: 'look again' },
+    });
+    expect(nudged.statusCode).toBe(200);
+    const after = readDirs.filter((r) => r.agentId === reviewer.id).at(-1);
+    expect(after?.dirs ?? []).not.toContain(gone);
+    expect(fs.existsSync(gone)).toBe(false);
+  });
+
+  it('returns 409 wrong_branch over HTTP when the checkout is detached', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Detached', true)).json();
+    fs.writeFileSync(path.join(agent.worktree.path, 'b.txt'), 'x\n');
+    git(repo, 'checkout', '--detach', '-q');
+    const before = snapshot(repo);
+    const id = await reviewTask(agent.id, 'Detached');
+    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('wrong_branch');
+    expect(snapshot(repo)).toBe(before);
+  });
+
+  it('returns 409 nothing_to_merge without marking the task merged', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Quiet', true)).json();
+    const id = await reviewTask(agent.id, 'Quiet');
+    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('nothing_to_merge');
+    const saved = (
+      (await req({ method: 'GET', url: '/api/tasks' })).json() as {
+        id: string;
+        status: string;
+        merge?: { status?: string } | null;
+      }[]
+    ).find((t) => t.id === id);
+    expect(saved?.status).toBe('review');
+    expect(saved?.merge?.status).not.toBe('merged');
+  });
+
+  it('serializes two merges of the same checkout', async () => {
+    const repo = tmpRepo();
+    const ada = (await hire(repo, 'Ada2', true)).json();
+    const bea = (await hire(repo, 'Bea2', true)).json();
+    fs.writeFileSync(path.join(ada.worktree.path, 'ada.txt'), 'ada\n');
+    fs.writeFileSync(path.join(bea.worktree.path, 'bea.txt'), 'bea\n');
+    const ida = await reviewTask(ada.id, 'Ada2');
+    const idb = await reviewTask(bea.id, 'Bea2');
+    const [ra, rb] = await Promise.all([
+      req({ method: 'POST', url: `/api/tasks/${ida}/merge`, payload: {} }),
+      req({ method: 'POST', url: `/api/tasks/${idb}/merge`, payload: {} }),
+    ]);
+    expect(ra.statusCode).toBe(200);
+    expect(rb.statusCode).toBe(200);
+    expect(fs.readFileSync(path.join(repo, 'ada.txt'), 'utf8')).toBe('ada\n');
+    expect(fs.readFileSync(path.join(repo, 'bea.txt'), 'utf8')).toBe('bea\n');
+    expect(git(repo, 'status', '--porcelain')).toBe('');
+  });
+
+  it('returns 409 failed with the untracked filename', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Clash', true)).json();
+    fs.writeFileSync(path.join(agent.worktree.path, 'collision.txt'), 'agent\n');
+    fs.writeFileSync(path.join(repo, 'collision.txt'), 'local\n');
+    const head = git(repo, 'rev-parse', 'HEAD').trim();
+    const id = await reviewTask(agent.id, 'Clash');
+    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('failed');
+    expect(res.json().message).toContain('collision.txt');
+    expect(git(repo, 'rev-parse', 'HEAD').trim()).toBe(head);
+    expect(fs.readFileSync(path.join(repo, 'collision.txt'), 'utf8')).toBe('local\n');
+  });
+
+  it('rejects a review assigned to the same agent', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Self', true)).json();
+    const res = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: {
+        title: 'Review myself',
+        prompt: 'no',
+        assigneeAgentId: agent.id,
+        reviewOfAgentId: agent.id,
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('self_review');
+  });
+
+  it('merges a subdirectory hire into the repository root', async () => {
+    const repo = tmpRepo();
+    const sub = path.join(repo, 'pkg');
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, 'lib.txt'), 'v1\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'lib');
+    const agent = (await hire(sub, 'Sub', true)).json();
+    expect(agent.worktree.subdir).toBe('pkg');
+    expect(agent.worktree.sourceRoot).toBe(fs.realpathSync(repo));
+    fs.writeFileSync(path.join(agent.worktree.path, 'pkg', 'lib.txt'), 'v2\n');
+    const id = await reviewTask(agent.id, 'Sub');
+    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    expect(res.statusCode).toBe(200);
+    expect(fs.readFileSync(path.join(repo, 'pkg', 'lib.txt'), 'utf8')).toBe('v2\n');
+  });
+
+  it('waits for an in-progress merge before removing the worktree', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Fire', true)).json();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held = built.ctx.worktrees.withSourceLock(repo, () => gate);
+    let finished = false;
+    const pending = req({ method: 'DELETE', url: `/api/agents/${agent.id}?force=1` }).then(
+      (res) => {
+        finished = true;
+        return res;
+      },
+    );
+    await new Promise((r) => setTimeout(r, 150));
+    expect(finished).toBe(false);
+    expect(fs.existsSync(agent.worktree.path)).toBe(true);
+    release();
+    await held;
+    const res = await pending;
+    expect(res.statusCode).toBe(200);
+    expect(fs.existsSync(agent.worktree.path)).toBe(false);
+  });
 });

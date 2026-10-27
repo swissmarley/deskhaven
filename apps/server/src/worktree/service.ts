@@ -16,6 +16,11 @@ export interface WorktreeInfo {
   baseBranch?: string;
   /** Source commit at hire time. */
   baseCommit?: string;
+  /**
+   * Repository root recorded at hire. Optional so older rows still load. Merge uses this instead of
+   * walking `workdir`, which a later edit of that path would otherwise redirect.
+   */
+  sourceRoot?: string;
 }
 
 export interface MergeFile {
@@ -38,7 +43,13 @@ export type MergeOutcome =
   | { ok: true; commit: string }
   | {
       ok: false;
-      code: 'source_dirty' | 'wrong_branch' | 'conflict' | 'failed' | 'invalid_branch';
+      code:
+        | 'source_dirty'
+        | 'wrong_branch'
+        | 'conflict'
+        | 'failed'
+        | 'invalid_branch'
+        | 'nothing_to_merge';
       message: string;
       conflictFiles?: string[];
     };
@@ -48,7 +59,20 @@ export type MergeOutcome =
  * one path segment sequence, no shell metacharacters, no leading dash.
  */
 const BRANCH_NAME =
-  /^(?![-.])(?!.*\.\.)(?!.*@{)(?!.*\/\/)(?!.*[~^:?*[\\\s;|&$`'"<>])(?!.*\.lock$)(?!.*\/$)(?!.*\.$)[A-Za-z0-9._/-]+$/;
+  /^(?![-.])(?!.*\.\.)(?!.*@\{)(?!.*\/\/)(?!.*[~^:?*[\\\s;|&$`'"<>])(?!.*\.lock$)(?!.*\/$)(?!.*\.$)[\p{L}\p{N}._/-]+$/u;
+
+/** The worktree HEAD is not `wt.branch`, so a commit or hard reset would land on the wrong line. */
+export class WorktreeMovedError extends Error {
+  readonly code = 'worktree_moved' as const;
+  constructor(head: string, branch: string) {
+    super(
+      head
+        ? `worktree_moved: the worktree is on ${head}, not ${branch}. Deskhaven will not commit or reset it.`
+        : `worktree_moved: the worktree is in detached HEAD, not on ${branch}. Deskhaven will not commit or reset it.`,
+    );
+    this.name = 'WorktreeMovedError';
+  }
+}
 
 export function assertBranchName(name: string): string {
   if (name.length === 0 || name.length > 200 || !BRANCH_NAME.test(name))
@@ -174,6 +198,7 @@ export class WorktreeService {
     return {
       path: target,
       branch,
+      sourceRoot: repoDir,
       ...(subdir ? { subdir } : {}),
       ...(base ? { baseBranch: base.branch, baseCommit: base.commit } : {}),
     };
@@ -196,6 +221,15 @@ export class WorktreeService {
     if (!wt.subdir) return repoDir;
     const depth = wt.subdir.split('/').filter(Boolean).length;
     return path.resolve(repoDir, ...Array<string>(depth).fill('..'));
+  }
+
+  /**
+   * Where merges and branch deletion run. Prefer the root stored at hire; fall back to walking up
+   * from the agent's workdir when an older row has no `sourceRoot`.
+   */
+  resolvedSource(workdir: string, wt: WorktreeInfo): string {
+    if (wt.sourceRoot && isDir(wt.sourceRoot)) return wt.sourceRoot;
+    return this.sourceRoot(workdir, wt);
   }
 
   /** Clean, dirty, already gone, or unknown (with the reason) — never throws. */
@@ -291,17 +325,28 @@ export class WorktreeService {
     return out;
   }
 
-  /** The branch checked out in `dir`, or null when git cannot name one (detached HEAD). */
+  /**
+   * The branch checked out in `dir`, or null for a detached HEAD.
+   * A name git accepts but this service rejects (for example `feature.lock`) throws `invalid_branch`
+   * instead of being reported as detached.
+   */
   async currentBranch(dir: string): Promise<{ branch: string; commit: string } | null> {
+    let branch = '';
     try {
-      const branch = (await this.git(dir, ['symbolic-ref', '--short', 'HEAD'])).trim();
-      const commit = (await this.git(dir, ['rev-parse', 'HEAD'])).trim();
-      if (!branch || !commit) return null;
-      assertBranchName(branch);
-      return { branch, commit };
+      branch = (await this.git(dir, ['symbolic-ref', '-q', '--short', 'HEAD'])).trim();
     } catch {
       return null;
     }
+    if (!branch) return null;
+    try {
+      assertBranchName(branch);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`invalid_branch: ${detail}`);
+    }
+    const commit = (await this.git(dir, ['rev-parse', 'HEAD'])).trim();
+    if (!commit) return null;
+    return { branch, commit };
   }
 
   /**
@@ -316,7 +361,13 @@ export class WorktreeService {
     let behind = 0;
     try {
       const counts = (
-        await this.git(wt.path, ['rev-list', '--left-right', '--count', `${target}...${wt.branch}`])
+        await this.git(wt.path, [
+          'rev-list',
+          '--left-right',
+          '--count',
+          `${target}...${wt.branch}`,
+          '--',
+        ])
       ).trim();
       const parts = counts.split(/\s+/);
       const left = Number(parts[0]);
@@ -345,17 +396,27 @@ export class WorktreeService {
     };
   }
 
-  /** Stage and commit everything in the worktree. No-op when the tree is clean. Never touches the source checkout. */
+  /**
+   * Stage and commit everything in the worktree. No-op when the tree is clean. Never touches the
+   * source checkout. Refuses when HEAD is not `wt.branch`. Skips hooks and signing: a relative
+   * `core.hooksPath` would otherwise run scripts the agent can edit, outside the Bash approval path.
+   * `--no-verify` alone does not skip `post-commit`, so `core.hooksPath` is cleared as well.
+   */
   async commitAll(
     wt: WorktreeInfo,
     message: string,
   ): Promise<{ committed: boolean; commit?: string }> {
     assertBranchName(wt.branch);
+    await this.assertOnBranch(wt);
     if (!(await this.isDirty(wt.path))) return { committed: false };
     await this.git(wt.path, ['add', '-A'], 60_000);
     if (!(await this.isDirty(wt.path))) return { committed: false };
-    const identity = await this.identityArgs(wt.path);
-    await this.git(wt.path, [...identity, 'commit', '-m', message], 60_000);
+    const identity = await this.identityArgs(wt.path, { sign: false });
+    await this.git(
+      wt.path,
+      ['-c', 'core.hooksPath=/dev/null', ...identity, 'commit', '--no-verify', '-m', message],
+      60_000,
+    );
     return { committed: true, commit: (await this.git(wt.path, ['rev-parse', 'HEAD'])).trim() };
   }
 
@@ -393,16 +454,32 @@ export class WorktreeService {
           'The source checkout has uncommitted changes. Commit or stash them yourself, then merge again. Deskhaven will not touch a dirty checkout.',
       };
     }
-    let current: string;
+    let current = '';
     try {
-      current = (await this.git(sourceRoot, ['symbolic-ref', '--short', 'HEAD'])).trim();
-      assertBranchName(current);
+      current = (await this.git(sourceRoot, ['symbolic-ref', '-q', '--short', 'HEAD'])).trim();
     } catch {
       return {
         ok: false,
         code: 'wrong_branch',
         message:
           'The source checkout is in detached HEAD. Deskhaven will not switch branches. Check out the target branch yourself, then merge again.',
+      };
+    }
+    if (!current) {
+      return {
+        ok: false,
+        code: 'wrong_branch',
+        message:
+          'The source checkout is in detached HEAD. Deskhaven will not switch branches. Check out the target branch yourself, then merge again.',
+      };
+    }
+    try {
+      assertBranchName(current);
+    } catch (err) {
+      return {
+        ok: false,
+        code: 'invalid_branch',
+        message: err instanceof Error ? err.message : String(err),
       };
     }
     if (current !== target) {
@@ -415,10 +492,17 @@ export class WorktreeService {
     const identity = await this.identityArgs(sourceRoot);
     try {
       if (strategy === 'squash') {
-        await this.git(sourceRoot, ['merge', '--squash', branch], 60_000);
+        await this.git(sourceRoot, ['merge', '--squash', '--', branch], 60_000);
         const staged = (await this.git(sourceRoot, ['diff', '--cached', '--name-only'])).trim();
         const headNow = (await this.git(sourceRoot, ['rev-parse', 'HEAD'])).trim();
-        if (!staged && headNow === headBefore) return { ok: true, commit: headBefore };
+        if (!staged && headNow === headBefore) {
+          await this.restoreSource(sourceRoot, 'squash');
+          return {
+            ok: false,
+            code: 'nothing_to_merge',
+            message: 'Nothing to merge. The branch is already contained in the target.',
+          };
+        }
         try {
           await this.git(sourceRoot, [...identity, 'commit', '-m', message], 60_000);
         } catch (err) {
@@ -426,20 +510,30 @@ export class WorktreeService {
           return {
             ok: false,
             code: 'failed',
-            message: gitText(err) || 'The squash commit failed. The source checkout was restored.',
+            message:
+              clip(gitText(err)) || 'The squash commit failed. The source checkout was restored.',
           };
         }
       } else {
         await this.git(
           sourceRoot,
-          [...identity, 'merge', '--no-ff', '-m', message, branch],
+          [...identity, 'merge', '--no-ff', '-m', message, '--', branch],
           60_000,
         );
+        const headNow = (await this.git(sourceRoot, ['rev-parse', 'HEAD'])).trim();
+        if (headNow === headBefore) {
+          return {
+            ok: false,
+            code: 'nothing_to_merge',
+            message: 'Nothing to merge. The branch is already up to date.',
+          };
+        }
       }
       return { ok: true, commit: (await this.git(sourceRoot, ['rev-parse', 'HEAD'])).trim() };
     } catch (err) {
+      const text = gitText(err);
       const conflictFiles = await this.unmerged(sourceRoot);
-      const conflict = conflictFiles.length > 0 || isConflictText(gitText(err));
+      const conflict = conflictFiles.length > 0 || isConflictText(text);
       if (conflict) {
         await this.restoreSource(sourceRoot, strategy);
         const files = conflictFiles.length ? conflictFiles : await this.unmerged(sourceRoot);
@@ -455,8 +549,7 @@ export class WorktreeService {
       return {
         ok: false,
         code: 'failed',
-        message:
-          firstLine(gitText(err)) || 'git merge failed. The source checkout was left unchanged.',
+        message: clip(text) || 'git merge failed. The source checkout was left unchanged.',
       };
     }
   }
@@ -467,20 +560,38 @@ export class WorktreeService {
    */
   async syncToTarget(wt: WorktreeInfo, commit: string): Promise<void> {
     if (!/^[0-9a-f]{7,64}$/i.test(commit)) throw new Error(`Refusing to reset to ${commit}`);
+    assertBranchName(wt.branch);
+    await this.assertOnBranch(wt);
     const porcelain = (await this.git(wt.path, ['status', '--porcelain'])).trim();
     if (porcelain)
       throw new Error('Refusing to reset a dirty worktree. Commit or discard its changes first.');
     await this.git(wt.path, ['reset', '--hard', commit], 60_000);
   }
 
-  /** `git branch -d` (never `-D`). A branch that is not merged is left in place. */
+  /**
+   * `git branch -d` (never `-D`). When `target` is given, a branch that is not an ancestor of it is
+   * kept without attempting deletion. After a squash and realign, the branch tip is that commit, so
+   * the ancestor check still passes.
+   */
   async deleteBranch(
     sourceRoot: string,
     branch: string,
+    target?: string,
   ): Promise<{ deleted: boolean; warning?: string }> {
     assertBranchName(branch);
+    if (target) {
+      assertBranchName(target);
+      try {
+        await this.git(sourceRoot, ['merge-base', '--is-ancestor', '--', branch, target], 20_000);
+      } catch {
+        return {
+          deleted: false,
+          warning: `Branch ${branch} is not fully merged into ${target}, so it was kept. Deskhaven will not force-delete it.`,
+        };
+      }
+    }
     try {
-      await this.git(sourceRoot, ['branch', '-d', branch], 20_000);
+      await this.git(sourceRoot, ['branch', '-d', '--', branch], 20_000);
       return { deleted: true };
     } catch (err) {
       const warning =
@@ -496,8 +607,10 @@ export class WorktreeService {
     baseBranch: string | null,
   ): Promise<{ diff: string; files: string[] }> {
     const range = baseBranch ? `${assertBranchName(baseBranch)}...HEAD` : null;
-    const diffArgs = range ? ['diff', range] : ['diff', 'HEAD'];
-    const nameArgs = range ? ['diff', '--name-only', range] : ['diff', '--name-only', 'HEAD'];
+    const diffArgs = range ? ['diff', range, '--'] : ['diff', 'HEAD', '--'];
+    const nameArgs = range
+      ? ['diff', '--name-only', range, '--']
+      : ['diff', '--name-only', 'HEAD', '--'];
     let diff = '';
     let files: string[] = [];
     try {
@@ -515,29 +628,34 @@ export class WorktreeService {
   private async mergeFiles(wt: WorktreeInfo, target: string): Promise<MergeFile[]> {
     const byPath = new Map<string, MergeFile>();
     try {
-      const named = await this.git(wt.path, ['diff', '--name-status', `${target}...${wt.branch}`]);
-      for (const line of named.split('\n')) {
-        if (!line.trim()) continue;
-        const parts = line.split('\t');
-        const status = parts[0] ?? 'M';
-        const path = parts[parts.length - 1];
-        if (path) byPath.set(path, { path, status });
-      }
+      const named = await this.git(wt.path, [
+        'diff',
+        '-z',
+        '--name-status',
+        `${target}...${wt.branch}`,
+        '--',
+      ]);
+      for (const file of parseNameStatusZ(named)) byPath.set(file.path, file);
     } catch {
       // The comparison itself is reported by status().
     }
     try {
-      const porcelain = await this.git(wt.path, ['status', '--porcelain']);
-      for (const line of porcelain.split('\n')) {
-        if (!line.trim()) continue;
-        const status = line.slice(0, 2).trim() || 'M';
-        const path = line.slice(3).trim();
-        if (path) byPath.set(path, { path, status: status === '??' ? 'untracked' : status });
-      }
+      const porcelain = await this.git(wt.path, ['status', '--porcelain=v1', '-z']);
+      for (const file of parsePorcelainZ(porcelain)) byPath.set(file.path, file);
     } catch {
       // ignore
     }
     return [...byPath.values()];
+  }
+
+  private async assertOnBranch(wt: WorktreeInfo): Promise<void> {
+    let head = '';
+    try {
+      head = (await this.git(wt.path, ['symbolic-ref', '-q', '--short', 'HEAD'])).trim();
+    } catch {
+      throw new WorktreeMovedError('', wt.branch);
+    }
+    if (head !== wt.branch) throw new WorktreeMovedError(head, wt.branch);
   }
 
   private async unmerged(dir: string): Promise<string[]> {
@@ -572,19 +690,20 @@ export class WorktreeService {
     if (unmerged.length || staged) await this.optionalGit(dir, ['reset', '--merge']);
   }
 
-  /** Identity overrides only when the repo (and the environment) have none, so commits do not hang. */
-  private async identityArgs(cwd: string): Promise<string[]> {
+  /**
+   * Identity overrides only when the repo (and the environment) have none, so commits do not hang.
+   * `sign: false` always disables gpgsign (worktree commits). Source merges keep the user's signing
+   * setup when an identity is already configured.
+   */
+  private async identityArgs(cwd: string, opts?: { sign?: boolean }): Promise<string[]> {
     const name = (await this.optionalGit(cwd, ['config', '--get', 'user.name'])).trim();
     const email = (await this.optionalGit(cwd, ['config', '--get', 'user.email'])).trim();
-    if (name && email) return [];
-    return [
-      '-c',
-      'user.name=Deskhaven',
-      '-c',
-      'user.email=deskhaven@localhost',
-      '-c',
-      'commit.gpgsign=false',
-    ];
+    const args: string[] = [];
+    if (!name || !email) {
+      args.push('-c', 'user.name=Deskhaven', '-c', 'user.email=deskhaven@localhost');
+    }
+    if (opts?.sign === false || !name || !email) args.push('-c', 'commit.gpgsign=false');
+    return args;
   }
 
   private async git(
@@ -620,6 +739,57 @@ function gitText(err: unknown): string {
 
 function isConflictText(text: string): boolean {
   return /CONFLICT|Automatic merge failed|fix conflicts/i.test(text);
+}
+
+function clip(text: string, max = 2000): string {
+  const trimmed = text.trim();
+  return trimmed.length <= max ? trimmed : trimmed.slice(0, max);
+}
+
+/** `git diff -z --name-status`: `R100\\0old\\0new\\0`, otherwise `M\\0path\\0`. */
+function parseNameStatusZ(raw: string): MergeFile[] {
+  const fields = raw.split('\0');
+  if (fields.at(-1) === '') fields.pop();
+  const out: MergeFile[] = [];
+  let i = 0;
+  while (i < fields.length) {
+    const status = fields[i++] ?? '';
+    if (!status) break;
+    if (status.startsWith('R') || status.startsWith('C')) {
+      const next = fields[i + 1];
+      i += 1;
+      if (next === undefined) break;
+      const path = next;
+      i += 1;
+      if (path) out.push({ path, status });
+      continue;
+    }
+    const path = fields[i++] ?? '';
+    if (path) out.push({ path, status });
+  }
+  return out;
+}
+
+/** `git status --porcelain=v1 -z`: `XY path\\0`, rename is `XY new\\0old\\0`. */
+function parsePorcelainZ(raw: string): MergeFile[] {
+  const out: MergeFile[] = [];
+  let i = 0;
+  while (i + 3 < raw.length) {
+    const xy = raw.slice(i, i + 2);
+    i += 3;
+    const end = raw.indexOf('\0', i);
+    if (end < 0) break;
+    const path = raw.slice(i, end);
+    i = end + 1;
+    if (xy.includes('R') || xy.includes('C')) {
+      const oldEnd = raw.indexOf('\0', i);
+      if (oldEnd < 0) break;
+      i = oldEnd + 1;
+    }
+    const status = xy.trim() || 'M';
+    if (path) out.push({ path, status: status === '??' ? 'untracked' : status });
+  }
+  return out;
 }
 
 function firstLine(text: string): string {

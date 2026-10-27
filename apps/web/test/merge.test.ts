@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { manualMergeCommands, showMergeControls } from '../src/ui/merge.js';
+import { manualMergeCommands, reviewerCanWrite, showMergeControls } from '../src/ui/merge.js';
 
 describe('merge controls', () => {
   it('shows them only for a ready worktree task', () => {
@@ -19,8 +19,18 @@ describe('merge controls', () => {
     };
     const squash = manualMergeCommands(preview, 'ship it', 'squash');
     expect(squash).toContain('merge --squash');
+    expect(squash).toContain("git -C '/src/o'\\''hara' commit -m 'ship it'");
     expect(squash).toContain("'/src/o'\\''hara'");
     const merge = manualMergeCommands(preview, 'ship it', 'merge');
     expect(merge).toContain('merge --no-ff');
+  });
+
+  it('warns when a reviewer can do more than read', () => {
+    expect(
+      reviewerCanWrite({ tools: ['Read', 'Grep', 'Glob', 'LS'], allowedTools: ['Read'] }),
+    ).toBe(false);
+    expect(reviewerCanWrite({ tools: null, allowedTools: ['Read', 'Edit'] })).toBe(true);
+    expect(reviewerCanWrite({ tools: ['Read', 'Bash'], allowedTools: ['Read'] })).toBe(true);
+    expect(reviewerCanWrite(undefined)).toBe(false);
   });
 });

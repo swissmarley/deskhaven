@@ -74,6 +74,8 @@ export const AgentSchema = z.object({
       subdir: z.string().optional(),
       baseBranch: z.string().optional(),
       baseCommit: z.string().optional(),
+      /** Repository root at hire time. Optional so agents saved before it existed still parse. */
+      sourceRoot: z.string().optional(),
     })
     .nullable(),
   sessionId: z.string().nullable(),
@@ -169,8 +171,9 @@ export const TaskMergeSchema = z.object({
 export type TaskMerge = z.infer<typeof TaskMergeSchema>;
 
 /**
- * Snapshot of whose checkout a review task should read. Captured at creation so it stays readable
- * after the engineer is fired. Nullable/optional so older task rows still load.
+ * Who a review task should read. The agent, path and branch are recorded when the task is created
+ * so they stay readable after the engineer is fired. The diff itself is taken when the review is
+ * dispatched. Nullable/optional so older task rows still load.
  */
 export const ReviewTargetSchema = z.object({
   agentId: z.string(),
@@ -180,6 +183,12 @@ export const ReviewTargetSchema = z.object({
   baseBranch: z.string().nullable(),
 });
 export type ReviewTarget = z.infer<typeof ReviewTargetSchema>;
+
+/** Default squash/merge subject. Shared so the server and the copy-commands panel stay identical. */
+export function defaultMergeMessage(task: { id: string; title: string }): string {
+  const title = task.title.replace(/\s+/g, ' ').trim().slice(0, 200);
+  return `deskhaven: ${title} (task ${task.id})`;
+}
 
 export const TaskSchema = z.object({
   id: z.string(),

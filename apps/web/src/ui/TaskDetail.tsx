@@ -1,10 +1,16 @@
-import type { MergePreview, MergeStrategy, TaskStatus } from '@deskhaven/shared';
+import {
+  defaultMergeMessage,
+  type MergePreview,
+  type MergeStrategy,
+  TaskSchema,
+  type TaskStatus,
+} from '@deskhaven/shared';
 import { type JSX, useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { ApiError, api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
 import { fmtTime, fmtUsd } from './eventText.js';
-import { manualMergeCommands, showMergeControls } from './merge.js';
+import { manualMergeCommands, reviewerCanWrite, showMergeControls } from './merge.js';
 
 export function TaskDetail({
   taskId,
@@ -22,17 +28,27 @@ export function TaskDetail({
   const [preview, setPreview] = useState<MergePreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const confirmKey = `${taskId}:${strategy}`;
+  const [confirmFor, setConfirmFor] = useState(confirmKey);
   const [asking, setAsking] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewerId, setReviewerId] = useState('');
   const [reviewPrompt, setReviewPrompt] = useState('');
+  if (confirmFor !== confirmKey) {
+    setConfirmFor(confirmKey);
+    setConfirming(false);
+  }
   const assignee = agents.find((a) => a.id === task?.assigneeAgentId);
   const offerMerge = task ? showMergeControls(task, assignee) : false;
   const revision = task?.updatedAt ?? 0;
-  const reviewers = [...agents].sort((a, b) => {
-    const rank = (role: string) => (role === 'reviewer' ? 0 : 1);
-    return rank(a.rolePresetId) - rank(b.rolePresetId) || a.name.localeCompare(b.name);
-  });
+  const reviewers = agents
+    .filter((a) => a.id !== assignee?.id)
+    .sort((a, b) => {
+      const rank = (role: string) => (role === 'reviewer' ? 0 : 1);
+      return rank(a.rolePresetId) - rank(b.rolePresetId) || a.name.localeCompare(b.name);
+    });
+  const chosenReviewer = reviewers.find((a) => a.id === reviewerId);
 
   const run = async (fn: () => Promise<unknown>) => {
     try {
@@ -67,7 +83,7 @@ export function TaskDetail({
 
   if (!task) return null;
 
-  const mergeMessage = `deskhaven: ${task.title.replace(/\s+/g, ' ').trim().slice(0, 200)} (task ${task.id})`;
+  const mergeMessage = defaultMergeMessage(task);
   const commands = preview ? manualMergeCommands(preview, mergeMessage, strategy) : '';
   const conflicted = task.merge?.status === 'conflict';
 
@@ -75,8 +91,16 @@ export function TaskDetail({
     setMerging(true);
     try {
       await api.mergeTask(task.id, { strategy });
+      setConfirming(false);
     } catch (err) {
+      if (err instanceof ApiError) {
+        const parsed = TaskSchema.safeParse(err.body.task);
+        if (parsed.success) {
+          useAppStore.setState((s) => ({ tasks: { ...s.tasks, [parsed.data.id]: parsed.data } }));
+        }
+      }
       pushNotice('error', err instanceof Error ? err.message : String(err));
+      setConfirming(false);
     } finally {
       setMerging(false);
     }
@@ -269,9 +293,15 @@ export function TaskDetail({
                 type="button"
                 className="primary"
                 disabled={merging || preview?.canMerge === false}
-                onClick={() => void acceptMerge()}
+                onClick={() => {
+                  if (!confirming) {
+                    setConfirming(true);
+                    return;
+                  }
+                  void acceptMerge();
+                }}
               >
-                {merging ? 'Merging…' : 'Accept & merge'}
+                {merging ? 'Merging…' : confirming ? 'Confirm merge' : 'Accept & merge'}
               </button>
               {task.status !== 'done' ? (
                 <button
@@ -323,6 +353,12 @@ export function TaskDetail({
                 ))}
               </select>
             </label>
+            {reviewerCanWrite(chosenReviewer) ? (
+              <p className="small warn-text">
+                This agent can edit or run tools. The review still cannot write the engineer
+                checkout, but a read-only reviewer is the usual choice.
+              </p>
+            ) : null}
             <textarea
               rows={4}
               value={reviewPrompt}

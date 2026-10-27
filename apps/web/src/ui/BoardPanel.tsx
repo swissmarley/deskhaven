@@ -15,6 +15,7 @@ import { api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
 import { AvatarPreview } from './AvatarPicker.js';
 import { fmtUsd } from './eventText.js';
+import { reviewerCanWrite } from './merge.js';
 import { TaskDetail } from './TaskDetail.js';
 import { getWorldHandle } from './worldHandle.js';
 
@@ -175,6 +176,8 @@ function CreateTaskForm({ onDone }: { onDone: () => void }): JSX.Element {
   const [assignee, setAssignee] = useState('');
   const [reviewOf, setReviewOf] = useState('');
   const [busy, setBusy] = useState(false);
+  const reviewer = agents.find((a) => a.id === assignee);
+  const subjectOptions = agents.filter((a) => a.id !== assignee);
   const submit = async () => {
     setBusy(true);
     try {
@@ -206,7 +209,14 @@ function CreateTaskForm({ onDone }: { onDone: () => void }): JSX.Element {
           placeholder="Title"
           required
         />
-        <select value={assignee} onChange={(e) => setAssignee(e.target.value)}>
+        <select
+          value={assignee}
+          onChange={(e) => {
+            const next = e.target.value;
+            setAssignee(next);
+            if (reviewOf === next) setReviewOf('');
+          }}
+        >
           <option value="">Backlog (unassigned)</option>
           {agents.map((a) => (
             <option key={a.id} value={a.id}>
@@ -233,13 +243,19 @@ function CreateTaskForm({ onDone }: { onDone: () => void }): JSX.Element {
         Review work of{' '}
         <select value={reviewOf} onChange={(e) => setReviewOf(e.target.value)}>
           <option value="">None</option>
-          {agents.map((a) => (
+          {subjectOptions.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name} · {a.rolePresetId}
             </option>
           ))}
         </select>
       </label>
+      {reviewOf && reviewerCanWrite(reviewer) ? (
+        <p className="small warn-text">
+          This assignee can edit or run tools. A read-only reviewer is the usual choice. The review
+          still cannot write the other checkout.
+        </p>
+      ) : null}
     </form>
   );
 }

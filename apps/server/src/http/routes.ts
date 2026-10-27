@@ -162,50 +162,63 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
         error: err instanceof Error ? err.message : String(err),
         worktree: agent.worktree,
       });
-    // Refuse before stopping anything: firing an agent must not throw away uncommitted work, and a
-    // check that cannot run (source repository moved or deleted) counts as "might be dirty".
-    if (agent.worktree && !q.force) {
-      const state = await ctx.worktrees.state(agent.workdir, agent.worktree);
-      if (state.kind === 'dirty')
-        return conflict(
-          new Error(
-            `worktree ${agent.worktree.path} has uncommitted changes; commit them or force removal`,
-          ),
-        );
-      if (state.kind === 'unknown')
-        return conflict(
-          new Error(
-            `cannot check worktree ${agent.worktree.path} for uncommitted changes (${state.reason}); force removal to delete the folder anyway`,
-          ),
-        );
-    }
-    await ctx.manager.remove(p.id);
+    const finish = async () => {
+      // Refuse before stopping anything: firing an agent must not throw away uncommitted work, and a
+      // check that cannot run (source repository moved or deleted) counts as "might be dirty".
+      if (agent.worktree && !q.force) {
+        const state = await ctx.worktrees.state(agent.workdir, agent.worktree);
+        if (state.kind === 'dirty')
+          return conflict(
+            new Error(
+              `worktree ${agent.worktree.path} has uncommitted changes; commit them or force removal`,
+            ),
+          );
+        if (state.kind === 'unknown')
+          return conflict(
+            new Error(
+              `cannot check worktree ${agent.worktree.path} for uncommitted changes (${state.reason}); force removal to delete the folder anyway`,
+            ),
+          );
+      }
+      await ctx.manager.remove(p.id);
+      if (agent.worktree) {
+        try {
+          await ctx.worktrees.remove(agent.workdir, agent.worktree, q.force ?? false);
+        } catch (err) {
+          return conflict(err);
+        }
+      }
+      ctx.agents.remove(p.id);
+      if (q.deleteBranch && agent.worktree) {
+        const source = ctx.worktrees.resolvedSource(agent.workdir, agent.worktree);
+        try {
+          const dropped = await ctx.worktrees.deleteBranch(
+            source,
+            agent.worktree.branch,
+            agent.worktree.baseBranch,
+          );
+          return {
+            ok: true,
+            branchDeleted: dropped.deleted,
+            ...(dropped.warning ? { warning: dropped.warning } : {}),
+          };
+        } catch (err) {
+          return {
+            ok: true,
+            branchDeleted: false,
+            warning: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+      return { ok: true };
+    };
+    // Share the source lock with merge so a fire cannot remove the worktree between the merge's
+    // cleanliness check and its reset.
     if (agent.worktree) {
-      try {
-        await ctx.worktrees.remove(agent.workdir, agent.worktree, q.force ?? false);
-      } catch (err) {
-        return conflict(err);
-      }
+      const source = ctx.worktrees.resolvedSource(agent.workdir, agent.worktree);
+      return ctx.worktrees.withSourceLock(source, finish);
     }
-    ctx.agents.remove(p.id);
-    if (q.deleteBranch && agent.worktree) {
-      const source = ctx.worktrees.sourceRoot(agent.workdir, agent.worktree);
-      try {
-        const dropped = await ctx.worktrees.deleteBranch(source, agent.worktree.branch);
-        return {
-          ok: true,
-          branchDeleted: dropped.deleted,
-          ...(dropped.warning ? { warning: dropped.warning } : {}),
-        };
-      } catch (err) {
-        return {
-          ok: true,
-          branchDeleted: false,
-          warning: err instanceof Error ? err.message : String(err),
-        };
-      }
-    }
-    return { ok: true };
+    return finish();
   });
 
   for (const action of ['start', 'stop', 'pause', 'resume', 'interrupt'] as const) {

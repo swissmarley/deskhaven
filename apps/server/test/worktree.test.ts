@@ -163,6 +163,9 @@ describe('merging a worktree branch', { timeout: 20_000 }, () => {
     expect(merge).toMatchObject({ ok: false, code: 'conflict' });
     expect(snapshot(repo)).toBe(before);
     expect(git(repo, 'status', '--porcelain')).toBe('');
+    const gitDir = path.resolve(repo, git(repo, 'rev-parse', '--git-dir').trim());
+    expect(fs.existsSync(path.join(gitDir, 'MERGE_HEAD'))).toBe(false);
+    expect(fs.existsSync(path.join(gitDir, 'SQUASH_MSG'))).toBe(false);
     fs.rmSync(repo, { recursive: true, force: true });
     fs.rmSync(data, { recursive: true, force: true });
   });
@@ -181,9 +184,10 @@ describe('merging a worktree branch', { timeout: 20_000 }, () => {
     git(wt.path, 'checkout', '--', '.');
     fs.rmSync(path.join(wt.path, 'dirty.txt'), { force: true });
     await svc.remove(repo, wt);
-    const kept = await svc.deleteBranch(repo, wt.branch);
+    const kept = await svc.deleteBranch(repo, wt.branch, 'main');
     expect(kept.deleted).toBe(false);
-    expect(kept.warning).toMatch(/not fully merged|not merged/);
+    expect(kept.warning).toMatch(/not fully merged/);
+    expect(kept.warning).toContain('main');
     expect(git(repo, 'branch', '--list', wt.branch)).toContain(wt.branch);
     await expect(svc.syncToTarget(wt, 'not-a-sha')).rejects.toThrow(/Refusing to reset/);
     fs.rmSync(repo, { recursive: true, force: true });
@@ -203,6 +207,199 @@ describe('merging a worktree branch', { timeout: 20_000 }, () => {
     expect(material.diff).toContain('+fay');
     fs.rmSync(repo, { recursive: true, force: true });
     fs.rmSync(data, { recursive: true, force: true });
+  });
+
+  it('refuses to commit or realign when the worktree left its branch', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(repo, 'moved11111111', 'Moved');
+    const sourceBefore = git(repo, 'rev-parse', 'HEAD').trim();
+    git(wt.path, 'checkout', '--detach', '-q');
+    fs.writeFileSync(path.join(wt.path, 'lost.txt'), 'keep me\n');
+    await expect(svc.commitAll(wt, 'should not land')).rejects.toThrow(/worktree_moved/);
+    expect(fs.readFileSync(path.join(wt.path, 'lost.txt'), 'utf8')).toBe('keep me\n');
+    expect(git(wt.path, 'status', '--porcelain')).toContain('lost.txt');
+    expect(git(repo, 'rev-parse', 'HEAD').trim()).toBe(sourceBefore);
+
+    git(wt.path, 'checkout', '-q', '-b', 'fix');
+    git(wt.path, 'add', '-A');
+    git(wt.path, 'commit', '-q', '-m', 'on fix');
+    const fixTip = git(wt.path, 'rev-parse', 'HEAD').trim();
+    await expect(svc.syncToTarget(wt, sourceBefore)).rejects.toThrow(/worktree_moved/);
+    expect(git(wt.path, 'rev-parse', 'HEAD').trim()).toBe(fixTip);
+    expect(fs.readFileSync(path.join(wt.path, 'lost.txt'), 'utf8')).toBe('keep me\n');
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
+  it('returns nothing_to_merge when the branch is already integrated', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(repo, 'empty22222222', 'Empty');
+    fs.writeFileSync(path.join(wt.path, 'b.txt'), 'once\n');
+    await svc.commitAll(wt, 'once');
+    const first = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'deskhaven: once');
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    await svc.syncToTarget(wt, first.commit);
+    const head = git(repo, 'rev-parse', 'HEAD').trim();
+    const again = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'deskhaven: again');
+    expect(again).toMatchObject({ ok: false, code: 'nothing_to_merge' });
+    expect(git(repo, 'rev-parse', 'HEAD').trim()).toBe(head);
+    const noff = await svc.mergeInto(repo, wt.branch, 'main', 'merge', 'deskhaven: again');
+    expect(noff).toMatchObject({ ok: false, code: 'nothing_to_merge' });
+    expect(git(repo, 'rev-parse', 'HEAD').trim()).toBe(head);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
+  it('does not run a post-commit hook installed in the worktree', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(repo, 'hooks33333333', 'Hooks');
+    const hooks = path.join(wt.path, '.husky');
+    fs.mkdirSync(hooks);
+    const marker = path.join(wt.path, 'hook-ran');
+    fs.writeFileSync(
+      path.join(hooks, 'post-commit'),
+      `#!/bin/sh\necho ran >> ${JSON.stringify(marker).slice(1, -1)}\n`,
+    );
+    fs.chmodSync(path.join(hooks, 'post-commit'), 0o755);
+    fs.writeFileSync(path.join(hooks, 'pre-commit'), '#!/bin/sh\nexit 1\n');
+    fs.chmodSync(path.join(hooks, 'pre-commit'), 0o755);
+    git(wt.path, 'config', 'core.hooksPath', '.husky');
+    fs.writeFileSync(path.join(wt.path, 'b.txt'), 'hooked\n');
+    const committed = await svc.commitAll(wt, 'hooked');
+    expect(committed.committed).toBe(true);
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(git(wt.path, 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe(wt.branch);
+    expect(git(wt.path, 'log', '-1', '--format=%s').trim()).toBe('hooked');
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
+  it('reports a failed merge with the untracked filename and leaves the source file', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(repo, 'collide444444', 'Col');
+    fs.writeFileSync(path.join(wt.path, 'collision.txt'), 'from the agent\n');
+    await svc.commitAll(wt, 'add collision');
+    fs.writeFileSync(path.join(repo, 'collision.txt'), 'local untracked\n');
+    const head = git(repo, 'rev-parse', 'HEAD').trim();
+    const failed = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'nope');
+    expect(failed.ok).toBe(false);
+    if (failed.ok) return;
+    expect(failed.code).toBe('failed');
+    expect(failed.message).toContain('collision.txt');
+    expect(git(repo, 'rev-parse', 'HEAD').trim()).toBe(head);
+    expect(fs.readFileSync(path.join(repo, 'collision.txt'), 'utf8')).toBe('local untracked\n');
+    expect(git(repo, 'status', '--porcelain', '--untracked-files=no')).toBe('');
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
+  it('lists renames and paths that need quoting', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(repo, 'rename5555555', 'Ren');
+    git(wt.path, 'mv', 'a.txt', 'a file.txt');
+    fs.writeFileSync(path.join(wt.path, 'quote".txt'), 'q\n');
+    const st = await svc.status(wt, 'main');
+    expect(st.files.map((f) => f.path)).toEqual(
+      expect.arrayContaining(['a file.txt', 'quote".txt']),
+    );
+    expect(st.files.find((f) => f.path === 'a file.txt')?.status.startsWith('R')).toBe(true);
+    expect(st.files.some((f) => f.path.includes('"a file.txt"'))).toBe(false);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
+  it('merges a subdirectory worktree at the repository root', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    const sub = path.join(repo, 'pkg');
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, 'lib.txt'), 'v1\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'lib');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(sub, 'subdir6666666', 'Sub');
+    expect(wt.subdir).toBe('pkg');
+    expect(wt.sourceRoot).toBe(fs.realpathSync(repo));
+    fs.writeFileSync(path.join(wt.path, 'pkg', 'lib.txt'), 'v2\n');
+    await svc.commitAll(wt, 'lib v2');
+    const merged = await svc.mergeInto(
+      wt.sourceRoot ?? repo,
+      wt.branch,
+      'main',
+      'squash',
+      'deskhaven: lib',
+    );
+    expect(merged.ok).toBe(true);
+    expect(fs.readFileSync(path.join(repo, 'pkg', 'lib.txt'), 'utf8')).toBe('v2\n');
+    expect(git(repo, 'rev-parse', '--show-toplevel').trim()).toBe(fs.realpathSync(repo));
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
+  it('names a unicode branch and rejects one this service will not pass to git', async () => {
+    const repo = tmpRepo();
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    git(repo, 'checkout', '-q', '-b', 'topic/café');
+    expect(await svc.currentBranch(repo)).toMatchObject({ branch: 'topic/café' });
+    git(repo, 'checkout', '-q', '-b', 'foo;bar');
+    await expect(svc.currentBranch(repo)).rejects.toThrow(/invalid_branch/);
+    const named = await svc.mergeInto(repo, 'main', 'main', 'squash', 'nope');
+    expect(named).toMatchObject({ ok: false, code: 'invalid_branch' });
+    if (!named.ok) expect(named.message).toMatch(/Invalid branch name/);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
+  it('does not invoke gpg for a worktree commit', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(repo, 'gpg777777777', 'Gpg');
+    const marker = path.join(data, 'gpg-ran');
+    const program = path.join(data, 'gpg-fake.sh');
+    fs.writeFileSync(program, `#!/bin/sh\necho ran >> '${marker}'\nexit 0\n`);
+    fs.chmodSync(program, 0o755);
+    const n = Number(process.env.GIT_CONFIG_COUNT ?? '0');
+    const prevCount = process.env.GIT_CONFIG_COUNT;
+    process.env.GIT_CONFIG_COUNT = String(n + 2);
+    process.env[`GIT_CONFIG_KEY_${n}`] = 'commit.gpgsign';
+    process.env[`GIT_CONFIG_VALUE_${n}`] = 'true';
+    process.env[`GIT_CONFIG_KEY_${n + 1}`] = 'gpg.program';
+    process.env[`GIT_CONFIG_VALUE_${n + 1}`] = program;
+    try {
+      fs.writeFileSync(path.join(wt.path, 'b.txt'), 'x\n');
+      const committed = await svc.commitAll(wt, 'unsigned');
+      expect(committed.committed).toBe(true);
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      if (prevCount === undefined) delete process.env.GIT_CONFIG_COUNT;
+      else process.env.GIT_CONFIG_COUNT = prevCount;
+      delete process.env[`GIT_CONFIG_KEY_${n}`];
+      delete process.env[`GIT_CONFIG_VALUE_${n}`];
+      delete process.env[`GIT_CONFIG_KEY_${n + 1}`];
+      delete process.env[`GIT_CONFIG_VALUE_${n + 1}`];
+      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(data, { recursive: true, force: true });
+    }
   });
 
   it('runs one merge at a time per source repository', async () => {
