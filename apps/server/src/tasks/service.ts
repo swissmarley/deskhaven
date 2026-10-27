@@ -98,6 +98,9 @@ export class TaskService {
     }
     const reviewTarget =
       input.reviewOfAgentId || input.reviewOfTaskId ? await this.recordReviewTarget(input) : null;
+    if (input.assigneeAgentId && reviewTarget) {
+      this.assertReviewSubjectReady(reviewTarget.agentId);
+    }
     const task: Task = TaskSchema.parse({
       id,
       title: input.title.trim(),
@@ -133,7 +136,6 @@ export class TaskService {
       patch.assigneeAgentId !== current.assigneeAgentId &&
       patch.assigneeAgentId
     ) {
-      this.write(next);
       return this.assign(id, patch.assigneeAgentId);
     }
     if (patch.status === 'done' && !next.completedAt) next.completedAt = Date.now();
@@ -159,6 +161,11 @@ export class TaskService {
         'An agent cannot review its own worktree. Pick a different reviewer.',
       );
     }
+    const rollback = {
+      assigneeAgentId: task.assigneeAgentId,
+      status: task.status,
+      startedAt: task.startedAt,
+    };
     const assigned: Task = {
       ...task,
       assigneeAgentId: agentId,
@@ -167,18 +174,25 @@ export class TaskService {
       updatedAt: Date.now(),
     };
     this.write(assigned);
-    this.deps.events.append({
-      id: newId(),
-      ts: Date.now(),
-      agentId,
-      taskId,
-      type: 'task_assigned',
-      title: task.title,
-    });
     try {
       await this.dispatch(assigned);
+      this.deps.events.append({
+        id: newId(),
+        ts: Date.now(),
+        agentId,
+        taskId,
+        type: 'task_assigned',
+        title: task.title,
+      });
     } catch (err) {
-      if (err instanceof TaskHttpError) throw err;
+      if (err instanceof TaskHttpError) {
+        this.write({
+          ...this.mustGet(taskId),
+          ...rollback,
+          updatedAt: Date.now(),
+        });
+        throw err;
+      }
       // Budget cap or kill switch: keep the assignment but ask a human.
       const message = err instanceof Error ? err.message : String(err);
       this.write({
@@ -249,6 +263,15 @@ export class TaskService {
     const wt = agent.worktree;
     if (!wt) throw new TaskHttpError(400, 'no_worktree', 'no worktree');
     const st = await this.deps.worktrees.status(wt, targetBranch);
+    const hookFiles = await this.deps.worktrees.hookFilesInMerge(
+      sourceRoot,
+      wt.branch,
+      targetBranch,
+    );
+    const hooksWarning =
+      hookFiles.length > 0
+        ? `This merge changes git hook scripts (${hookFiles.join(', ')}). The merge commit in your source checkout may run them unless you allow hook changes.`
+        : undefined;
     return {
       branch: wt.branch,
       targetBranch,
@@ -260,6 +283,8 @@ export class TaskService {
       files: st.files,
       canMerge: st.canMerge,
       ...(st.reason ? { reason: st.reason } : {}),
+      ...(hookFiles.length ? { hookFiles } : {}),
+      ...(hooksWarning ? { hooksWarning } : {}),
     };
   }
 
@@ -303,17 +328,28 @@ export class TaskService {
             targetBranch,
             strategy,
             message,
+            input.allowHookChanges ?? false,
           );
         } finally {
           // Clear before the lock is released so a snapshot waiting on it does not see a stale flag.
           this.merging.delete(agent.id);
         }
       });
-      await this.redispatchAssigned(agent.id);
+      void this.redispatchAssigned(agent.id).catch((err) => {
+        this.deps.log.warn(
+          { agentId: agent.id, err: String(err) },
+          'could not re-dispatch after merge',
+        );
+      });
       return saved;
     } catch (err) {
       this.merging.delete(agent.id);
-      await this.redispatchAssigned(agent.id);
+      void this.redispatchAssigned(agent.id).catch((redispatchErr) => {
+        this.deps.log.warn(
+          { agentId: agent.id, err: String(redispatchErr) },
+          'could not re-dispatch after merge',
+        );
+      });
       throw err;
     }
   }
@@ -326,6 +362,7 @@ export class TaskService {
     targetBranch: string,
     strategy: MergeStrategy,
     message: string,
+    allowHookChanges: boolean,
   ): Promise<Task> {
     const busyNow = this.runtimeBusy(agent.id);
     if (busyNow) throw new TaskHttpError(409, 'agent_busy', busyNow);
@@ -343,6 +380,7 @@ export class TaskService {
       targetBranch,
       strategy,
       message,
+      { allowHookChanges },
     );
     if (!outcome.ok) {
       if (outcome.code === 'conflict' || outcome.code === 'failed') {
@@ -365,7 +403,9 @@ export class TaskService {
           task: saved,
         });
       }
-      throw new TaskHttpError(409, outcome.code, outcome.message);
+      throw new TaskHttpError(409, outcome.code, outcome.message, {
+        ...(outcome.hookFiles?.length ? { hookFiles: outcome.hookFiles } : {}),
+      });
     }
     let realign: string | null = null;
     try {
@@ -628,6 +668,18 @@ export class TaskService {
         throw err;
       }
     });
+  }
+
+  private assertReviewSubjectReady(agentId: string): void {
+    if (this.merging.has(agentId)) {
+      throw new TaskHttpError(
+        409,
+        'agent_busy',
+        'The agent is merging a branch. Wait until that finishes.',
+      );
+    }
+    const busy = this.runtimeBusy(agentId);
+    if (busy) throw new TaskHttpError(409, 'agent_busy', busy);
   }
 
   private async reviewSubject(input: CreateTask): Promise<Agent> {

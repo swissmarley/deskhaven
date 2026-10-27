@@ -5,7 +5,7 @@ import {
   TaskSchema,
   type TaskStatus,
 } from '@deskhaven/shared';
-import { type JSX, useEffect, useState } from 'react';
+import { type JSX, useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { ApiError, api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
@@ -29,19 +29,24 @@ export function TaskDetail({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const confirmKey = `${taskId}:${strategy}`;
-  const [confirmFor, setConfirmFor] = useState(confirmKey);
   const [asking, setAsking] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewerId, setReviewerId] = useState('');
   const [reviewPrompt, setReviewPrompt] = useState('');
-  if (confirmFor !== confirmKey) {
-    setConfirmFor(confirmKey);
-    setConfirming(false);
-  }
   const assignee = agents.find((a) => a.id === task?.assigneeAgentId);
   const offerMerge = task ? showMergeControls(task, assignee) : false;
   const revision = task?.updatedAt ?? 0;
+  const previewSig = preview
+    ? `${preview.branch}:${preview.ahead}:${preview.behind}:${preview.dirty}:${preview.files
+        .map((f) => `${f.status}:${f.path}`)
+        .join('|')}`
+    : 'none';
+  const confirmKey = `${taskId}:${strategy}:${previewSig}`;
+  const confirmKeyRef = useRef(confirmKey);
+  if (confirmKeyRef.current !== confirmKey) {
+    confirmKeyRef.current = confirmKey;
+    if (confirming) setConfirming(false);
+  }
   const reviewers = agents
     .filter((a) => a.id !== assignee?.id)
     .sort((a, b) => {
@@ -57,6 +62,14 @@ export function TaskDetail({
       pushNotice('error', String(err instanceof Error ? err.message : err));
     }
   };
+
+  // confirmKey restarts the timer when the preview changes during confirmation.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: confirmKey is intentional
+  useEffect(() => {
+    if (!confirming) return;
+    const timer = window.setTimeout(() => setConfirming(false), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [confirming, confirmKey]);
 
   // revision is intentional: a merge updates the same task id, and the preview should follow.
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when the saved task changes
@@ -91,7 +104,6 @@ export function TaskDetail({
     setMerging(true);
     try {
       await api.mergeTask(task.id, { strategy });
-      setConfirming(false);
     } catch (err) {
       if (err instanceof ApiError) {
         const parsed = TaskSchema.safeParse(err.body.task);
@@ -100,9 +112,9 @@ export function TaskDetail({
         }
       }
       pushNotice('error', err instanceof Error ? err.message : String(err));
-      setConfirming(false);
     } finally {
       setMerging(false);
+      setConfirming(false);
     }
   };
 
@@ -243,6 +255,9 @@ export function TaskDetail({
             <p className="small warn-text">
               The merge includes every change on the agent's branch, not only this task.
             </p>
+            {preview?.hooksWarning ? (
+              <p className="small warn-text">{preview.hooksWarning}</p>
+            ) : null}
             {preview ? (
               <p className="mono small">
                 {preview.branch} → {preview.targetBranch}
@@ -303,6 +318,11 @@ export function TaskDetail({
               >
                 {merging ? 'Merging…' : confirming ? 'Confirm merge' : 'Accept & merge'}
               </button>
+              {confirming ? (
+                <button type="button" className="link" onClick={() => setConfirming(false)}>
+                  Cancel
+                </button>
+              ) : null}
               {task.status !== 'done' ? (
                 <button
                   type="button"

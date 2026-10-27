@@ -49,10 +49,16 @@ export type MergeOutcome =
         | 'conflict'
         | 'failed'
         | 'invalid_branch'
-        | 'nothing_to_merge';
+        | 'nothing_to_merge'
+        | 'hooks_changed';
       message: string;
       conflictFiles?: string[];
+      hookFiles?: string[];
     };
+
+export interface MergeIntoOptions {
+  allowHookChanges?: boolean;
+}
 
 /**
  * Branch names that may be passed to git. Stricter than `check-ref-format` (which accepts `foo;rm`):
@@ -234,7 +240,7 @@ export class WorktreeService {
 
   /** Clean, dirty, already gone, or unknown (with the reason) — never throws. */
   async state(repoDir: string, wt: WorktreeInfo): Promise<WorktreeState> {
-    repoDir = this.sourceRoot(repoDir, wt);
+    repoDir = this.resolvedSource(repoDir, wt);
     if (!fs.existsSync(wt.path)) return { kind: 'missing' };
     try {
       return (await this.isDirty(wt.path)) ? { kind: 'dirty' } : { kind: 'clean' };
@@ -260,7 +266,7 @@ export class WorktreeService {
    * gone: the folder is deleted directly and the repository's stale entry is pruned if it exists.
    */
   async remove(workdir: string, wt: WorktreeInfo, force = false): Promise<void> {
-    const repoDir = this.sourceRoot(workdir, wt);
+    const repoDir = this.resolvedSource(workdir, wt);
     const state = await this.state(workdir, wt);
     if (state.kind === 'missing') return this.prune(repoDir);
     if (!force) {
@@ -425,12 +431,30 @@ export class WorktreeService {
    * changes. Never checks out, stashes, or hard-resets that checkout. On conflict the source tree is
    * restored (`merge --abort`, or `reset --merge` for a squash, which does not create MERGE_HEAD).
    */
+  /** Paths under the source hooks directory that differ on `branch` from `target`. */
+  async hookFilesInMerge(sourceRoot: string, branch: string, target: string): Promise<string[]> {
+    assertBranchName(branch);
+    assertBranchName(target);
+    const prefixes = await this.hookDirPrefixes(sourceRoot);
+    let names: string[] = [];
+    try {
+      names = (await this.git(sourceRoot, ['diff', '--name-only', `${target}...${branch}`]))
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+    return names.filter((p) => pathUnderHookDir(p, prefixes));
+  }
+
   async mergeInto(
     sourceRoot: string,
     branch: string,
     target: string,
     strategy: MergeStrategy,
     message: string,
+    options: MergeIntoOptions = {},
   ): Promise<MergeOutcome> {
     try {
       assertBranchName(branch);
@@ -487,6 +511,16 @@ export class WorktreeService {
         ok: false,
         code: 'wrong_branch',
         message: `The source checkout is on ${current}, not ${target}. Deskhaven will not switch branches.`,
+      };
+    }
+    const hookFiles = await this.hookFilesInMerge(sourceRoot, branch, target);
+    if (hookFiles.length && !options.allowHookChanges) {
+      return {
+        ok: false,
+        code: 'hooks_changed',
+        message:
+          'This merge changes git hook scripts in the source checkout. Deskhaven refused to run them. Merge again with allowHookChanges if you trust the branch.',
+        hookFiles,
       };
     }
     const identity = await this.identityArgs(sourceRoot);
@@ -648,6 +682,20 @@ export class WorktreeService {
     return [...byPath.values()];
   }
 
+  private async hookDirPrefixes(sourceRoot: string): Promise<string[]> {
+    const out = new Set<string>();
+    const hooksPath = (
+      await this.optionalGit(sourceRoot, ['rev-parse', '--git-path', 'hooks'])
+    ).trim();
+    if (hooksPath) {
+      const abs = path.isAbsolute(hooksPath) ? hooksPath : path.resolve(sourceRoot, hooksPath);
+      const rel = path.relative(sourceRoot, abs).split(path.sep).join('/');
+      if (rel && !rel.startsWith('..')) out.add(rel);
+    }
+    out.add('.husky');
+    return [...out];
+  }
+
   private async assertOnBranch(wt: WorktreeInfo): Promise<void> {
     let head = '';
     try {
@@ -739,6 +787,15 @@ function gitText(err: unknown): string {
 
 function isConflictText(text: string): boolean {
   return /CONFLICT|Automatic merge failed|fix conflicts/i.test(text);
+}
+
+function pathUnderHookDir(filePath: string, prefixes: string[]): boolean {
+  const p = filePath.replace(/\\/g, '/');
+  for (const prefix of prefixes) {
+    const pre = prefix.replace(/\/$/, '');
+    if (p === pre || p.startsWith(`${pre}/`)) return true;
+  }
+  return false;
 }
 
 function clip(text: string, max = 2000): string {

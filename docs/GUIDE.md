@@ -273,8 +273,11 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
    Deskhaven never switches your branch and never merges into a checkout that has uncommitted tracked
    changes — it refuses with a clear error and leaves your files as they were. Worktree commits skip
    git hooks (`core.hooksPath` is cleared and `--no-verify` is passed) and are not GPG-signed, because
-   those hooks live in a tree the agent can edit. The merge commit in your own checkout still runs
-   your hooks and your signing setup. If the worktree HEAD is no longer its `deskhaven/…` branch,
+   those hooks live in a tree the agent can edit. The merge commit in your source checkout still
+   uses your signing setup and may run hook scripts from `core.hooksPath` (including scripts the
+   agent added on its branch under a relative path such as `.husky`). The merge preview warns when
+   hook files would change; Deskhaven refuses with `hooks_changed` unless you explicitly allow
+   hook changes on that merge. If the worktree HEAD is no longer its `deskhaven/…` branch,
    the merge is refused (`worktree_moved`) so that work is not committed somewhere else and then
    discarded. An already-integrated branch returns `nothing_to_merge` and the task stays unmerged.
    A conflict is aborted automatically (your checkout is unchanged); the dialog lists the files and

@@ -572,6 +572,124 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     expect(fs.readFileSync(path.join(repo, 'pkg', 'lib.txt'), 'utf8')).toBe('v2\n');
   });
 
+  it('does not leave a review task assigned when the engineer is busy on create', async () => {
+    const repo = tmpRepo();
+    const engineer = (await hire(repo, 'BusyCreate', true)).json();
+    const reviewerDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-rev-')));
+    const reviewer = (await hire(reviewerDir, 'RevCreate', false)).json();
+    const busy = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { title: 'Still busy', prompt: 'wip', assigneeAgentId: engineer.id },
+    });
+    expect(
+      (
+        await req({
+          method: 'PATCH',
+          url: `/api/tasks/${busy.json().id}`,
+          payload: { status: 'in_progress' },
+        })
+      ).statusCode,
+    ).toBe(200);
+    prompts.length = 0;
+    const created = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: {
+        title: 'Review while busy',
+        prompt: 'read it',
+        assigneeAgentId: reviewer.id,
+        reviewOfAgentId: engineer.id,
+      },
+    });
+    expect(created.statusCode).toBe(409);
+    expect(created.json().error).toBe('agent_busy');
+    const tasks = (await req({ method: 'GET', url: '/api/tasks' })).json() as {
+      title: string;
+      status: string;
+      assigneeAgentId: string | null;
+    }[];
+    const stuck = tasks.find((t) => t.title === 'Review while busy');
+    expect(stuck).toBeUndefined();
+    expect(prompts.some((p) => p.agentId === reviewer.id)).toBe(false);
+  });
+
+  it('rolls back assign when the engineer is busy at dispatch', async () => {
+    const repo = tmpRepo();
+    const engineer = (await hire(repo, 'BusyAssign', true)).json();
+    const reviewerDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-rev-')));
+    const reviewer = (await hire(reviewerDir, 'RevAssign', false)).json();
+    const created = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: {
+        title: 'Review later',
+        prompt: 'read it',
+        reviewOfAgentId: engineer.id,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const reviewId = created.json().id as string;
+    const busy = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { title: 'Block', prompt: 'wip', assigneeAgentId: engineer.id },
+    });
+    expect(
+      (
+        await req({
+          method: 'PATCH',
+          url: `/api/tasks/${busy.json().id}`,
+          payload: { status: 'in_progress' },
+        })
+      ).statusCode,
+    ).toBe(200);
+    prompts.length = 0;
+    const assigned = await req({
+      method: 'POST',
+      url: `/api/tasks/${reviewId}/assign`,
+      payload: { agentId: reviewer.id },
+    });
+    expect(assigned.statusCode).toBe(409);
+    expect(assigned.json().error).toBe('agent_busy');
+    const listed = (await req({ method: 'GET', url: '/api/tasks' })).json() as {
+      id: string;
+      status: string;
+      assigneeAgentId: string | null;
+    }[];
+    const again = listed.find((t) => t.id === reviewId);
+    expect(again).toMatchObject({ status: 'backlog', assigneeAgentId: null });
+    expect(prompts.some((p) => p.taskId === reviewId)).toBe(false);
+  });
+
+  it('returns 409 hooks_changed when the branch touches the hooks directory', async () => {
+    const repo = tmpRepo();
+    git(repo, 'config', 'core.hooksPath', '.husky');
+    const agent = (await hire(repo, 'Hooks', true)).json();
+    const hooks = path.join(agent.worktree.path, '.husky');
+    fs.mkdirSync(hooks, { recursive: true });
+    fs.writeFileSync(path.join(hooks, 'post-commit'), '#!/bin/sh\necho hooked\n');
+    fs.chmodSync(path.join(hooks, 'post-commit'), 0o755);
+    git(agent.worktree.path, 'add', '-A');
+    git(agent.worktree.path, 'commit', '-q', '-m', 'evil hook');
+    const id = await reviewTask(agent.id, 'Hook merge');
+    const preview = await req({ method: 'GET', url: `/api/tasks/${id}/merge-preview` });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json().hookFiles?.length).toBeGreaterThan(0);
+    expect(preview.json().hooksWarning).toMatch(/hook/i);
+    const head = git(repo, 'rev-parse', 'HEAD').trim();
+    const denied = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    expect(denied.statusCode).toBe(409);
+    expect(denied.json().error).toBe('hooks_changed');
+    expect(git(repo, 'rev-parse', 'HEAD').trim()).toBe(head);
+    const allowed = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: { allowHookChanges: true },
+    });
+    expect(allowed.statusCode).toBe(200);
+  });
+
   it('waits for an in-progress merge before removing the worktree', async () => {
     const repo = tmpRepo();
     const agent = (await hire(repo, 'Fire', true)).json();

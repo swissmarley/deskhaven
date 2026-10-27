@@ -225,6 +225,8 @@ export type CreateTask = z.infer<typeof CreateTaskSchema>;
 export const MergeTaskSchema = z.object({
   strategy: MergeStrategySchema.optional(),
   message: z.string().trim().min(1).max(500).optional(),
+  /** When false or omitted, a merge that changes hook scripts under core.hooksPath is refused. */
+  allowHookChanges: z.boolean().optional(),
 });
 export type MergeTask = z.infer<typeof MergeTaskSchema>;
 
@@ -244,6 +246,8 @@ export const MergePreviewSchema = z.object({
   files: z.array(MergeFileSchema),
   canMerge: z.boolean(),
   reason: z.string().optional(),
+  hookFiles: z.array(z.string()).optional(),
+  hooksWarning: z.string().optional(),
 });
 export type MergePreview = z.infer<typeof MergePreviewSchema>;
 

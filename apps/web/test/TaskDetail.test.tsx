@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { AgentSchema, emptyUsage, type Task, TaskSchema } from '@deskhaven/shared';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/net/api.js', () => {
   class ApiError extends Error {
@@ -91,26 +91,32 @@ function task(extra: Partial<Task> = {}): Task {
   });
 }
 
+const preview = {
+  branch: 'deskhaven/ada',
+  targetBranch: 'main',
+  sourceRoot: '/repo',
+  worktreePath: '/wt/ada',
+  ahead: 1,
+  behind: 0,
+  dirty: false,
+  files: [{ path: 'b.txt', status: 'A' }],
+  canMerge: true,
+};
+
 describe('TaskDetail merge conflict', () => {
   afterEach(() => {
     cleanup();
     useAppStore.setState({ agents: {}, tasks: {}, notices: [] });
     vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  beforeEach(() => {
+    vi.mocked(api.mergePreview).mockResolvedValue(preview);
   });
 
   it('confirms, then shows Ask agent to resolve from the 409 body', async () => {
     useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
-    vi.mocked(api.mergePreview).mockResolvedValue({
-      branch: 'deskhaven/ada',
-      targetBranch: 'main',
-      sourceRoot: '/repo',
-      worktreePath: '/wt/ada',
-      ahead: 1,
-      behind: 0,
-      dirty: false,
-      files: [{ path: 'b.txt', status: 'A' }],
-      canMerge: true,
-    });
     const conflicted = task({
       merge: {
         status: 'conflict',
@@ -144,5 +150,29 @@ describe('TaskDetail merge conflict', () => {
     expect(screen.getByText('a.txt')).toBeTruthy();
     expect(useAppStore.getState().tasks.t1?.merge?.status).toBe('conflict');
     expect(api.mergeTask).toHaveBeenCalledWith('t1', { strategy: 'merge' });
+  });
+
+  it('cancels merge confirmation without calling the API', async () => {
+    useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    await screen.findByText(/deskhaven\/ada → main/);
+    fireEvent.click(screen.getByRole('button', { name: 'Accept & merge' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Accept & merge' })).toBeTruthy();
+    expect(api.mergeTask).not.toHaveBeenCalled();
+  });
+
+  it('expires merge confirmation after ten seconds', async () => {
+    vi.useFakeTimers();
+    useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    await vi.waitFor(() => screen.getByText(/deskhaven\/ada → main/));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept & merge' }));
+    expect(screen.getByRole('button', { name: 'Confirm merge' })).toBeTruthy();
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(screen.getByRole('button', { name: 'Accept & merge' })).toBeTruthy();
+    expect(api.mergeTask).not.toHaveBeenCalled();
   });
 });

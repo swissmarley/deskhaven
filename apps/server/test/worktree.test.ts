@@ -402,6 +402,29 @@ describe('merging a worktree branch', { timeout: 20_000 }, () => {
     }
   });
 
+  it('refuses a merge that changes files under the hooks directory', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    git(repo, 'config', 'core.hooksPath', '.husky');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(repo, 'hookchg888888', 'Hook');
+    const hooks = path.join(wt.path, '.husky');
+    fs.mkdirSync(hooks);
+    fs.writeFileSync(path.join(hooks, 'post-merge'), '#!/bin/sh\necho merge-hook\n');
+    fs.chmodSync(path.join(hooks, 'post-merge'), 0o755);
+    await svc.commitAll(wt, 'add hook');
+    const blocked = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'nope');
+    expect(blocked).toMatchObject({ ok: false, code: 'hooks_changed' });
+    if (!blocked.ok) expect(blocked.hookFiles?.length).toBeGreaterThan(0);
+    const allowed = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'ok', {
+      allowHookChanges: true,
+    });
+    expect(allowed.ok).toBe(true);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
   it('runs one merge at a time per source repository', async () => {
     const repo = tmpRepo();
     const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
