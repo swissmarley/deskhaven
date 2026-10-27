@@ -15,6 +15,7 @@ import { api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
 import { AvatarPreview } from './AvatarPicker.js';
 import { fmtUsd } from './eventText.js';
+import { plainTextFromMarkdown } from './markdownPlain.js';
 import { reviewerCanWrite } from './merge.js';
 import { TaskDetail } from './TaskDetail.js';
 import { getWorldHandle } from './worldHandle.js';
@@ -149,6 +150,8 @@ function Card({ task, onOpen }: { task: Task; onOpen: (id: string) => void }): J
           <span className="assignee">
             <AvatarPreview avatar={agent.avatar} size={18} /> {agent.name}
           </span>
+        ) : task.assigneeAgentId ? (
+          <span className="muted">unknown agent</span>
         ) : (
           <span className="muted">unassigned</span>
         )}
@@ -162,7 +165,7 @@ function Card({ task, onOpen }: { task: Task; onOpen: (id: string) => void }): J
       </div>
       {task.resultSummary &&
       (task.status === 'review' || task.status === 'done' || task.status === 'needs_input') ? (
-        <p className="card-summary">{task.resultSummary.slice(0, 140)}</p>
+        <p className="card-summary">{plainTextFromMarkdown(task.resultSummary).slice(0, 140)}</p>
       ) : null}
     </div>
   );
@@ -202,6 +205,7 @@ function CreateTaskForm({ onDone }: { onDone: () => void }): JSX.Element {
         void submit();
       }}
     >
+      <h4 className="task-form-title">New task</h4>
       <div className="row">
         <input
           value={title}

@@ -76,7 +76,7 @@ export function TopBar(): JSX.Element {
         onClick={() => setBoardOpen(!boardOpen)}
         title="Toggle the task board"
       >
-        Board{taskCount ? ` (${taskCount})` : ''}
+        Tasks{taskCount ? ` (${taskCount})` : ''}
       </button>
       <button type="button" onClick={() => setSoundEnabled(!soundEnabled)} title="Toggle sounds">
         {soundEnabled ? '🔊' : '🔇'}
