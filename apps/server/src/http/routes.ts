@@ -430,8 +430,10 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const p = parse(idParams, req.params, reply);
     if (!p) return;
     try {
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      return ctx.presetService.upsert({ ...body, id: p.id });
+      const body = { ...(req.body ?? {}) } as Record<string, unknown>;
+      const acknowledgeBuiltinUpdate = body.acknowledgeBuiltinUpdate === true;
+      delete body.acknowledgeBuiltinUpdate;
+      return ctx.presetService.upsert({ ...body, id: p.id }, { acknowledgeBuiltinUpdate });
     } catch (err) {
       fail(reply, err);
     }

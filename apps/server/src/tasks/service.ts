@@ -9,10 +9,12 @@ import {
   type MergeStrategy,
   type MergeTask,
   newId,
+  type PresetLookup,
   type ReviewTarget,
   type Task,
   TaskSchema,
   type TaskStatus,
+  taskTail,
   truncate,
   type UpdateTask,
 } from '@deskhaven/shared';
@@ -47,6 +49,8 @@ interface TaskDeps {
   events: EventStore;
   worktrees: WorktreeService;
   broker?: { pendingForAgent(agentId: string): unknown[] };
+  /** DB-backed presets (custom manager roles). Falls back to shipped JSON in tests. */
+  presetLookup?: PresetLookup;
   log: { warn(obj: unknown, msg?: string): void };
 }
 
@@ -690,7 +694,7 @@ export class TaskService {
     const current = this.get(task.id);
     if (!current || current.status === 'done' || !current.assigneeAgentId) return;
     if (this.merging.has(current.assigneeAgentId)) return;
-    const text = await this.promptFor(current);
+    const text = await this.promptFor(current, this.deps.agents.get(current.assigneeAgentId));
     const latest = this.get(task.id);
     if (!latest || latest.status === 'done' || !latest.assigneeAgentId) return;
     if (this.merging.has(latest.assigneeAgentId)) return;
@@ -700,10 +704,11 @@ export class TaskService {
     this.assertAssignDispatch(task.id, dispatchSeq);
   }
 
-  private async promptFor(task: Task): Promise<string> {
-    if (!task.reviewTarget) return buildTaskPrompt(task);
+  private async promptFor(task: Task, assignee?: Agent): Promise<string> {
+    const lookup = this.deps.presetLookup;
+    if (!task.reviewTarget) return buildTaskPrompt(task, undefined, assignee, lookup);
     const material = await this.reviewMaterial(task);
-    return buildTaskPrompt(task, material);
+    return buildTaskPrompt(task, material, assignee, lookup);
   }
 
   private async reviewMaterial(task: Task): Promise<{ diff: string; files: string[] }> {
@@ -966,10 +971,16 @@ export class TaskService {
   }
 }
 
-export function buildTaskPrompt(task: Task, review?: { diff: string; files: string[] }): string {
-  const base = `# Task: ${task.title}\n\n${task.prompt}\n\nWhen you are done, end with a short summary of what you changed (or found) and how to verify it.`;
+export function buildTaskPrompt(
+  task: Task,
+  review?: { diff: string; files: string[] },
+  assignee?: Agent | null,
+  presetLookup?: PresetLookup,
+): string {
+  const head = `# Task: ${task.title}\n\n${task.prompt}`;
+  const tail = taskTail(task, assignee, presetLookup);
   const target = task.reviewTarget;
-  if (!target) return base;
+  if (!target) return `${head}\n\n${tail}`;
   const files = review?.files ?? [];
   const raw = review?.diff ?? '';
   const truncated = raw.length > REVIEW_DIFF_LIMIT;
@@ -977,9 +988,7 @@ export function buildTaskPrompt(task: Task, review?: { diff: string; files: stri
     ? `${raw.slice(0, REVIEW_DIFF_LIMIT)}\n\n[diff truncated, read the files from the path]`
     : raw;
   const fileList = files.length ? files.map((f) => `- ${f}`).join('\n') : '(none listed)';
-  return `${base}
-
-## Review target
+  const reviewBlock = `## Review target
 Review the files under \`${target.path}\`, not your working directory.
 Agent: ${target.agentName} (${target.agentId})
 Branch: ${target.branch ?? '(no branch)'}
@@ -992,8 +1001,8 @@ Diff:
 \`\`\`diff
 ${diff || '(empty)'}
 \`\`\`
-${truncated ? '\nThe diff above is truncated. Read the files from the path.\n' : ''}
-Also flag changes that fall outside the original task's scope.`;
+${truncated ? '\nThe diff above is truncated. Read the files from the path.' : ''}`;
+  return `${head}\n\n${reviewBlock}\n\n${tail}`;
 }
 
 function stripUndefined<T extends object>(o: T): Partial<T> {

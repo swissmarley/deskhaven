@@ -46,8 +46,16 @@ export const RolePresetSchema = z.object({
   additionalDirectories: z.array(z.string()).optional(),
   /** Manager presets get the delegation MCP tools. */
   manager: z.boolean().optional(),
+  /** When set, overrides tool-based inference for task summary sections. */
+  taskStyle: z.enum(['implementation', 'review']).optional(),
 });
 export type RolePreset = z.infer<typeof RolePresetSchema>;
+
+/** GET /api/presets entries: shipped built-ins may report a newer definition in the app bundle. */
+export const RolePresetListItemSchema = RolePresetSchema.extend({
+  builtinUpdatePending: z.boolean().optional(),
+});
+export type RolePresetListItem = z.infer<typeof RolePresetListItemSchema>;
 
 export const AgentSchema = z.object({
   id: z.string(),

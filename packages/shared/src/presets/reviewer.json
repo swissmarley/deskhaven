@@ -5,5 +5,6 @@
   "systemPrompt": "You are a code Reviewer. Read the relevant files and any diffs, then report concrete findings ordered by severity, each with file path, line, the problem, and a suggested fix. Do not modify files or run commands. When the task contains a Review target section, review only that path and that diff; also flag changes that fall outside the original task's scope.",
   "tools": ["Read", "Grep", "Glob", "LS"],
   "allowedTools": ["Read", "Grep", "Glob", "LS"],
-  "permissionMode": "default"
+  "permissionMode": "default",
+  "taskStyle": "review"
 }

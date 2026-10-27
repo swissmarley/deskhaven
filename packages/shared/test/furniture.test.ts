@@ -9,6 +9,7 @@ import {
   rotateOffset,
 } from '../src/furniture.js';
 import { BUILTIN_PRESETS } from '../src/presets.js';
+import { TASK_SCOPE_RULE } from '../src/taskPrompt.js';
 import { classifyTool, isDangerousTool, summarizeToolInput } from '../src/tools.js';
 
 describe('furniture geometry', () => {
@@ -53,6 +54,12 @@ describe('presets and default room', () => {
       'reviewer',
     ]);
     for (const p of BUILTIN_PRESETS) expect(p.permissionMode).not.toBe('bypassPermissions');
+  });
+
+  it('engineer preset instructs agents to stay within task scope', () => {
+    const engineer = BUILTIN_PRESETS.find((p) => p.id === 'engineer');
+    expect(engineer?.systemPrompt).toContain(TASK_SCOPE_RULE);
+    expect(engineer?.systemPrompt).toContain('Suggested follow-ups (not done)');
   });
   it('default room: interaction tiles are inside the room and not covered by another piece', () => {
     const room = defaultRoom(0);

@@ -41,5 +41,9 @@ export function openDb(dbPath: string): { db: Db; sqlite: Database.Database } {
   sqlite.pragma('synchronous = NORMAL');
   sqlite.pragma('foreign_keys = ON');
   for (const m of MIGRATIONS) sqlite.exec(m);
+  const presetCols = sqlite.prepare('PRAGMA table_info(role_presets)').all() as { name: string }[];
+  if (!presetCols.some((c) => c.name === 'base_hash')) {
+    sqlite.exec('ALTER TABLE role_presets ADD COLUMN base_hash TEXT;');
+  }
   return { db: drizzle(sqlite, { schema }), sqlite };
 }
