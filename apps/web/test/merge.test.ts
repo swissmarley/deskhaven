@@ -11,6 +11,13 @@ describe('merge controls', () => {
     expect(showMergeControls({ status: 'review' }, undefined)).toBe(false);
   });
 
+  it('hides them once the task is merged, but keeps them after a conflict', () => {
+    const agent = { worktree: { path: '/wt', branch: 'deskhaven/ada' } };
+    expect(showMergeControls({ status: 'done', merge: { status: 'merged' } }, agent)).toBe(false);
+    expect(showMergeControls({ status: 'done', merge: { status: 'conflict' } }, agent)).toBe(true);
+    expect(showMergeControls({ status: 'done', merge: { status: 'failed' } }, agent)).toBe(true);
+  });
+
   it('prints squash and merge commands without a shell', () => {
     const preview = {
       worktreePath: '/wt/ada',

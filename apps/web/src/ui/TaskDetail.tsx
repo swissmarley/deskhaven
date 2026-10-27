@@ -319,6 +319,11 @@ export function TaskDetail({
                   Merge without running git hooks on my source checkout
                 </label>
               ) : null}
+              {!hookConsentOk ? (
+                <p className="small warn-text">
+                  Tick one of the options above to enable the merge.
+                </p>
+              ) : null}
               {preview ? (
                 <p className="mono small">
                   {preview.branch} → {preview.targetBranch}
@@ -368,13 +373,12 @@ export function TaskDetail({
                 <button
                   type="button"
                   className="primary"
-                  disabled={merging || preview?.canMerge === false}
+                  disabled={merging || preview?.canMerge === false || !hookConsentOk}
                   onClick={() => {
                     if (!confirming) {
                       setConfirming(true);
                       return;
                     }
-                    if (!hookConsentOk) return;
                     void acceptMerge();
                   }}
                 >

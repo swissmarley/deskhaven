@@ -19,11 +19,15 @@ export function reviewerCanWrite(
   return false;
 }
 
-/** The merge controls exist only for a worktree agent whose task is ready to accept. */
+/**
+ * The merge controls exist only for a worktree agent whose task is ready to accept and has not
+ * been merged yet: a second merge would silently carry whatever is left in the worktree into main.
+ */
 export function showMergeControls(
-  task: Pick<Task, 'status'>,
+  task: Pick<Task, 'status'> & { merge?: Pick<NonNullable<Task['merge']>, 'status'> | null },
   agent: Pick<Agent, 'worktree'> | undefined,
 ): boolean {
+  if (task.merge?.status === 'merged') return false;
   return Boolean(agent?.worktree) && (task.status === 'review' || task.status === 'done');
 }
 
