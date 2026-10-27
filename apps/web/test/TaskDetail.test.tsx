@@ -178,8 +178,11 @@ describe('TaskDetail merge conflict', () => {
     useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
     render(<TaskDetail taskId="t1" onClose={() => {}} />);
     await screen.findByText(/hook scripts/i);
-    fireEvent.click(screen.getByRole('button', { name: 'Accept & merge' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm merge' }));
+    const accept = screen.getByRole('button', { name: 'Accept & merge' }) as HTMLButtonElement;
+    expect(accept.disabled).toBe(true);
+    expect(screen.getByText(/Tick one of the options above/)).toBeTruthy();
+    fireEvent.click(accept);
+    expect(screen.queryByRole('button', { name: 'Confirm merge' })).toBeNull();
     expect(api.mergeTask).not.toHaveBeenCalled();
     fireEvent.click(
       screen.getByRole('checkbox', {
