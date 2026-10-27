@@ -8,7 +8,10 @@ import {
   agentCwd,
   classifyTool,
   newId,
+  presetById,
+  type RolePreset,
   type Settings,
+  sessionModel,
 } from '@deskhaven/shared';
 import { workdirProblem } from '../agents/service.js';
 import type { ChildEnv } from '../auth/env.js';
@@ -53,6 +56,8 @@ export interface RuntimeDeps {
   mcpServers?: (agent: Agent) => Record<string, McpServerConfig> | undefined;
   /** Test seam: replaces the SDK session factory. */
   startSession?: (cfg: SessionConfig, cb: SessionCallbacks) => AgentSession;
+  /** Resolves role presets from the DB (built-ins + custom); falls back to shipped presets in tests. */
+  presetLookup?: (id: string) => RolePreset | undefined;
   /** How long `stop()` waits for the process to exit before aborting it. */
   stopGraceMs?: number;
 }
@@ -140,7 +145,6 @@ export class AgentRuntime {
       return;
     }
     const auth = this.deps.auth();
-    const settings = this.deps.settings();
     const env = auth.childEnv(this.deps.baseEnv());
     const external = auth.mode === 'API_KEY' ? externalCredentials(env, this.cwd()) : null;
     if (auth.mode === 'API_KEY' && !env.ANTHROPIC_API_KEY && !external) {
@@ -152,7 +156,10 @@ export class AgentRuntime {
     }
     const cfg: SessionConfig = {
       cwd: this.cwd(),
-      model: this.agent.model || settings.defaultModel,
+      model: sessionModel(
+        this.agent,
+        this.deps.presetLookup?.(this.agent.rolePresetId) ?? presetById(this.agent.rolePresetId),
+      ),
       systemPromptAppend: this.agent.systemPrompt,
       tools: this.agent.tools,
       allowedTools: this.agent.allowedTools,

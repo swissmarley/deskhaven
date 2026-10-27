@@ -19,7 +19,7 @@ Contents: [Requirements](#1-requirements) · [Install and start](#2-install-and-
 
 | Need | Details |
 |---|---|
-| Node.js | 22 or newer (`node --version`). |
+| Node.js | 22 or newer (`node --version`). Node 20 is not supported: `pnpm install` fails with `ERR_PNPM_UNSUPPORTED_ENGINE` (see "ERR_PNPM_UNSUPPORTED_ENGINE" in section 10). The repository root has a `.nvmrc` of `22`, so `nvm use` or `fnm use` selects it. |
 | pnpm | 10.x. The repo pins `pnpm@10.34.5`; the easiest way is `corepack enable` (ships with Node). If that fails with `EACCES` (Node installed system-wide), use the user-local install below. |
 | Git | Needed for the git worktree option and for the sample repository. |
 | A browser with WebGL 2 | Any current Chrome, Edge, Firefox or Safari. Without WebGL the app falls back to the pixel-art renderer. |
@@ -169,6 +169,10 @@ Roles (editable JSON under Settings → Role presets):
 | Researcher | Web search plus reading. |
 | QA | Test commands pre-approved. |
 | Manager | Delegates: lists agents, creates tasks and assigns them through the board. One level only. |
+
+**Models:** Settings → Models sets the defaults for new hires. Per-agent overrides are stored on the agent.
+Custom role presets with `manager: true` follow the Manager default from Settings when you leave Model on
+Default; any `model` field in the preset JSON is ignored (same as the built-in Manager).
 
 ### Task board
 
@@ -331,6 +335,7 @@ above. Section 11 explains what keeps other websites out and what `DESKHAVEN_ALL
 
 | Symptom | Fix |
 |---|---|
+| `ERR_PNPM_UNSUPPORTED_ENGINE` or "Unsupported engine" | Node.js is older than 22. Install and select Node 22: `nvm install 22 && nvm use 22`, or `fnm use` in the repository root (`.nvmrc` is `22`). |
 | `pnpm: command not found` or the wrong version | `corepack enable`, then `corepack prepare pnpm@10.34.5 --activate`. If either fails with `EACCES`, use the user-local install from section 1 (`npm install -g --prefix ~/.local pnpm@10.34.5`). |
 | `corepack enable` fails with `EACCES` | Node is installed system-wide; use the user-local install in section 1: `npm install -g --prefix ~/.local pnpm@10.34.5` and put `~/.local/bin` on `PATH`. |
 | `corepack enable --install-directory ...` still fails with `EACCES` | `COREPACK_HOME` points to a root-owned folder. Set `COREPACK_HOME="$HOME/.cache/corepack"` (section 1), or use the npm install above. |

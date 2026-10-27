@@ -6,12 +6,22 @@ import { PresetsEditor } from './PresetsEditor.js';
 import { RendererSettings } from './RendererSettings.js';
 import { SoundSettings } from './SoundSettings.js';
 
+/** Keep a stored id visible if it is no longer in the catalog, so the select stays honest. */
+function modelOptions(
+  models: { id: string; label: string }[],
+  current: string,
+): { id: string; label: string }[] {
+  if (models.some((m) => m.id === current)) return models;
+  return [{ id: current, label: current }, ...models];
+}
+
 export function SettingsPanel(): JSX.Element {
   const settings = useAppStore((s) => s.settings);
   const pushNotice = useAppStore((s) => s.pushNotice);
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
+  const [models, setModels] = useState<{ id: string; label: string }[]>([]);
 
   const refresh = useCallback(() => {
     void api
@@ -23,6 +33,13 @@ export function SettingsPanel(): JSX.Element {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    void api
+      .models()
+      .then(setModels)
+      .catch((err) => pushNotice('error', String(err)));
+  }, [pushNotice]);
 
   const update = async (patch: Partial<Settings>) => {
     setBusy(true);
@@ -139,6 +156,42 @@ export function SettingsPanel(): JSX.Element {
             </p>
           </div>
         )}
+      </section>
+      <section className="card">
+        <h4>Models</h4>
+        <label>
+          Default model (new agents)
+          <select
+            value={settings.defaultModel}
+            disabled={busy || models.length === 0}
+            onChange={(e) => void update({ defaultModel: e.target.value })}
+          >
+            {modelOptions(models, settings.defaultModel).map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Manager model
+          <select
+            value={settings.managerModel}
+            disabled={busy || models.length === 0}
+            onChange={(e) => void update({ managerModel: e.target.value })}
+          >
+            {modelOptions(models, settings.managerModel).map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small">
+          Applies to new agents. Existing agents keep their model; change it from Edit. The built-in
+          Manager preset sets its own model, so Manager model is used only when that preset does
+          not.
+        </p>
       </section>
       <section className="card">
         <h4>Limits</h4>
