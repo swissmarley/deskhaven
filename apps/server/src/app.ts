@@ -75,6 +75,7 @@ export interface AppContext {
 export const KNOWN_MODELS = [
   { id: DEFAULT_MODEL, label: 'Claude Sonnet 5.5 (default)' },
   { id: DEFAULT_MANAGER_MODEL, label: 'Claude Opus 5.5' },
+  { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' },
   { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
 ];
 

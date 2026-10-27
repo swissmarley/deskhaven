@@ -35,6 +35,61 @@ describe('auth mode switch', () => {
   });
 });
 
+describe('model settings', () => {
+  it('rejects an unknown defaultModel or managerModel with 400', async () => {
+    const built = await testApp();
+    try {
+      const req = client(built);
+      const before = (await req({ method: 'GET', url: '/api/settings' })).json();
+      for (const payload of [{ defaultModel: 'pippo' }, { managerModel: 'pippo' }]) {
+        const res = await req({ method: 'PATCH', url: '/api/settings', payload });
+        expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+        expect(res.json().error).toMatch(/Unknown model: pippo/);
+      }
+      expect((await req({ method: 'GET', url: '/api/settings' })).json()).toEqual(before);
+    } finally {
+      await built.app.close();
+    }
+  });
+
+  it('applies defaultModel only to agents created afterwards', async () => {
+    const built = await testApp();
+    try {
+      const req = client(built);
+      const first = await req({
+        method: 'POST',
+        url: '/api/agents',
+        payload: { name: 'Ada', rolePresetId: 'engineer', workdir: process.cwd() },
+      });
+      expect(first.statusCode).toBe(201);
+      expect(first.json().model).toBe('claude-sonnet-5-5');
+
+      const patched = await req({
+        method: 'PATCH',
+        url: '/api/settings',
+        payload: { defaultModel: 'claude-haiku-5-5' },
+      });
+      expect(patched.statusCode).toBe(200);
+      expect(patched.json().defaultModel).toBe('claude-haiku-5-5');
+      // A fresh service reads the stored row, the same path a restart takes.
+      expect(new SettingsService(built.ctx.db).get().defaultModel).toBe('claude-haiku-5-5');
+
+      const existing = await req({ method: 'GET', url: `/api/agents/${first.json().id}` });
+      expect(existing.json().model).toBe('claude-sonnet-5-5');
+
+      const second = await req({
+        method: 'POST',
+        url: '/api/agents',
+        payload: { name: 'Bea', rolePresetId: 'engineer', workdir: process.cwd() },
+      });
+      expect(second.statusCode).toBe(201);
+      expect(second.json().model).toBe('claude-haiku-5-5');
+    } finally {
+      await built.app.close();
+    }
+  });
+});
+
 describe('permission timeout', () => {
   it('rejects values above 24 h (Node timers overflow above 2^31-1 ms)', async () => {
     const built = await testApp();

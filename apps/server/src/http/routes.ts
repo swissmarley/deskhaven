@@ -66,6 +66,13 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.patch('/api/settings', async (req, reply) => {
     const body = parse(UpdateSettingsSchema, req.body, reply);
     if (!body) return;
+    const known = new Set(ctx.models().map((m) => m.id));
+    for (const field of ['defaultModel', 'managerModel'] as const) {
+      const id = body[field];
+      if (id !== undefined && !known.has(id)) {
+        return reply.code(400).send({ error: `Unknown model: ${id}` });
+      }
+    }
     try {
       // Validate the whole change (including the auth provider's bind constraints) before
       // persisting anything: a refused auth switch must leave the stored settings untouched.

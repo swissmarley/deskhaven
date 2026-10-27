@@ -14,6 +14,12 @@ or git worktree. Local-first, no cloud services besides the Anthropic API your a
 **New here? Read the [setup and usage guide](docs/GUIDE.md)**: requirements, authentication, a five-minute
 first task, every panel of the UI, configuration, troubleshooting.
 
+## Requirements
+
+Node.js 22 or newer. Node 20 is not supported: `pnpm install` fails with `ERR_PNPM_UNSUPPORTED_ENGINE`.
+pnpm 10.34.5 via corepack (if `corepack enable` fails with `EACCES`, use the user-local install in the
+[setup guide](docs/GUIDE.md)).
+
 ## Quick start
 
 ```bash

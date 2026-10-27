@@ -44,3 +44,21 @@ describe('docs/GUIDE.md install instructions', () => {
     }
   });
 });
+
+describe('Node.js 22 requirement', () => {
+  it('is stated before the README quick start, in the guide, and in .nvmrc', () => {
+    const readme = fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8');
+    const requirements = readme.indexOf('Node.js 22');
+    const quickStart = readme.indexOf('## Quick start');
+    expect(requirements).toBeGreaterThan(-1);
+    expect(requirements).toBeLessThan(quickStart);
+    expect(readme).toMatch(/ERR_PNPM_UNSUPPORTED_ENGINE/);
+    expect(readme).toMatch(/pnpm 10\.34\.5/);
+    expect(section1).toMatch(/Node\.js/);
+    expect(section1).toMatch(/\b22\b/);
+    expect(section1).toMatch(/ERR_PNPM_UNSUPPORTED_ENGINE/);
+    expect(guide).toMatch(/nvm install 22 && nvm use 22/);
+    expect(guide).toMatch(/fnm use/);
+    expect(fs.readFileSync(path.join(REPO_ROOT, '.nvmrc'), 'utf8').trim()).toBe('22');
+  });
+});

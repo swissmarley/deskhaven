@@ -62,8 +62,18 @@ describe('server', () => {
       id: 'lobby',
     });
     expect((await app.inject({ method: 'GET', url: '/api/presets' })).json()).toHaveLength(6);
-    expect((await app.inject({ method: 'GET', url: '/api/models' })).json().length).toBeGreaterThan(
-      1,
+    const models = (await app.inject({ method: 'GET', url: '/api/models' })).json() as {
+      id: string;
+      label: string;
+    }[];
+    expect(models.length).toBeGreaterThan(1);
+    expect(models).toContainEqual({ id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' });
+    expect(models).toContainEqual({
+      id: 'claude-haiku-4-5-20251001',
+      label: 'Claude Haiku 4.5',
+    });
+    expect(models.findIndex((m) => m.id === 'claude-haiku-5-5')).toBeLessThan(
+      models.findIndex((m) => m.id === 'claude-haiku-4-5-20251001'),
     );
     expect((await app.inject({ method: 'GET', url: '/api/usage' })).json()).toMatchObject({
       killSwitch: false,
