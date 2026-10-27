@@ -14,6 +14,17 @@ function shippedBuiltin(id: string): RolePreset | undefined {
   return BUILTIN_PRESETS.find((p) => p.id === id);
 }
 
+function latestLegacyBaseHash(id: string): string | undefined {
+  const legacy = BUILTIN_PRESET_LEGACY_HASH[id];
+  if (!legacy?.length) return undefined;
+  return legacy[legacy.length - 1];
+}
+
+export type PresetUpsertOptions = {
+  /** User dismissed "Built-in updated" without resetting to shipped JSON. */
+  acknowledgeBuiltinUpdate?: boolean;
+};
+
 /** Role presets are editable JSON: built-ins are seeded once and can be overridden or extended. */
 export class PresetService {
   constructor(private readonly db: Db) {
@@ -48,13 +59,29 @@ export class PresetService {
     return row ? RolePresetSchema.parse(JSON.parse(row.json)) : undefined;
   }
 
-  upsert(input: unknown): RolePreset {
+  upsert(input: unknown, options: PresetUpsertOptions = {}): RolePreset {
     const preset = RolePresetSchema.parse(input);
     if (preset.permissionMode === ('bypassPermissions' as string))
       throw new Error('bypassPermissions is not allowed');
+    const existing = this.db.select().from(rolePresets).where(eq(rolePresets.id, preset.id)).get();
     const builtin = BUILTIN_PRESETS.some((p) => p.id === preset.id) ? 1 : 0;
     const shipped = shippedBuiltin(preset.id);
-    const baseHash = shipped ? hashRolePreset(shipped) : hashRolePreset(preset);
+    const presetHash = hashRolePreset(preset);
+    let baseHash: string;
+    if (shipped) {
+      const shippedHash = hashRolePreset(shipped);
+      if (presetHash === shippedHash) {
+        baseHash = shippedHash;
+      } else if (options.acknowledgeBuiltinUpdate) {
+        baseHash = shippedHash;
+      } else if (existing?.baseHash) {
+        baseHash = existing.baseHash;
+      } else {
+        baseHash = latestLegacyBaseHash(preset.id) ?? shippedHash;
+      }
+    } else {
+      baseHash = existing?.baseHash ?? presetHash;
+    }
     this.db
       .insert(rolePresets)
       .values({ id: preset.id, json: JSON.stringify(preset), builtin, baseHash })
@@ -117,7 +144,8 @@ export class PresetService {
         json = JSON.stringify(shipped);
         baseHash = shippedHash;
       } else if (storedHash !== shippedHash) {
-        baseHash = shippedHash;
+        const legacyBase = latestLegacyBaseHash(row.id);
+        baseHash = legacyBase ?? shippedHash;
       }
       this.db.update(rolePresets).set({ json, baseHash }).where(eq(rolePresets.id, row.id)).run();
     }

@@ -1,4 +1,5 @@
 import type { Agent, PermissionMode, RolePreset, Task } from './dto.js';
+import { presetById } from './presets.js';
 
 /** Appended to implementation tasks (and the Engineer preset). Keep preset JSON in sync. */
 export const TASK_SCOPE_RULE =
@@ -10,16 +11,33 @@ function allowsEditTool(name: string): boolean {
   return EDIT_TOOL_PREFIXES.some((prefix) => name === prefix || name.startsWith(`${prefix}(`));
 }
 
-/** Whether the agent's configured tools can modify files in the workdir (not preset id). */
+/** Unrestricted shell access can change files even without explicit Edit tools. */
+function isUnrestrictedBash(name: string): boolean {
+  return name === 'Bash';
+}
+
+function toolGrantsEdit(name: string): boolean {
+  return allowsEditTool(name) || isUnrestrictedBash(name);
+}
+
+/**
+ * Whether the agent session exposes tools that can modify the workdir.
+ * Uses `tools` only (`allowedTools` is auto-approval policy). `tools: null` means the full surface.
+ */
 export function agentCanEdit(
   tools: string[] | null,
-  allowedTools: string[],
+  _allowedTools: string[],
   _permissionMode: PermissionMode,
 ): boolean {
-  const allowedEdit = allowedTools.some(allowsEditTool);
-  if (!allowedEdit) return false;
   if (tools === null) return true;
-  return tools.some(allowsEditTool);
+  return tools.some(toolGrantsEdit);
+}
+
+export type PresetLookup = (id: string) => RolePreset | undefined;
+
+/** True when the role preset (from DB or shipped) is marked as a manager. */
+export function agentIsManagerRole(rolePresetId: string, lookup: PresetLookup): boolean {
+  return lookup(rolePresetId)?.manager === true;
 }
 
 function summaryFormat(readOnlyOrReview: boolean): string {
@@ -44,10 +62,10 @@ function summaryFormat(readOnlyOrReview: boolean): string {
 /** Closing instructions for a dispatched task; the format block is always last in the full prompt. */
 export function taskTail(
   task: Task,
-  assignee?: Pick<Agent, 'tools' | 'allowedTools' | 'permissionMode'> | null,
-  assigneePreset?: RolePreset | null,
+  assignee?: Pick<Agent, 'tools' | 'allowedTools' | 'permissionMode' | 'rolePresetId'> | null,
+  presetLookup: PresetLookup = presetById,
 ): string {
-  const isManager = assigneePreset?.manager === true;
+  const isManager = assignee ? agentIsManagerRole(assignee.rolePresetId, presetLookup) : false;
   const canEdit = assignee
     ? agentCanEdit(assignee.tools, assignee.allowedTools, assignee.permissionMode)
     : true;

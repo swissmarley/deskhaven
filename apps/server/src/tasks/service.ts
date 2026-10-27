@@ -9,7 +9,7 @@ import {
   type MergeStrategy,
   type MergeTask,
   newId,
-  presetById,
+  type PresetLookup,
   type ReviewTarget,
   type Task,
   TaskSchema,
@@ -49,6 +49,8 @@ interface TaskDeps {
   events: EventStore;
   worktrees: WorktreeService;
   broker?: { pendingForAgent(agentId: string): unknown[] };
+  /** DB-backed presets (custom manager roles). Falls back to shipped JSON in tests. */
+  presetLookup?: PresetLookup;
   log: { warn(obj: unknown, msg?: string): void };
 }
 
@@ -703,9 +705,10 @@ export class TaskService {
   }
 
   private async promptFor(task: Task, assignee?: Agent): Promise<string> {
-    if (!task.reviewTarget) return buildTaskPrompt(task, undefined, assignee);
+    const lookup = this.deps.presetLookup;
+    if (!task.reviewTarget) return buildTaskPrompt(task, undefined, assignee, lookup);
     const material = await this.reviewMaterial(task);
-    return buildTaskPrompt(task, material, assignee);
+    return buildTaskPrompt(task, material, assignee, lookup);
   }
 
   private async reviewMaterial(task: Task): Promise<{ diff: string; files: string[] }> {
@@ -972,10 +975,10 @@ export function buildTaskPrompt(
   task: Task,
   review?: { diff: string; files: string[] },
   assignee?: Agent | null,
+  presetLookup?: PresetLookup,
 ): string {
-  const assigneePreset = assignee ? presetById(assignee.rolePresetId) : undefined;
   const head = `# Task: ${task.title}\n\n${task.prompt}`;
-  const tail = taskTail(task, assignee, assigneePreset);
+  const tail = taskTail(task, assignee, presetLookup);
   const target = task.reviewTarget;
   if (!target) return `${head}\n\n${tail}`;
   const files = review?.files ?? [];

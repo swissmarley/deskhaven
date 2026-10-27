@@ -10,6 +10,12 @@ import { openDb } from '../src/db/client.js';
 import { rolePresets } from '../src/db/schema.js';
 import { PresetService } from '../src/presets/service.js';
 
+function engineerShipped(): RolePreset {
+  const shipped = BUILTIN_PRESETS.find((p) => p.id === 'engineer');
+  if (!shipped) throw new Error('missing engineer preset');
+  return shipped;
+}
+
 describe('PresetService', () => {
   it('migrates engineer when the DB still holds the legacy built-in unchanged', () => {
     const { db } = openDb(':memory:');
@@ -22,18 +28,15 @@ describe('PresetService', () => {
       })
       .run();
     const svc = new PresetService(db);
-    const stored = svc.get('engineer');
-    const shipped = BUILTIN_PRESETS.find((p) => p.id === 'engineer');
-    expect(stored).toEqual(shipped);
+    expect(svc.get('engineer')).toEqual(engineerShipped());
     expect(svc.list().find((p) => p.id === 'engineer')?.builtinUpdatePending).toBeFalsy();
   });
 
   it('flags builtinUpdatePending only when shipped moved past base_hash', () => {
     const { db } = openDb(':memory:');
-    const shipped = BUILTIN_PRESETS.find((p) => p.id === 'engineer');
-    expect(shipped).toBeDefined();
+    const shipped = engineerShipped();
     const customized: RolePreset = {
-      ...shipped!,
+      ...shipped,
       description: 'My custom engineer blurb',
     };
     db.insert(rolePresets)
@@ -48,12 +51,31 @@ describe('PresetService', () => {
     expect(svc.list().find((p) => p.id === 'engineer')?.builtinUpdatePending).toBe(true);
   });
 
-  it('clears builtinUpdatePending after saving a customized built-in', () => {
-    const { db } = openDb(':memory:');
-    const shipped = BUILTIN_PRESETS.find((p) => p.id === 'engineer');
-    expect(shipped).toBeDefined();
+  it('backfill marks customized legacy engineer pending after base_hash column is dropped', () => {
+    const { db, sqlite } = openDb(':memory:');
     const customized: RolePreset = {
-      ...shipped!,
+      ...ENGINEER_PRESET_LEGACY,
+      description: 'Legacy customization',
+    };
+    db.insert(rolePresets)
+      .values({
+        id: 'engineer',
+        json: JSON.stringify(customized),
+        builtin: 1,
+        baseHash: hashRolePreset(engineerShipped()),
+      })
+      .run();
+    sqlite.exec('ALTER TABLE role_presets DROP COLUMN base_hash;');
+    sqlite.exec('ALTER TABLE role_presets ADD COLUMN base_hash TEXT;');
+    const svc = new PresetService(db);
+    expect(svc.list().find((p) => p.id === 'engineer')?.builtinUpdatePending).toBe(true);
+  });
+
+  it('keeps builtinUpdatePending after save until acknowledge or reset to shipped', () => {
+    const { db } = openDb(':memory:');
+    const shipped = engineerShipped();
+    const customized: RolePreset = {
+      ...shipped,
       description: 'Tweaked',
     };
     db.insert(rolePresets)
@@ -66,15 +88,17 @@ describe('PresetService', () => {
       .run();
     const svc = new PresetService(db);
     svc.upsert(customized);
+    expect(svc.list().find((p) => p.id === 'engineer')?.builtinUpdatePending).toBe(true);
+    svc.upsert(customized, { acknowledgeBuiltinUpdate: true });
     expect(svc.list().find((p) => p.id === 'engineer')?.builtinUpdatePending).toBeFalsy();
   });
 
   it('does not flag a customized reviewer when base_hash matches shipped', () => {
     const { db } = openDb(':memory:');
     const shipped = BUILTIN_PRESETS.find((p) => p.id === 'reviewer');
-    expect(shipped).toBeDefined();
+    if (!shipped) throw new Error('missing reviewer preset');
     const customized: RolePreset = {
-      ...shipped!,
+      ...shipped,
       description: 'Stricter review checklist',
     };
     db.insert(rolePresets)
@@ -82,7 +106,7 @@ describe('PresetService', () => {
         id: 'reviewer',
         json: JSON.stringify(customized),
         builtin: 1,
-        baseHash: hashRolePreset(shipped!),
+        baseHash: hashRolePreset(shipped),
       })
       .run();
     const svc = new PresetService(db);

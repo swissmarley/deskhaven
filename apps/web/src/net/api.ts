@@ -89,8 +89,11 @@ export const api = {
       `/api/agents/${id}${qs ? `?${qs}` : ''}`,
     );
   },
-  savePreset: (id: string, preset: unknown) =>
-    call<RolePreset>('PUT', `/api/presets/${id}`, preset),
+  savePreset: (id: string, preset: unknown, options?: { acknowledgeBuiltinUpdate?: boolean }) =>
+    call<RolePreset>('PUT', `/api/presets/${id}`, {
+      ...(typeof preset === 'object' && preset !== null ? preset : {}),
+      ...(options?.acknowledgeBuiltinUpdate ? { acknowledgeBuiltinUpdate: true } : {}),
+    }),
   resetPreset: (id: string) => call<{ preset: RolePreset | null }>('DELETE', `/api/presets/${id}`),
   tasks: () => call<Task[]>('GET', '/api/tasks'),
   createTask: (input: CreateTask) => call<Task>('POST', '/api/tasks', input),

@@ -217,7 +217,15 @@ export async function buildApp(
     },
   });
 
-  tasks = new TaskService(db, hub, { manager, agents, events, worktrees, broker, log: app.log });
+  tasks = new TaskService(db, hub, {
+    manager,
+    agents,
+    events,
+    worktrees,
+    broker,
+    presetLookup: (id) => presetService.get(id),
+    log: app.log,
+  });
   events.onEvent((e) => tasks.onEvent(e));
   tasks.reconcileOnBoot();
 
