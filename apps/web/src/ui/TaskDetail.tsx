@@ -29,6 +29,8 @@ export function TaskDetail({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [allowHookChanges, setAllowHookChanges] = useState(false);
+  const [skipHooks, setSkipHooks] = useState(false);
   const [asking, setAsking] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewerId, setReviewerId] = useState('');
@@ -39,14 +41,24 @@ export function TaskDetail({
   const previewSig = preview
     ? `${preview.branch}:${preview.ahead}:${preview.behind}:${preview.dirty}:${preview.files
         .map((f) => `${f.status}:${f.path}`)
-        .join('|')}`
+        .join('|')}:${(preview.hookFiles ?? []).join('|')}:${(preview.runnerFiles ?? []).join('|')}`
     : 'none';
-  const confirmKey = `${taskId}:${strategy}:${previewSig}`;
+  const previewKey = `${taskId}:${strategy}:${previewSig}`;
+  const confirmKey = `${previewKey}:${allowHookChanges}:${skipHooks}`;
+  const previewKeyRef = useRef(previewKey);
+  if (previewKeyRef.current !== previewKey) {
+    previewKeyRef.current = previewKey;
+    setAllowHookChanges(false);
+    setSkipHooks(false);
+    if (confirming) setConfirming(false);
+  }
   const confirmKeyRef = useRef(confirmKey);
   if (confirmKeyRef.current !== confirmKey) {
     confirmKeyRef.current = confirmKey;
     if (confirming) setConfirming(false);
   }
+  const hookConsentRequired = (preview?.hookFiles?.length ?? 0) > 0;
+  const hookConsentOk = !hookConsentRequired || allowHookChanges || skipHooks;
   const reviewers = agents
     .filter((a) => a.id !== assignee?.id)
     .sort((a, b) => {
@@ -103,7 +115,11 @@ export function TaskDetail({
   const acceptMerge = async () => {
     setMerging(true);
     try {
-      await api.mergeTask(task.id, { strategy });
+      await api.mergeTask(task.id, {
+        strategy,
+        ...(allowHookChanges ? { allowHookChanges: true } : {}),
+        ...(skipHooks ? { skipHooks: true } : {}),
+      });
     } catch (err) {
       if (err instanceof ApiError) {
         const parsed = TaskSchema.safeParse(err.body.task);
@@ -258,6 +274,29 @@ export function TaskDetail({
             {preview?.hooksWarning ? (
               <p className="small warn-text">{preview.hooksWarning}</p>
             ) : null}
+            {preview?.runnerWarning ? (
+              <p className="small warn-text">{preview.runnerWarning}</p>
+            ) : null}
+            {hookConsentRequired ? (
+              <label className="small row wrap">
+                <input
+                  type="checkbox"
+                  checked={allowHookChanges}
+                  onChange={(e) => setAllowHookChanges(e.target.checked)}
+                />
+                I reviewed the hook changes and allow them to run on the merge commit
+              </label>
+            ) : null}
+            {hookConsentRequired || preview?.runnerWarning ? (
+              <label className="small row wrap">
+                <input
+                  type="checkbox"
+                  checked={skipHooks}
+                  onChange={(e) => setSkipHooks(e.target.checked)}
+                />
+                Merge without running git hooks on my source checkout
+              </label>
+            ) : null}
             {preview ? (
               <p className="mono small">
                 {preview.branch} → {preview.targetBranch}
@@ -313,6 +352,7 @@ export function TaskDetail({
                     setConfirming(true);
                     return;
                   }
+                  if (!hookConsentOk) return;
                   void acceptMerge();
                 }}
               >

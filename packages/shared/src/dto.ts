@@ -227,6 +227,8 @@ export const MergeTaskSchema = z.object({
   message: z.string().trim().min(1).max(500).optional(),
   /** When false or omitted, a merge that changes hook scripts under core.hooksPath is refused. */
   allowHookChanges: z.boolean().optional(),
+  /** When true, the source merge commit skips git hooks (`core.hooksPath=/dev/null`, `--no-verify`). */
+  skipHooks: z.boolean().optional(),
 });
 export type MergeTask = z.infer<typeof MergeTaskSchema>;
 
@@ -248,6 +250,8 @@ export const MergePreviewSchema = z.object({
   reason: z.string().optional(),
   hookFiles: z.array(z.string()).optional(),
   hooksWarning: z.string().optional(),
+  runnerFiles: z.array(z.string()).optional(),
+  runnerWarning: z.string().optional(),
 });
 export type MergePreview = z.infer<typeof MergePreviewSchema>;
 

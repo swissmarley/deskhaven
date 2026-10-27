@@ -162,6 +162,31 @@ describe('TaskDetail merge conflict', () => {
     expect(api.mergeTask).not.toHaveBeenCalled();
   });
 
+  it('requires hook consent before merge when preview lists hook files', async () => {
+    vi.mocked(api.mergePreview).mockResolvedValue({
+      ...preview,
+      hookFiles: ['.husky/pre-commit'],
+      hooksWarning: 'This merge changes git hook scripts (.husky/pre-commit).',
+    });
+    useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    await screen.findByText(/hook scripts/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Accept & merge' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm merge' }));
+    expect(api.mergeTask).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: /reviewed the hook changes/i,
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Accept & merge' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm merge' }));
+    expect(api.mergeTask).toHaveBeenCalledWith('t1', {
+      strategy: 'squash',
+      allowHookChanges: true,
+    });
+  });
+
   it('expires merge confirmation after ten seconds', async () => {
     vi.useFakeTimers();
     useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });

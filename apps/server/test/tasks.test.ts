@@ -11,7 +11,12 @@ import type { AgentService } from '../src/agents/service.js';
 import { openDb } from '../src/db/client.js';
 import { tasks as tasksTable } from '../src/db/schema.js';
 import { EventStore } from '../src/events/store.js';
-import { buildTaskPrompt, REVIEW_DIFF_LIMIT, TaskService } from '../src/tasks/service.js';
+import {
+  buildTaskPrompt,
+  REVIEW_DIFF_LIMIT,
+  TaskHttpError,
+  TaskService,
+} from '../src/tasks/service.js';
 import type { WorktreeService } from '../src/worktree/service.js';
 import { WsHub } from '../src/ws/hub.js';
 
@@ -201,6 +206,96 @@ describe('TaskService', () => {
       }),
     );
     expect(tasks.get(t.id)?.resultSummary).toBe('halfway there');
+  });
+
+  it('assign rollback is skipped when the task was reassigned before dispatch failed', async () => {
+    const { db } = openDb(':memory:');
+    const hub = new WsHub();
+    const events = new EventStore(db, hub);
+    const agentA = AgentSchema.parse({
+      id: 'a1',
+      name: 'Ada',
+      avatar: {
+        skin: '#fff',
+        hair: '#000',
+        hairStyle: 'short',
+        shirt: '#f00',
+        pants: '#00f',
+        accessory: 'none',
+      },
+      rolePresetId: 'engineer',
+      systemPrompt: '',
+      model: 'm',
+      tools: null,
+      allowedTools: [],
+      permissionMode: 'default',
+      workdir: process.cwd(),
+      worktree: null,
+      sessionId: null,
+      status: 'idle',
+      roomId: 'lobby',
+      deskId: null,
+      budget: {},
+      currentTaskId: null,
+      usage: emptyUsage(),
+      lastError: null,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const agentB = AgentSchema.parse({ ...agentA, id: 'a2', name: 'Bob' });
+    let releaseSlow: () => void = () => {};
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    const sent: string[] = [];
+    const manager = {
+      sendPrompt: (agentId: string) => {
+        sent.push(agentId);
+        if (agentId === 'a1') {
+          return slowGate.then(() => {
+            throw new TaskHttpError(409, 'agent_busy', 'stale');
+          });
+        }
+      },
+      setExtraReadDirs: () => {},
+      get: () => undefined,
+    } as unknown as AgentManager;
+    const agents = {
+      get: (id: string) => (id === 'a1' ? agentA : id === 'a2' ? agentB : undefined),
+    } as unknown as AgentService;
+    const worktrees = {
+      changedFiles: async () => [],
+    } as unknown as WorktreeService;
+    const tasks = new TaskService(db, hub, {
+      manager,
+      agents,
+      events,
+      worktrees,
+      log: { warn() {} },
+    });
+    const t = await tasks.create({ title: 'Race', prompt: 'p' });
+    const slow = tasks.assign(t.id, 'a1');
+    await new Promise<void>((r) => setImmediate(r));
+    await tasks.assign(t.id, 'a2');
+    releaseSlow();
+    await expect(slow).rejects.toMatchObject({ code: 'agent_busy' });
+    expect(tasks.get(t.id)?.assigneeAgentId).toBe('a2');
+    expect(sent).toEqual(['a1', 'a2']);
+  });
+
+  it('update with assignee and title writes both before dispatch', async () => {
+    const { tasks, sent } = setup();
+    const t = await tasks.create({ title: 'Old', prompt: 'p' });
+    const updated = await tasks.update(t.id, {
+      assigneeAgentId: 'a1',
+      title: 'Renamed',
+      prompt: 'new prompt',
+    });
+    expect(updated.title).toBe('Renamed');
+    expect(updated.prompt).toBe('new prompt');
+    expect(updated.assigneeAgentId).toBe('a1');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.text).toContain('# Task: Renamed');
   });
 
   it('reassigning through update dispatches to the new agent and nudge re-sends', async () => {

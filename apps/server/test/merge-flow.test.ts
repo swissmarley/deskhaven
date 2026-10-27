@@ -662,6 +662,35 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     expect(prompts.some((p) => p.taskId === reviewId)).toBe(false);
   });
 
+  it('PATCH with assignee and title keeps both fields', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'PatchBoth', true)).json();
+    const created = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { title: 'Old title', prompt: 'original prompt', assigneeAgentId: agent.id },
+    });
+    expect(created.statusCode).toBe(201);
+    const id = created.json().id as string;
+    const other = (await hire(repo, 'Other', true)).json();
+    const patched = await req({
+      method: 'PATCH',
+      url: `/api/tasks/${id}`,
+      payload: {
+        assigneeAgentId: other.id,
+        title: 'New title',
+        prompt: 'updated prompt',
+      },
+    });
+    expect(patched.statusCode).toBe(200);
+    expect(patched.json()).toMatchObject({
+      title: 'New title',
+      prompt: 'updated prompt',
+      assigneeAgentId: other.id,
+      status: 'assigned',
+    });
+  });
+
   it('returns 409 hooks_changed when the branch touches the hooks directory', async () => {
     const repo = tmpRepo();
     git(repo, 'config', 'core.hooksPath', '.husky');

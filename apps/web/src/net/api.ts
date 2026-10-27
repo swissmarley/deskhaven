@@ -101,8 +101,15 @@ export const api = {
   nudgeTask: (id: string, text: string) =>
     call<{ ok: true }>('POST', `/api/tasks/${id}/nudge`, { text }),
   mergePreview: (id: string) => call<MergePreview>('GET', `/api/tasks/${id}/merge-preview`),
-  mergeTask: (id: string, body: { strategy?: MergeStrategy; message?: string } = {}) =>
-    call<{ task: Task }>('POST', `/api/tasks/${id}/merge`, body),
+  mergeTask: (
+    id: string,
+    body: {
+      strategy?: MergeStrategy;
+      message?: string;
+      allowHookChanges?: boolean;
+      skipHooks?: boolean;
+    } = {},
+  ) => call<{ task: Task }>('POST', `/api/tasks/${id}/merge`, body),
   resolveMerge: (id: string) =>
     call<{ ok: true }>('POST', `/api/tasks/${id}/merge/resolve-with-agent`, {}),
   rooms: () => call<Room[]>('GET', '/api/rooms'),

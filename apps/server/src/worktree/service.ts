@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { isInside } from '../agent/diff-tracker.js';
+import {
+  type HookMergeCheck,
+  hookFilesFromDiffNames,
+  hookRunnerFilesInDiff,
+} from './hook-detect.js';
 
 const run = promisify(execFile);
 
@@ -50,7 +55,8 @@ export type MergeOutcome =
         | 'failed'
         | 'invalid_branch'
         | 'nothing_to_merge'
-        | 'hooks_changed';
+        | 'hooks_changed'
+        | 'hooks_verify_failed';
       message: string;
       conflictFiles?: string[];
       hookFiles?: string[];
@@ -58,7 +64,11 @@ export type MergeOutcome =
 
 export interface MergeIntoOptions {
   allowHookChanges?: boolean;
+  /** When true, the source merge commit skips hooks (`core.hooksPath=/dev/null`, `--no-verify`). */
+  skipHooks?: boolean;
 }
+
+export type { HookMergeCheck };
 
 /**
  * Branch names that may be passed to git. Stricter than `check-ref-format` (which accepts `foo;rm`):
@@ -427,27 +437,47 @@ export class WorktreeService {
   }
 
   /**
+   * Paths under the source hooks directory that differ on `branch` from `target`, plus hook-runner
+   * config files in the same merge range. Fails closed when the diff cannot be computed.
+   */
+  async hookFilesInMerge(
+    sourceRoot: string,
+    branch: string,
+    target: string,
+  ): Promise<HookMergeCheck & { runnerFiles?: string[] }> {
+    assertBranchName(branch);
+    assertBranchName(target);
+    const branchSha = await this.resolveBranchCommit(sourceRoot, branch);
+    return this.hookFilesInMergeAt(sourceRoot, target, branchSha);
+  }
+
+  private async hookFilesInMergeAt(
+    sourceRoot: string,
+    target: string,
+    branchSha: string,
+  ): Promise<HookMergeCheck & { runnerFiles?: string[] }> {
+    const { prefixes, ignoreCase } = await this.hookDirMeta(sourceRoot);
+    try {
+      const names = await this.mergeRangeNames(sourceRoot, target, branchSha);
+      return {
+        ok: true,
+        files: hookFilesFromDiffNames(names, prefixes, ignoreCase),
+        runnerFiles: hookRunnerFilesInDiff(names, ignoreCase),
+      };
+    } catch {
+      return {
+        ok: false,
+        code: 'verify_failed',
+        message: 'Could not verify whether this merge changes git hook scripts.',
+      };
+    }
+  }
+
+  /**
    * Merge `branch` into the source checkout, which must already be on `target` and clean of tracked
    * changes. Never checks out, stashes, or hard-resets that checkout. On conflict the source tree is
    * restored (`merge --abort`, or `reset --merge` for a squash, which does not create MERGE_HEAD).
    */
-  /** Paths under the source hooks directory that differ on `branch` from `target`. */
-  async hookFilesInMerge(sourceRoot: string, branch: string, target: string): Promise<string[]> {
-    assertBranchName(branch);
-    assertBranchName(target);
-    const prefixes = await this.hookDirPrefixes(sourceRoot);
-    let names: string[] = [];
-    try {
-      names = (await this.git(sourceRoot, ['diff', '--name-only', `${target}...${branch}`]))
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean);
-    } catch {
-      return [];
-    }
-    return names.filter((p) => pathUnderHookDir(p, prefixes));
-  }
-
   async mergeInto(
     sourceRoot: string,
     branch: string,
@@ -513,8 +543,17 @@ export class WorktreeService {
         message: `The source checkout is on ${current}, not ${target}. Deskhaven will not switch branches.`,
       };
     }
-    const hookFiles = await this.hookFilesInMerge(sourceRoot, branch, target);
-    if (hookFiles.length && !options.allowHookChanges) {
+    const branchSha = await this.resolveBranchCommit(sourceRoot, branch);
+    const hookCheck = await this.hookFilesInMergeAt(sourceRoot, target, branchSha);
+    if (!hookCheck.ok) {
+      return {
+        ok: false,
+        code: 'hooks_verify_failed',
+        message: hookCheck.message,
+      };
+    }
+    const hookFiles = hookCheck.files;
+    if (hookFiles.length && !options.allowHookChanges && !options.skipHooks) {
       return {
         ok: false,
         code: 'hooks_changed',
@@ -524,9 +563,11 @@ export class WorktreeService {
       };
     }
     const identity = await this.identityArgs(sourceRoot);
+    const hookSkip = options.skipHooks ? ['-c', 'core.hooksPath=/dev/null'] : ([] as string[]);
+    const verifyOff = options.skipHooks ? ['--no-verify'] : ([] as string[]);
     try {
       if (strategy === 'squash') {
-        await this.git(sourceRoot, ['merge', '--squash', '--', branch], 60_000);
+        await this.git(sourceRoot, [...hookSkip, 'merge', '--squash', '--', branchSha], 60_000);
         const staged = (await this.git(sourceRoot, ['diff', '--cached', '--name-only'])).trim();
         const headNow = (await this.git(sourceRoot, ['rev-parse', 'HEAD'])).trim();
         if (!staged && headNow === headBefore) {
@@ -538,7 +579,11 @@ export class WorktreeService {
           };
         }
         try {
-          await this.git(sourceRoot, [...identity, 'commit', '-m', message], 60_000);
+          await this.git(
+            sourceRoot,
+            [...hookSkip, ...identity, 'commit', ...verifyOff, '-m', message],
+            60_000,
+          );
         } catch (err) {
           await this.restoreSource(sourceRoot, 'squash');
           return {
@@ -551,7 +596,17 @@ export class WorktreeService {
       } else {
         await this.git(
           sourceRoot,
-          [...identity, 'merge', '--no-ff', '-m', message, '--', branch],
+          [
+            ...hookSkip,
+            ...identity,
+            'merge',
+            '--no-ff',
+            ...verifyOff,
+            '-m',
+            message,
+            '--',
+            branchSha,
+          ],
           60_000,
         );
         const headNow = (await this.git(sourceRoot, ['rev-parse', 'HEAD'])).trim();
@@ -682,18 +737,63 @@ export class WorktreeService {
     return [...byPath.values()];
   }
 
-  private async hookDirPrefixes(sourceRoot: string): Promise<string[]> {
+  private async resolveBranchCommit(sourceRoot: string, branch: string): Promise<string> {
+    return (await this.git(sourceRoot, ['rev-parse', '--verify', `${branch}^{commit}`])).trim();
+  }
+
+  private async mergeRangeNames(
+    sourceRoot: string,
+    target: string,
+    branchSha: string,
+  ): Promise<string[]> {
+    const raw = await this.git(sourceRoot, [
+      '-c',
+      'core.quotePath=false',
+      'diff',
+      '--name-only',
+      '-z',
+      '--no-renames',
+      `${target}...${branchSha}`,
+    ]);
+    const parts = raw.split('\0');
+    if (parts.at(-1) === '') parts.pop();
+    return parts.filter(Boolean);
+  }
+
+  private async hookDirMeta(
+    sourceRoot: string,
+  ): Promise<{ prefixes: string[]; ignoreCase: boolean }> {
+    const ignoreCase =
+      (await this.optionalGit(sourceRoot, ['config', '--get', 'core.ignorecase'])).trim() ===
+      'true';
     const out = new Set<string>();
-    const hooksPath = (
-      await this.optionalGit(sourceRoot, ['rev-parse', '--git-path', 'hooks'])
+    const configured = (
+      await this.optionalGit(sourceRoot, ['config', '--get', 'core.hooksPath'])
     ).trim();
-    if (hooksPath) {
+    const addPrefix = (hooksPath: string) => {
+      if (!hooksPath) return;
       const abs = path.isAbsolute(hooksPath) ? hooksPath : path.resolve(sourceRoot, hooksPath);
       const rel = path.relative(sourceRoot, abs).split(path.sep).join('/');
-      if (rel && !rel.startsWith('..')) out.add(rel);
+      if (rel && !rel.startsWith('..')) {
+        out.add(rel);
+        try {
+          const real = fs.realpathSync(abs);
+          const realRel = path.relative(sourceRoot, real).split(path.sep).join('/');
+          if (realRel && !realRel.startsWith('..')) out.add(realRel);
+        } catch {
+          // hooks dir may not exist yet
+        }
+      }
+    };
+    if (configured) addPrefix(configured);
+    else {
+      const hooksPath = (
+        await this.optionalGit(sourceRoot, ['rev-parse', '--git-path', 'hooks'])
+      ).trim();
+      addPrefix(hooksPath);
     }
     out.add('.husky');
-    return [...out];
+    return { prefixes: [...out], ignoreCase };
   }
 
   private async assertOnBranch(wt: WorktreeInfo): Promise<void> {
@@ -787,15 +887,6 @@ function gitText(err: unknown): string {
 
 function isConflictText(text: string): boolean {
   return /CONFLICT|Automatic merge failed|fix conflicts/i.test(text);
-}
-
-function pathUnderHookDir(filePath: string, prefixes: string[]): boolean {
-  const p = filePath.replace(/\\/g, '/');
-  for (const prefix of prefixes) {
-    const pre = prefix.replace(/\/$/, '');
-    if (p === pre || p.startsWith(`${pre}/`)) return true;
-  }
-  return false;
 }
 
 function clip(text: string, max = 2000): string {

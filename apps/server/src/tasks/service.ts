@@ -136,6 +136,14 @@ export class TaskService {
       patch.assigneeAgentId !== current.assigneeAgentId &&
       patch.assigneeAgentId
     ) {
+      const pending: Task = TaskSchema.parse({
+        ...next,
+        assigneeAgentId: current.assigneeAgentId,
+        status: current.status,
+        startedAt: current.startedAt,
+        updatedAt: Date.now(),
+      });
+      this.write(pending);
       return this.assign(id, patch.assigneeAgentId);
     }
     if (patch.status === 'done' && !next.completedAt) next.completedAt = Date.now();
@@ -186,11 +194,14 @@ export class TaskService {
       });
     } catch (err) {
       if (err instanceof TaskHttpError) {
-        this.write({
-          ...this.mustGet(taskId),
-          ...rollback,
-          updatedAt: Date.now(),
-        });
+        const now = this.mustGet(taskId);
+        if (now.assigneeAgentId === agentId && now.status === 'assigned') {
+          this.write({
+            ...now,
+            ...rollback,
+            updatedAt: Date.now(),
+          });
+        }
         throw err;
       }
       // Budget cap or kill switch: keep the assignment but ask a human.
@@ -263,14 +274,23 @@ export class TaskService {
     const wt = agent.worktree;
     if (!wt) throw new TaskHttpError(400, 'no_worktree', 'no worktree');
     const st = await this.deps.worktrees.status(wt, targetBranch);
-    const hookFiles = await this.deps.worktrees.hookFilesInMerge(
+    const hookCheck = await this.deps.worktrees.hookFilesInMerge(
       sourceRoot,
       wt.branch,
       targetBranch,
     );
+    if (!hookCheck.ok) {
+      throw new TaskHttpError(409, 'hooks_verify_failed', hookCheck.message);
+    }
+    const hookFiles = hookCheck.files;
+    const runnerFiles = hookCheck.runnerFiles ?? [];
     const hooksWarning =
       hookFiles.length > 0
-        ? `This merge changes git hook scripts (${hookFiles.join(', ')}). The merge commit in your source checkout may run them unless you allow hook changes.`
+        ? `This merge changes git hook scripts (${hookFiles.join(', ')}). Check the box below if you reviewed them and want them to run on the merge commit, or choose merge without hooks.`
+        : undefined;
+    const runnerWarning =
+      runnerFiles.length > 0
+        ? `This merge also changes hook runner config (${runnerFiles.join(', ')}). Unchanged hook scripts may still run new commands from those files during the merge commit.`
         : undefined;
     return {
       branch: wt.branch,
@@ -285,6 +305,8 @@ export class TaskService {
       ...(st.reason ? { reason: st.reason } : {}),
       ...(hookFiles.length ? { hookFiles } : {}),
       ...(hooksWarning ? { hooksWarning } : {}),
+      ...(runnerFiles.length ? { runnerFiles } : {}),
+      ...(runnerWarning ? { runnerWarning } : {}),
     };
   }
 
@@ -329,6 +351,7 @@ export class TaskService {
             strategy,
             message,
             input.allowHookChanges ?? false,
+            input.skipHooks ?? false,
           );
         } finally {
           // Clear before the lock is released so a snapshot waiting on it does not see a stale flag.
@@ -363,6 +386,7 @@ export class TaskService {
     strategy: MergeStrategy,
     message: string,
     allowHookChanges: boolean,
+    skipHooks: boolean,
   ): Promise<Task> {
     const busyNow = this.runtimeBusy(agent.id);
     if (busyNow) throw new TaskHttpError(409, 'agent_busy', busyNow);
@@ -380,7 +404,7 @@ export class TaskService {
       targetBranch,
       strategy,
       message,
-      { allowHookChanges },
+      { allowHookChanges, skipHooks },
     );
     if (!outcome.ok) {
       if (outcome.code === 'conflict' || outcome.code === 'failed') {
@@ -571,7 +595,7 @@ export class TaskService {
     if (!latest || latest.status === 'done' || !latest.assigneeAgentId) return;
     if (this.merging.has(latest.assigneeAgentId)) return;
     this.syncReadDirs(latest.assigneeAgentId);
-    this.deps.manager.sendPrompt(latest.assigneeAgentId, text, latest.id);
+    await Promise.resolve(this.deps.manager.sendPrompt(latest.assigneeAgentId, text, latest.id));
   }
 
   private async promptFor(task: Task): Promise<string> {

@@ -402,6 +402,54 @@ describe('merging a worktree branch', { timeout: 20_000 }, () => {
     }
   });
 
+  it('detects hook edits through a tracked symlinked hooksPath', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    const scriptsHooks = path.join(repo, 'scripts', 'hooks');
+    fs.mkdirSync(scriptsHooks, { recursive: true });
+    fs.writeFileSync(path.join(scriptsHooks, 'post-commit'), '#!/bin/sh\nexit 0\n');
+    fs.chmodSync(path.join(scriptsHooks, 'post-commit'), 0o755);
+    fs.symlinkSync(path.relative(repo, scriptsHooks), path.join(repo, '.githooks'));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'tracked hooks symlink');
+    git(repo, 'config', 'core.hooksPath', '.githooks');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(repo, 'symlinkhook99', 'Symlink');
+    const targetHook = path.join(wt.path, 'scripts', 'hooks', 'post-commit');
+    fs.writeFileSync(targetHook, '#!/bin/sh\necho agent-hook\n');
+    fs.chmodSync(targetHook, 0o755);
+    await svc.commitAll(wt, 'change real hook file');
+    const blocked = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'nope');
+    expect(blocked).toMatchObject({ ok: false, code: 'hooks_changed' });
+    if (!blocked.ok) expect(blocked.hookFiles?.length).toBeGreaterThan(0);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
+  it('detects hook edits when core.hooksPath uses non-ASCII segments', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    const hooksDir = path.join(repo, 'hööks');
+    fs.mkdirSync(hooksDir);
+    fs.writeFileSync(path.join(hooksDir, 'pre-commit'), '#!/bin/sh\nexit 0\n');
+    fs.chmodSync(path.join(hooksDir, 'pre-commit'), 0o755);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'unicode hooks dir');
+    git(repo, 'config', 'core.hooksPath', 'hööks');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(repo, 'unicodehook99', 'Unicode');
+    const hook = path.join(wt.path, 'hööks', 'pre-commit');
+    fs.writeFileSync(hook, '#!/bin/sh\necho evil\n');
+    fs.chmodSync(hook, 0o755);
+    await svc.commitAll(wt, 'touch hook');
+    const blocked = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'nope');
+    expect(blocked).toMatchObject({ ok: false, code: 'hooks_changed' });
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
   it('refuses a merge that changes files under the hooks directory', async () => {
     const repo = tmpRepo();
     identity(repo);

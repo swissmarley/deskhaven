@@ -277,7 +277,14 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
    uses your signing setup and may run hook scripts from `core.hooksPath` (including scripts the
    agent added on its branch under a relative path such as `.husky`). The merge preview warns when
    hook files would change; Deskhaven refuses with `hooks_changed` unless you explicitly allow
-   hook changes on that merge. If the worktree HEAD is no longer its `deskhaven/…` branch,
+   hook changes on that merge, or choose **merge without hooks** (the source merge commit uses
+   `core.hooksPath=/dev/null` and `--no-verify`). Detection follows `core.hooksPath` (including
+   symlinked directories and non-ASCII paths), `.husky`, and obeys `core.ignorecase` on
+   case-insensitive volumes. If git cannot compute the merge diff, the merge is refused
+   (`hooks_verify_failed`) instead of proceeding blindly. Even when no hook *files* change, the
+   preview warns when hook-runner config changes (`package.json`, lint-staged, lefthook,
+   pre-commit, and similar): an unchanged `pre-commit` script can still run new commands from
+   those files during your merge commit. If the worktree HEAD is no longer its `deskhaven/…` branch,
    the merge is refused (`worktree_moved`) so that work is not committed somewhere else and then
    discarded. An already-integrated branch returns `nothing_to_merge` and the task stays unmerged.
    A conflict is aborted automatically (your checkout is unchanged); the dialog lists the files and
