@@ -1,6 +1,7 @@
-import { BUILTIN_PRESETS, ENGINEER_PRESET_LEGACY_HASH, type RolePreset } from '@deskhaven/shared';
+import { BUILTIN_PRESETS, type RolePreset } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { rolePresets } from '../src/db/schema.js';
+import { ENGINEER_PRESET_LEGACY_HASH } from '../src/presets/presetBuiltin.js';
 import { client, testApp } from './helpers.js';
 
 describe('presets HTTP', () => {

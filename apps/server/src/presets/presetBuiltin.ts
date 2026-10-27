@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { RolePreset } from './dto.js';
-import { RolePresetSchema } from './dto.js';
+import { type RolePreset, RolePresetSchema } from '@deskhaven/shared';
 
 /** Stable hash of a preset document (full JSON object as stored in SQLite). */
 export function hashRolePreset(preset: RolePreset): string {
