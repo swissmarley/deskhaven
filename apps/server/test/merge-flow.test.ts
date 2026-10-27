@@ -77,13 +77,33 @@ async function reviewTask(agentId: string, title = 'Ship it'): Promise<string> {
   return id;
 }
 
+async function mergePayload(taskId: string, extra: Record<string, unknown> = {}) {
+  const preview = await req({ method: 'GET', url: `/api/tasks/${taskId}/merge-preview` });
+  expect(preview.statusCode).toBe(200);
+  const p = preview.json() as {
+    branchSha: string;
+    hookFiles?: string[];
+    dirty: boolean;
+  };
+  return {
+    expectedBranchSha: p.branchSha,
+    consentedHookFiles: p.hookFiles ?? [],
+    previewDirty: p.dirty,
+    ...extra,
+  };
+}
+
 describe('merge and review over HTTP', { timeout: 20_000 }, () => {
   it('squash-merges, then merges a second change without a conflict', async () => {
     const repo = tmpRepo();
     const agent = (await hire(repo, 'Ada', true)).json();
     fs.writeFileSync(path.join(agent.worktree.path, 'b.txt'), 'from ada\n');
     const id = await reviewTask(agent.id);
-    const merged = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    const merged = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id),
+    });
     expect(merged.statusCode).toBe(200);
     const task = merged.json().task;
     expect(task.merge).toMatchObject({
@@ -101,7 +121,7 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     const again = await req({
       method: 'POST',
       url: `/api/tasks/${id}/merge`,
-      payload: { strategy: 'squash' },
+      payload: await mergePayload(id, { strategy: 'squash' }),
     });
     expect(again.statusCode).toBe(200);
     expect(fs.readFileSync(path.join(repo, 'c.txt'), 'utf8')).toBe('second\n');
@@ -115,7 +135,11 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     fs.appendFileSync(path.join(repo, 'a.txt'), 'dirty\n');
     const before = snapshot(repo);
     const id = await reviewTask(agent.id, 'Bea task');
-    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    const res = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id),
+    });
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toBe('source_dirty');
     expect(snapshot(repo)).toBe(before);
@@ -130,7 +154,11 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     execFileSync('git', ['commit', '-q', '-m', 'user'], { cwd: repo });
     const before = snapshot(repo);
     const id = await reviewTask(agent.id, 'Conflict');
-    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    const res = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id),
+    });
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toBe('conflict');
     expect(res.json().conflictFiles).toContain('a.txt');
@@ -166,7 +194,11 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
       ).statusCode,
     ).toBe(200);
     const id = await reviewTask(agent.id, 'Also Dee');
-    const denied = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    const denied = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id),
+    });
     expect(denied.statusCode).toBe(409);
     expect(denied.json().error).toBe('agent_busy');
 
@@ -176,7 +208,11 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     const missing = await req({
       method: 'POST',
       url: `/api/tasks/${plainTask}/merge`,
-      payload: {},
+      payload: {
+        expectedBranchSha: 'abc1234567890',
+        consentedHookFiles: [],
+        previewDirty: false,
+      },
     });
     expect(missing.statusCode).toBe(400);
     expect(missing.json().error).toBe('no_worktree');
@@ -190,7 +226,7 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     const merged = await req({
       method: 'POST',
       url: `/api/tasks/${id}/merge`,
-      payload: { strategy: 'merge' },
+      payload: await mergePayload(id, { strategy: 'merge' }),
     });
     expect(merged.statusCode).toBe(200);
     expect(merged.json().task.merge.strategy).toBe('merge');
@@ -288,7 +324,11 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     fs.writeFileSync(path.join(agent.worktree.path, 'lost.txt'), 'keep me\n');
     const sourceBefore = git(repo, 'rev-parse', 'HEAD').trim();
     const id = await reviewTask(agent.id, 'Moved');
-    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    const res = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id),
+    });
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toBe('worktree_moved');
     const task = (await req({ method: 'GET', url: '/api/tasks' })).json() as {
@@ -315,12 +355,14 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     });
     const held = built.ctx.worktrees.withSourceLock(repo, () => gate);
     let settled = false;
-    const pending = req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} }).then(
-      (res) => {
-        settled = true;
-        return res;
-      },
-    );
+    const pending = req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id),
+    }).then((res) => {
+      settled = true;
+      return res;
+    });
     await new Promise((r) => setTimeout(r, 200));
     expect(settled).toBe(false);
     const nudged = await req({
@@ -480,7 +522,11 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     git(repo, 'checkout', '--detach', '-q');
     const before = snapshot(repo);
     const id = await reviewTask(agent.id, 'Detached');
-    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    const res = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id),
+    });
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toBe('wrong_branch');
     expect(snapshot(repo)).toBe(before);
@@ -490,7 +536,11 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     const repo = tmpRepo();
     const agent = (await hire(repo, 'Quiet', true)).json();
     const id = await reviewTask(agent.id, 'Quiet');
-    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    const res = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id),
+    });
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toBe('nothing_to_merge');
     const saved = (
@@ -513,8 +563,8 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     const ida = await reviewTask(ada.id, 'Ada2');
     const idb = await reviewTask(bea.id, 'Bea2');
     const [ra, rb] = await Promise.all([
-      req({ method: 'POST', url: `/api/tasks/${ida}/merge`, payload: {} }),
-      req({ method: 'POST', url: `/api/tasks/${idb}/merge`, payload: {} }),
+      req({ method: 'POST', url: `/api/tasks/${ida}/merge`, payload: await mergePayload(ida) }),
+      req({ method: 'POST', url: `/api/tasks/${idb}/merge`, payload: await mergePayload(idb) }),
     ]);
     expect(ra.statusCode).toBe(200);
     expect(rb.statusCode).toBe(200);
@@ -530,7 +580,11 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     fs.writeFileSync(path.join(repo, 'collision.txt'), 'local\n');
     const head = git(repo, 'rev-parse', 'HEAD').trim();
     const id = await reviewTask(agent.id, 'Clash');
-    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    const res = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id),
+    });
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toBe('failed');
     expect(res.json().message).toContain('collision.txt');
@@ -567,7 +621,11 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     expect(agent.worktree.sourceRoot).toBe(fs.realpathSync(repo));
     fs.writeFileSync(path.join(agent.worktree.path, 'pkg', 'lib.txt'), 'v2\n');
     const id = await reviewTask(agent.id, 'Sub');
-    const res = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    const res = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id),
+    });
     expect(res.statusCode).toBe(200);
     expect(fs.readFileSync(path.join(repo, 'pkg', 'lib.txt'), 'utf8')).toBe('v2\n');
   });
@@ -707,16 +765,65 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     expect(preview.json().hookFiles?.length).toBeGreaterThan(0);
     expect(preview.json().hooksWarning).toMatch(/hook/i);
     const head = git(repo, 'rev-parse', 'HEAD').trim();
-    const denied = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: {} });
+    const denied = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id),
+    });
     expect(denied.statusCode).toBe(409);
     expect(denied.json().error).toBe('hooks_changed');
     expect(git(repo, 'rev-parse', 'HEAD').trim()).toBe(head);
     const allowed = await req({
       method: 'POST',
       url: `/api/tasks/${id}/merge`,
-      payload: { allowHookChanges: true },
+      payload: await mergePayload(id, { allowHookChanges: true }),
     });
     expect(allowed.statusCode).toBe(200);
+  });
+
+  it('returns 409 merge_preview_stale after the branch moves', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Stale', true)).json();
+    fs.writeFileSync(path.join(agent.worktree.path, 'b.txt'), 'x\n');
+    const id = await reviewTask(agent.id, 'Stale merge');
+    const body = await mergePayload(id);
+    git(agent.worktree.path, 'add', 'b.txt');
+    git(agent.worktree.path, 'commit', '-q', '-m', 'after preview');
+    const stale = await req({ method: 'POST', url: `/api/tasks/${id}/merge`, payload: body });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error).toBe('merge_preview_stale');
+  });
+
+  it('merges with skipHooks without running hook scripts', async () => {
+    const repo = tmpRepo();
+    git(repo, 'config', 'core.hooksPath', '.husky');
+    const agent = (await hire(repo, 'SkipHooks', true)).json();
+    const hooks = path.join(repo, '.husky');
+    fs.mkdirSync(hooks, { recursive: true });
+    const marker = path.join(repo, 'hook-ran.txt');
+    fs.writeFileSync(path.join(hooks, 'post-commit'), `#!/bin/sh\necho ran > '${marker}'\n`);
+    fs.chmodSync(path.join(hooks, 'post-commit'), 0o755);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'hooks');
+    const wtHooks = path.join(agent.worktree.path, '.husky');
+    fs.mkdirSync(wtHooks, { recursive: true });
+    fs.writeFileSync(path.join(wtHooks, 'post-merge'), '#!/bin/sh\necho merge\n');
+    fs.chmodSync(path.join(wtHooks, 'post-merge'), 0o755);
+    git(agent.worktree.path, 'add', '-A');
+    execFileSync(
+      'git',
+      ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '--no-verify', '-m', 'wt hook'],
+      { cwd: agent.worktree.path },
+    );
+    const id = await reviewTask(agent.id, 'Skip hook merge');
+    if (fs.existsSync(marker)) fs.unlinkSync(marker);
+    const merged = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: await mergePayload(id, { skipHooks: true }),
+    });
+    expect(merged.statusCode).toBe(200);
+    expect(fs.existsSync(marker)).toBe(false);
   });
 
   it('waits for an in-progress merge before removing the worktree', async () => {

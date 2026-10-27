@@ -278,13 +278,18 @@ task finished. Floating "z" means the agent is paused. A "…" bubble means it i
    agent added on its branch under a relative path such as `.husky`). The merge preview warns when
    hook files would change; Deskhaven refuses with `hooks_changed` unless you explicitly allow
    hook changes on that merge, or choose **merge without hooks** (the source merge commit uses
-   `core.hooksPath=/dev/null` and `--no-verify`). Detection follows `core.hooksPath` (including
+   `core.hooksPath=/dev/null` and `--no-verify`). Skipping hooks does not remove hook files from
+   your checkout — new or updated hooks from the branch stay installed and will run on later
+   commits. The merge preview records the branch commit and hook paths you consent to; if the
+   worktree or hook set changes before you merge, Deskhaven refuses with `merge_preview_stale` or
+   `hooks_changed`. Detection follows `core.hooksPath` (including
    symlinked directories and non-ASCII paths), `.husky`, and obeys `core.ignorecase` on
    case-insensitive volumes. If git cannot compute the merge diff, the merge is refused
    (`hooks_verify_failed`) instead of proceeding blindly. Even when no hook *files* change, the
    preview warns when hook-runner config changes (`package.json`, lint-staged, lefthook,
    pre-commit, and similar): an unchanged `pre-commit` script can still run new commands from
-   those files during your merge commit. If the worktree HEAD is no longer its `deskhaven/…` branch,
+   those files during your merge commit. Hook scripts that only `source` other files are not
+   scanned; treat those helpers as residual risk. If the worktree HEAD is no longer its `deskhaven/…` branch,
    the merge is refused (`worktree_moved`) so that work is not committed somewhere else and then
    discarded. An already-integrated branch returns `nothing_to_merge` and the task stays unmerged.
    A conflict is aborted automatically (your checkout is unchanged); the dialog lists the files and

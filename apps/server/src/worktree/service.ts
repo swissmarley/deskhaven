@@ -5,8 +5,11 @@ import { promisify } from 'node:util';
 import { isInside } from '../agent/diff-tracker.js';
 import {
   type HookMergeCheck,
+  hookFileSetsEqual,
   hookFilesFromDiffNames,
   hookRunnerFilesInDiff,
+  pathMatchesHookPrefix,
+  splitNameOnlyZ,
 } from './hook-detect.js';
 
 const run = promisify(execFile);
@@ -66,6 +69,8 @@ export interface MergeIntoOptions {
   allowHookChanges?: boolean;
   /** When true, the source merge commit skips hooks (`core.hooksPath=/dev/null`, `--no-verify`). */
   skipHooks?: boolean;
+  /** Hook paths the user consented to; must match the branch hook set at merge time. */
+  consentedHookFiles?: string[];
 }
 
 export type { HookMergeCheck };
@@ -440,6 +445,40 @@ export class WorktreeService {
    * Paths under the source hooks directory that differ on `branch` from `target`, plus hook-runner
    * config files in the same merge range. Fails closed when the diff cannot be computed.
    */
+  async headSha(dir: string): Promise<string> {
+    return (await this.git(dir, ['rev-parse', 'HEAD'])).trim();
+  }
+
+  /**
+   * Hook paths that would be touched by a merge at `branchSha`, including uncommitted hook paths in
+   * the agent worktree. Used for merge preview consent binding.
+   */
+  async hookConsentSnapshot(
+    sourceRoot: string,
+    worktreePath: string,
+    target: string,
+    branchSha: string,
+  ): Promise<HookMergeCheck & { runnerFiles?: string[] }> {
+    const { prefixes, ignoreCase } = await this.hookDirMeta(sourceRoot);
+    try {
+      const names = await this.mergeRangeNames(sourceRoot, target, branchSha);
+      const fromRange = hookFilesFromDiffNames(names, prefixes, ignoreCase);
+      const fromWorktree = await this.uncommittedHookPaths(worktreePath, prefixes, ignoreCase);
+      const files = [...new Set([...fromRange, ...fromWorktree])].sort();
+      return {
+        ok: true,
+        files,
+        runnerFiles: hookRunnerFilesInDiff(names, ignoreCase),
+      };
+    } catch {
+      return {
+        ok: false,
+        code: 'verify_failed',
+        message: 'Could not verify whether this merge changes git hook scripts.',
+      };
+    }
+  }
+
   async hookFilesInMerge(
     sourceRoot: string,
     branch: string,
@@ -553,6 +592,16 @@ export class WorktreeService {
       };
     }
     const hookFiles = hookCheck.files;
+    const consented = options.consentedHookFiles ?? [];
+    if (!hookFileSetsEqual(hookFiles, consented)) {
+      return {
+        ok: false,
+        code: 'hooks_changed',
+        message:
+          'The hook scripts in this merge do not match what you consented to in the preview. Refresh the preview and merge again.',
+        hookFiles,
+      };
+    }
     if (hookFiles.length && !options.allowHookChanges && !options.skipHooks) {
       return {
         ok: false,
@@ -793,7 +842,59 @@ export class WorktreeService {
       addPrefix(hooksPath);
     }
     out.add('.husky');
+    const symlinkPrefixes = await this.hookSymlinkPrefixes(sourceRoot, [...out]);
+    for (const p of symlinkPrefixes) out.add(p);
     return { prefixes: [...out], ignoreCase };
+  }
+
+  /** Resolve git symlink hook entries (mode 120000) to in-repo path prefixes. */
+  private async hookSymlinkPrefixes(sourceRoot: string, hookPrefixes: string[]): Promise<string[]> {
+    const out = new Set<string>();
+    for (const prefix of hookPrefixes) {
+      let listed = '';
+      try {
+        listed = await this.git(sourceRoot, ['ls-tree', '-z', '-r', 'HEAD', '--', prefix]);
+      } catch {
+        continue;
+      }
+      for (const entry of splitNameOnlyZ(listed)) {
+        const tab = entry.indexOf('\t');
+        if (tab < 0) continue;
+        const meta = entry.slice(0, tab);
+        const filePath = entry.slice(tab + 1);
+        if (!meta.startsWith('120000 ')) continue;
+        let target = '';
+        try {
+          target = (await this.git(sourceRoot, ['show', `HEAD:${filePath}`])).trim();
+        } catch {
+          continue;
+        }
+        const dir = path.posix.dirname(filePath.replace(/\\/g, '/'));
+        const resolved = path.posix.normalize(dir === '.' ? target : path.posix.join(dir, target));
+        if (resolved.startsWith('../')) continue;
+        out.add(resolved);
+        const parent = path.posix.dirname(resolved);
+        if (parent && parent !== '.') out.add(parent);
+      }
+    }
+    return [...out];
+  }
+
+  private async uncommittedHookPaths(
+    worktreePath: string,
+    prefixes: string[],
+    ignoreCase: boolean,
+  ): Promise<string[]> {
+    const out: string[] = [];
+    try {
+      const porcelain = await this.git(worktreePath, ['status', '--porcelain=v1', '-z']);
+      for (const file of parsePorcelainZ(porcelain)) {
+        if (pathMatchesHookPrefix(file.path, prefixes, ignoreCase)) out.push(file.path);
+      }
+    } catch {
+      // ignore
+    }
+    return out;
   }
 
   private async assertOnBranch(wt: WorktreeInfo): Promise<void> {

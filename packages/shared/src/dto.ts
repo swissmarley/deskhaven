@@ -207,6 +207,8 @@ export const TaskSchema = z.object({
   updatedAt: z.number(),
   merge: TaskMergeSchema.nullable().optional(),
   reviewTarget: ReviewTargetSchema.nullable().optional(),
+  /** Bumped on each assign; stale dispatch failures must not roll back a newer assign. */
+  dispatchSeq: z.number().int().nonnegative().optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;
 
@@ -229,6 +231,15 @@ export const MergeTaskSchema = z.object({
   allowHookChanges: z.boolean().optional(),
   /** When true, the source merge commit skips git hooks (`core.hooksPath=/dev/null`, `--no-verify`). */
   skipHooks: z.boolean().optional(),
+  /** Worktree `HEAD` from the merge preview; must still match at merge time. */
+  expectedBranchSha: z
+    .string()
+    .regex(/^[0-9a-f]{7,64}$/i)
+    .optional(),
+  /** Hook paths the user consented to from the preview; must match the current hook set. */
+  consentedHookFiles: z.array(z.string()).optional(),
+  /** Whether the preview saw uncommitted worktree changes (must match at merge time). */
+  previewDirty: z.boolean().optional(),
 });
 export type MergeTask = z.infer<typeof MergeTaskSchema>;
 
@@ -252,6 +263,10 @@ export const MergePreviewSchema = z.object({
   hooksWarning: z.string().optional(),
   runnerFiles: z.array(z.string()).optional(),
   runnerWarning: z.string().optional(),
+  branchSha: z
+    .string()
+    .regex(/^[0-9a-f]{7,64}$/i)
+    .optional(),
 });
 export type MergePreview = z.infer<typeof MergePreviewSchema>;
 

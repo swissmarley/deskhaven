@@ -41,7 +41,9 @@ export function TaskDetail({
   const previewSig = preview
     ? `${preview.branch}:${preview.ahead}:${preview.behind}:${preview.dirty}:${preview.files
         .map((f) => `${f.status}:${f.path}`)
-        .join('|')}:${(preview.hookFiles ?? []).join('|')}:${(preview.runnerFiles ?? []).join('|')}`
+        .join(
+          '|',
+        )}:${preview.branchSha ?? ''}:${(preview.hookFiles ?? []).join('|')}:${(preview.runnerFiles ?? []).join('|')}`
     : 'none';
   const previewKey = `${taskId}:${strategy}:${previewSig}`;
   const confirmKey = `${previewKey}:${allowHookChanges}:${skipHooks}`;
@@ -115,8 +117,15 @@ export function TaskDetail({
   const acceptMerge = async () => {
     setMerging(true);
     try {
+      if (!preview?.branchSha) {
+        pushNotice('error', 'Merge preview is not ready. Try again in a moment.');
+        return;
+      }
       await api.mergeTask(task.id, {
         strategy,
+        expectedBranchSha: preview.branchSha,
+        consentedHookFiles: preview.hookFiles ?? [],
+        previewDirty: preview.dirty,
         ...(allowHookChanges ? { allowHookChanges: true } : {}),
         ...(skipHooks ? { skipHooks: true } : {}),
       });

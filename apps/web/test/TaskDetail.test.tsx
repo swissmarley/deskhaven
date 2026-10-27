@@ -101,6 +101,7 @@ const preview = {
   dirty: false,
   files: [{ path: 'b.txt', status: 'A' }],
   canMerge: true,
+  branchSha: 'abc1234567890',
 };
 
 describe('TaskDetail merge conflict', () => {
@@ -149,7 +150,12 @@ describe('TaskDetail merge conflict', () => {
     expect(await screen.findByRole('button', { name: 'Ask agent to resolve' })).toBeTruthy();
     expect(screen.getByText('a.txt')).toBeTruthy();
     expect(useAppStore.getState().tasks.t1?.merge?.status).toBe('conflict');
-    expect(api.mergeTask).toHaveBeenCalledWith('t1', { strategy: 'merge' });
+    expect(api.mergeTask).toHaveBeenCalledWith('t1', {
+      strategy: 'merge',
+      expectedBranchSha: 'abc1234567890',
+      consentedHookFiles: [],
+      previewDirty: false,
+    });
   });
 
   it('cancels merge confirmation without calling the API', async () => {
@@ -183,6 +189,9 @@ describe('TaskDetail merge conflict', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm merge' }));
     expect(api.mergeTask).toHaveBeenCalledWith('t1', {
       strategy: 'squash',
+      expectedBranchSha: 'abc1234567890',
+      consentedHookFiles: ['.husky/pre-commit'],
+      previewDirty: false,
       allowHookChanges: true,
     });
   });

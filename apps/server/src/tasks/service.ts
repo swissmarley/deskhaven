@@ -22,6 +22,7 @@ import type { AgentService } from '../agents/service.js';
 import type { Db } from '../db/client.js';
 import { tasks as tasksTable } from '../db/schema.js';
 import type { EventStore } from '../events/store.js';
+import { hookFileSetsEqual } from '../worktree/hook-detect.js';
 import { WorktreeMovedError, type WorktreeService } from '../worktree/service.js';
 import type { WsHub } from '../ws/hub.js';
 
@@ -126,6 +127,14 @@ export class TaskService {
 
   async update(id: string, patch: UpdateTask): Promise<Task> {
     const current = this.mustGet(id);
+    if (
+      patch.assigneeAgentId !== undefined &&
+      patch.assigneeAgentId &&
+      patch.assigneeAgentId !== current.assigneeAgentId &&
+      !this.deps.agents.get(patch.assigneeAgentId)
+    ) {
+      throw new Error(`Unknown agent ${patch.assigneeAgentId}`);
+    }
     const next: Task = TaskSchema.parse({
       ...current,
       ...stripUndefined(patch),
@@ -174,16 +183,18 @@ export class TaskService {
       status: task.status,
       startedAt: task.startedAt,
     };
+    const dispatchSeq = (task.dispatchSeq ?? 0) + 1;
     const assigned: Task = {
       ...task,
       assigneeAgentId: agentId,
       status: 'assigned',
       startedAt: task.startedAt ?? Date.now(),
+      dispatchSeq,
       updatedAt: Date.now(),
     };
     this.write(assigned);
     try {
-      await this.dispatch(assigned);
+      await this.dispatch(assigned, dispatchSeq);
       this.deps.events.append({
         id: newId(),
         ts: Date.now(),
@@ -194,8 +205,13 @@ export class TaskService {
       });
     } catch (err) {
       if (err instanceof TaskHttpError) {
+        if (err.code === 'assign_superseded') return this.mustGet(taskId);
         const now = this.mustGet(taskId);
-        if (now.assigneeAgentId === agentId && now.status === 'assigned') {
+        if (
+          now.assigneeAgentId === agentId &&
+          now.status === 'assigned' &&
+          now.dispatchSeq === dispatchSeq
+        ) {
           this.write({
             ...now,
             ...rollback,
@@ -274,10 +290,12 @@ export class TaskService {
     const wt = agent.worktree;
     if (!wt) throw new TaskHttpError(400, 'no_worktree', 'no worktree');
     const st = await this.deps.worktrees.status(wt, targetBranch);
-    const hookCheck = await this.deps.worktrees.hookFilesInMerge(
+    const branchSha = await this.deps.worktrees.headSha(wt.path);
+    const hookCheck = await this.deps.worktrees.hookConsentSnapshot(
       sourceRoot,
-      wt.branch,
+      wt.path,
       targetBranch,
+      branchSha,
     );
     if (!hookCheck.ok) {
       throw new TaskHttpError(409, 'hooks_verify_failed', hookCheck.message);
@@ -307,6 +325,7 @@ export class TaskService {
       ...(hooksWarning ? { hooksWarning } : {}),
       ...(runnerFiles.length ? { runnerFiles } : {}),
       ...(runnerWarning ? { runnerWarning } : {}),
+      branchSha,
     };
   }
 
@@ -350,8 +369,7 @@ export class TaskService {
             targetBranch,
             strategy,
             message,
-            input.allowHookChanges ?? false,
-            input.skipHooks ?? false,
+            input,
           );
         } finally {
           // Clear before the lock is released so a snapshot waiting on it does not see a stale flag.
@@ -385,11 +403,11 @@ export class TaskService {
     targetBranch: string,
     strategy: MergeStrategy,
     message: string,
-    allowHookChanges: boolean,
-    skipHooks: boolean,
+    input: MergeTask,
   ): Promise<Task> {
     const busyNow = this.runtimeBusy(agent.id);
     if (busyNow) throw new TaskHttpError(409, 'agent_busy', busyNow);
+    await this.assertMergeConsent(wt, sourceRoot, targetBranch, input);
     try {
       await this.deps.worktrees.commitAll(wt, message);
     } catch (err) {
@@ -404,7 +422,11 @@ export class TaskService {
       targetBranch,
       strategy,
       message,
-      { allowHookChanges, skipHooks },
+      {
+        allowHookChanges: input.allowHookChanges ?? false,
+        skipHooks: input.skipHooks ?? false,
+        consentedHookFiles: input.consentedHookFiles ?? [],
+      },
     );
     if (!outcome.ok) {
       if (outcome.code === 'conflict' || outcome.code === 'failed') {
@@ -583,7 +605,68 @@ export class TaskService {
     }
   }
 
-  private async dispatch(task: Task): Promise<void> {
+  private async assertMergeConsent(
+    wt: NonNullable<Agent['worktree']>,
+    sourceRoot: string,
+    targetBranch: string,
+    input: MergeTask,
+  ): Promise<void> {
+    if (!input.expectedBranchSha) {
+      throw new TaskHttpError(
+        400,
+        'missing_preview',
+        'Refresh the merge preview, then merge again.',
+      );
+    }
+    const head = await this.deps.worktrees.headSha(wt.path);
+    if (head !== input.expectedBranchSha) {
+      throw new TaskHttpError(
+        409,
+        'merge_preview_stale',
+        'The branch changed after the preview. Refresh the merge preview and try again.',
+      );
+    }
+    const dirty = await this.deps.worktrees.isDirty(wt.path);
+    if (input.previewDirty === false && dirty) {
+      throw new TaskHttpError(
+        409,
+        'merge_preview_stale',
+        'The worktree has new uncommitted changes since the preview. Refresh the merge preview and try again.',
+      );
+    }
+    if (input.previewDirty === true && !dirty) {
+      throw new TaskHttpError(
+        409,
+        'merge_preview_stale',
+        'The worktree no longer matches the preview. Refresh the merge preview and try again.',
+      );
+    }
+    const hookCheck = await this.deps.worktrees.hookConsentSnapshot(
+      sourceRoot,
+      wt.path,
+      targetBranch,
+      head,
+    );
+    if (!hookCheck.ok) {
+      throw new TaskHttpError(409, 'hooks_verify_failed', hookCheck.message);
+    }
+    const consented = input.consentedHookFiles ?? [];
+    if (!hookFileSetsEqual(hookCheck.files, consented)) {
+      throw new TaskHttpError(409, 'hooks_changed', 'Hook files changed since the preview.', {
+        hookFiles: hookCheck.files,
+      });
+    }
+    if (hookCheck.files.length && !input.allowHookChanges && !input.skipHooks) {
+      throw new TaskHttpError(
+        409,
+        'hooks_changed',
+        'This merge changes git hook scripts. Allow hook changes or merge without hooks.',
+        { hookFiles: hookCheck.files },
+      );
+    }
+  }
+
+  private async dispatch(task: Task, dispatchSeq?: number): Promise<void> {
     if (!task.assigneeAgentId) return;
     if (this.merging.has(task.assigneeAgentId)) return;
     await this.snapshotForReview(task);
@@ -596,6 +679,20 @@ export class TaskService {
     if (this.merging.has(latest.assigneeAgentId)) return;
     this.syncReadDirs(latest.assigneeAgentId);
     await Promise.resolve(this.deps.manager.sendPrompt(latest.assigneeAgentId, text, latest.id));
+    if (dispatchSeq !== undefined) {
+      const after = this.get(task.id);
+      if (
+        !after ||
+        after.dispatchSeq !== dispatchSeq ||
+        after.assigneeAgentId !== latest.assigneeAgentId
+      ) {
+        throw new TaskHttpError(
+          409,
+          'assign_superseded',
+          'A newer assign superseded this dispatch.',
+        );
+      }
+    }
   }
 
   private async promptFor(task: Task): Promise<string> {

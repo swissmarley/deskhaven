@@ -450,6 +450,36 @@ describe('merging a worktree branch', { timeout: 20_000 }, () => {
     fs.rmSync(data, { recursive: true, force: true });
   });
 
+  it('detects hook edits through a symlink hook entry in the hooks directory', async () => {
+    const repo = tmpRepo();
+    identity(repo);
+    git(repo, 'config', 'core.hooksPath', '.husky');
+    const script = path.join(repo, 'scripts', 'run.sh');
+    fs.mkdirSync(path.dirname(script), { recursive: true });
+    fs.writeFileSync(script, '#!/bin/sh\nexit 0\n');
+    fs.chmodSync(script, 0o755);
+    fs.mkdirSync(path.join(repo, '.husky'));
+    fs.symlinkSync(
+      path.relative(path.join(repo, '.husky'), script),
+      path.join(repo, '.husky', 'pre-commit'),
+    );
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'symlink hook entry');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhaven-data-'));
+    const svc = new WorktreeService(data);
+    const wt = await svc.create(repo, 'hooklink99999', 'Link');
+    const target = path.join(wt.path, 'scripts', 'run.sh');
+    fs.writeFileSync(target, '#!/bin/sh\necho evil\n');
+    fs.chmodSync(target, 0o755);
+    await svc.commitAll(wt, 'change hook target');
+    const blocked = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'nope', {
+      consentedHookFiles: [],
+    });
+    expect(blocked).toMatchObject({ ok: false, code: 'hooks_changed' });
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+
   it('refuses a merge that changes files under the hooks directory', async () => {
     const repo = tmpRepo();
     identity(repo);
@@ -462,11 +492,14 @@ describe('merging a worktree branch', { timeout: 20_000 }, () => {
     fs.writeFileSync(path.join(hooks, 'post-merge'), '#!/bin/sh\necho merge-hook\n');
     fs.chmodSync(path.join(hooks, 'post-merge'), 0o755);
     await svc.commitAll(wt, 'add hook');
-    const blocked = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'nope');
+    const blocked = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'nope', {
+      consentedHookFiles: [],
+    });
     expect(blocked).toMatchObject({ ok: false, code: 'hooks_changed' });
     if (!blocked.ok) expect(blocked.hookFiles?.length).toBeGreaterThan(0);
     const allowed = await svc.mergeInto(repo, wt.branch, 'main', 'squash', 'ok', {
       allowHookChanges: true,
+      consentedHookFiles: blocked.ok ? [] : (blocked.hookFiles ?? []),
     });
     expect(allowed.ok).toBe(true);
     fs.rmSync(repo, { recursive: true, force: true });

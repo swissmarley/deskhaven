@@ -43,7 +43,13 @@ export function hookFilesFromDiffNames(
   for (const name of names) {
     if (pathMatchesHookPrefix(name, prefixes, ignoreCase)) out.push(name);
   }
-  return out;
+  return [...new Set(out)].sort();
+}
+
+export function hookFileSetsEqual(a: readonly string[], b: readonly string[]): boolean {
+  const left = [...a].sort();
+  const right = [...b].sort();
+  return left.length === right.length && left.every((v, i) => v === right[i]);
 }
 
 export async function collectHookFilesInMerge(
@@ -63,29 +69,25 @@ export async function collectHookFilesInMerge(
   }
 }
 
-/** Paths that may run hook-adjacent code without changing files under core.hooksPath. */
-export const HOOK_RUNNER_PATHS = [
-  'package.json',
-  '.lintstagedrc',
-  '.lintstagedrc.json',
-  '.lintstagedrc.yaml',
-  '.lintstagedrc.yml',
-  '.lintstagedrc.js',
-  '.lintstagedrc.cjs',
-  '.lintstagedrc.mjs',
-  'lefthook.yml',
-  'lefthook.yaml',
-  '.pre-commit-config.yaml',
-  '.pre-commit-config.yml',
-] as const;
+/** Basenames (or full relative paths) of files that can change what hooks run. */
+export const HOOK_RUNNER_BASENAME =
+  /^(?:package\.json|\.lintstagedrc(?:\..+)?|lint-staged\.config\..+|lefthook(?:-local)?\.(?:ya?ml)|\.lefthook(?:\..*)?|commitlint\.config\..+|\.commitlintrc(?:\..+)?|\.huskyrc(?:\..+)?|simple-git-hooks\.(?:ya?ml|json)|\.pre-commit-config\.(?:ya?ml|yml))$/i;
+
+export function isHookRunnerPath(filePath: string, ignoreCase: boolean): boolean {
+  const norm = normPath(filePath);
+  const parts = norm.split('/');
+  const base = parts.at(-1) ?? '';
+  const baseCmp = ignoreCase ? base.toLowerCase() : base;
+  if (baseCmp === 'package.json') return true;
+  if (norm.includes('/.config/lefthook.')) return true;
+  if (norm.includes('/.lefthook/')) return true;
+  return HOOK_RUNNER_BASENAME.test(baseCmp);
+}
 
 export function hookRunnerFilesInDiff(names: string[], ignoreCase: boolean): string[] {
-  const wanted = new Set(HOOK_RUNNER_PATHS.map((p) => (ignoreCase ? p.toLowerCase() : p)));
   const out: string[] = [];
   for (const name of names) {
-    const base = normPath(name);
-    const cmp = ignoreCase ? base.toLowerCase() : base;
-    if (wanted.has(cmp)) out.push(name);
+    if (isHookRunnerPath(name, ignoreCase)) out.push(name);
   }
-  return out;
+  return [...new Set(out)].sort();
 }

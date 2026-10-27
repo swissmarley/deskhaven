@@ -108,6 +108,9 @@ export const api = {
       message?: string;
       allowHookChanges?: boolean;
       skipHooks?: boolean;
+      expectedBranchSha?: string;
+      consentedHookFiles?: string[];
+      previewDirty?: boolean;
     } = {},
   ) => call<{ task: Task }>('POST', `/api/tasks/${id}/merge`, body),
   resolveMerge: (id: string) =>

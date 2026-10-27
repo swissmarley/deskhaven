@@ -208,6 +208,68 @@ describe('TaskService', () => {
     expect(tasks.get(t.id)?.resultSummary).toBe('halfway there');
   });
 
+  it('does not roll back a successful second assign to the same agent', async () => {
+    const { db } = openDb(':memory:');
+    const hub = new WsHub();
+    const events = new EventStore(db, hub);
+    const agentA = AgentSchema.parse({
+      id: 'a1',
+      name: 'Ada',
+      avatar: {
+        skin: '#fff',
+        hair: '#000',
+        hairStyle: 'short',
+        shirt: '#f00',
+        pants: '#00f',
+        accessory: 'none',
+      },
+      rolePresetId: 'engineer',
+      systemPrompt: '',
+      model: 'm',
+      tools: null,
+      allowedTools: [],
+      permissionMode: 'default',
+      workdir: process.cwd(),
+      worktree: null,
+      sessionId: null,
+      status: 'idle',
+      roomId: 'lobby',
+      deskId: null,
+      budget: {},
+      currentTaskId: null,
+      usage: emptyUsage(),
+      lastError: null,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    let calls = 0;
+    const manager = {
+      sendPrompt: () => {
+        calls += 1;
+        if (calls === 1) throw new TaskHttpError(409, 'agent_busy', 'stale');
+      },
+      setExtraReadDirs: () => {},
+      get: () => undefined,
+    } as unknown as AgentManager;
+    const agents = {
+      get: (id: string) => (id === 'a1' ? agentA : undefined),
+    } as unknown as AgentService;
+    const worktrees = { changedFiles: async () => [] } as unknown as WorktreeService;
+    const tasks = new TaskService(db, hub, {
+      manager,
+      agents,
+      events,
+      worktrees,
+      log: { warn() {} },
+    });
+    const t = await tasks.create({ title: 'Race', prompt: 'p' });
+    const results = await Promise.allSettled([tasks.assign(t.id, 'a1'), tasks.assign(t.id, 'a1')]);
+    expect(results.some((r) => r.status === 'rejected')).toBe(true);
+    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+    expect(tasks.get(t.id)).toMatchObject({ assigneeAgentId: 'a1', status: 'assigned' });
+    expect(calls).toBe(2);
+  });
+
   it('assign rollback is skipped when the task was reassigned before dispatch failed', async () => {
     const { db } = openDb(':memory:');
     const hub = new WsHub();
@@ -243,16 +305,16 @@ describe('TaskService', () => {
       updatedAt: 1,
     });
     const agentB = AgentSchema.parse({ ...agentA, id: 'a2', name: 'Bob' });
-    let releaseSlow: () => void = () => {};
-    const slowGate = new Promise<void>((resolve) => {
-      releaseSlow = resolve;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
     const sent: string[] = [];
     const manager = {
       sendPrompt: (agentId: string) => {
         sent.push(agentId);
         if (agentId === 'a1') {
-          return slowGate.then(() => {
+          return gate.then(() => {
             throw new TaskHttpError(409, 'agent_busy', 'stale');
           });
         }
@@ -276,11 +338,21 @@ describe('TaskService', () => {
     const t = await tasks.create({ title: 'Race', prompt: 'p' });
     const slow = tasks.assign(t.id, 'a1');
     await new Promise<void>((r) => setImmediate(r));
-    await tasks.assign(t.id, 'a2');
-    releaseSlow();
+    const fast = tasks.assign(t.id, 'a2');
+    release();
     await expect(slow).rejects.toMatchObject({ code: 'agent_busy' });
+    await fast;
     expect(tasks.get(t.id)?.assigneeAgentId).toBe('a2');
     expect(sent).toEqual(['a1', 'a2']);
+  });
+
+  it('update with unknown assignee does not change the title', async () => {
+    const { tasks } = setup();
+    const t = await tasks.create({ title: 'Keep me', prompt: 'p' });
+    await expect(tasks.update(t.id, { assigneeAgentId: 'nope', title: 'Lost' })).rejects.toThrow(
+      /Unknown agent/,
+    );
+    expect(tasks.get(t.id)?.title).toBe('Keep me');
   });
 
   it('update with assignee and title writes both before dispatch', async () => {

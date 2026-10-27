@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   collectHookFilesInMerge,
+  hookFileSetsEqual,
   hookFilesFromDiffNames,
+  hookRunnerFilesInDiff,
+  isHookRunnerPath,
   pathMatchesHookPrefix,
   splitNameOnlyZ,
 } from '../src/worktree/hook-detect.js';
@@ -25,6 +28,11 @@ describe('hook-detect', () => {
     ]);
   });
 
+  it('compares hook file sets irrespective of order', () => {
+    expect(hookFileSetsEqual(['b', 'a'], ['a', 'b'])).toBe(true);
+    expect(hookFileSetsEqual(['a'], ['a', 'b'])).toBe(false);
+  });
+
   it('fails closed when the diff cannot be loaded', async () => {
     const result = await collectHookFilesInMerge(
       async () => {
@@ -38,5 +46,17 @@ describe('hook-detect', () => {
       code: 'verify_failed',
       message: 'Could not verify whether this merge changes git hook scripts.',
     });
+  });
+
+  it('detects hook runner config paths by basename patterns', () => {
+    expect(isHookRunnerPath('apps/web/package.json', false)).toBe(true);
+    expect(isHookRunnerPath('lint-staged.config.js', false)).toBe(true);
+    expect(isHookRunnerPath('.lefthook.yml', false)).toBe(true);
+    expect(isHookRunnerPath('lefthook-local.yaml', false)).toBe(true);
+    expect(isHookRunnerPath('.config/lefthook.yml', false)).toBe(true);
+    expect(isHookRunnerPath('simple-git-hooks.json', false)).toBe(true);
+    expect(hookRunnerFilesInDiff(['commitlint.config.cjs', 'README.md'], false)).toEqual([
+      'commitlint.config.cjs',
+    ]);
   });
 });
