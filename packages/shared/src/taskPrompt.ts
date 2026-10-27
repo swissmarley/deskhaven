@@ -1,4 +1,4 @@
-import type { RolePreset, Task } from './dto.js';
+import type { Agent, PermissionMode, RolePreset, Task } from './dto.js';
 
 /** Appended to implementation tasks (and the Engineer preset). Keep preset JSON in sync. */
 export const TASK_SCOPE_RULE =
@@ -6,11 +6,20 @@ export const TASK_SCOPE_RULE =
 
 const EDIT_TOOL_PREFIXES = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
-/** True when the preset cannot edit repository files (Reviewer, QA, Architect, …). */
-export function presetIsReadOnly(preset: RolePreset): boolean {
-  return !preset.allowedTools.some((t) =>
-    EDIT_TOOL_PREFIXES.some((prefix) => t === prefix || t.startsWith(`${prefix}(`)),
-  );
+function allowsEditTool(name: string): boolean {
+  return EDIT_TOOL_PREFIXES.some((prefix) => name === prefix || name.startsWith(`${prefix}(`));
+}
+
+/** Whether the agent's configured tools can modify files in the workdir (not preset id). */
+export function agentCanEdit(
+  tools: string[] | null,
+  allowedTools: string[],
+  _permissionMode: PermissionMode,
+): boolean {
+  const allowedEdit = allowedTools.some(allowsEditTool);
+  if (!allowedEdit) return false;
+  if (tools === null) return true;
+  return tools.some(allowsEditTool);
 }
 
 function summaryFormat(readOnlyOrReview: boolean): string {
@@ -18,7 +27,7 @@ function summaryFormat(readOnlyOrReview: boolean): string {
     return [
       'When you are done, end with a short summary with these sections:',
       '- **Findings**',
-      '- **Out-of-scope**',
+      '- **Out-of-scope changes (not asked for by the task)** (write "None" if none)',
       '- **Verdict**',
     ].join('\n');
   }
@@ -33,8 +42,15 @@ function summaryFormat(readOnlyOrReview: boolean): string {
 }
 
 /** Closing instructions for a dispatched task; the format block is always last in the full prompt. */
-export function taskTail(task: Task, assigneePreset?: RolePreset): string {
-  const readOnlyOrReview =
-    Boolean(task.reviewTarget) || (assigneePreset && presetIsReadOnly(assigneePreset));
-  return summaryFormat(Boolean(readOnlyOrReview));
+export function taskTail(
+  task: Task,
+  assignee?: Pick<Agent, 'tools' | 'allowedTools' | 'permissionMode'> | null,
+  assigneePreset?: RolePreset | null,
+): string {
+  const isManager = assigneePreset?.manager === true;
+  const canEdit = assignee
+    ? agentCanEdit(assignee.tools, assignee.allowedTools, assignee.permissionMode)
+    : true;
+  const reviewStyle = Boolean(task.reviewTarget) || (!isManager && Boolean(assignee) && !canEdit);
+  return summaryFormat(reviewStyle);
 }

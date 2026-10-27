@@ -30,9 +30,46 @@ export const ENGINEER_PRESET_LEGACY: RolePreset = RolePresetSchema.parse({
   permissionMode: 'default',
 });
 
-export const ENGINEER_PRESET_LEGACY_HASH = hashRolePreset(ENGINEER_PRESET_LEGACY);
+/** Manager built-in on main before PR #4 model/settings changes (hash pinned for migration). */
+export const MANAGER_PRESET_MAIN: RolePreset = RolePresetSchema.parse({
+  id: 'manager',
+  name: 'Manager',
+  description:
+    'Breaks a goal into tasks and delegates them to employees through the task board. Never edits code.',
+  systemPrompt:
+    'You are the Manager of this office. When given a goal, first inspect the repository briefly, then break the goal into small, independent tasks with clear acceptance criteria and create them with the task tools, assigning each to the most suitable employee (list them first). Delegation is flat: you never do the implementation yourself and never create another manager. Track progress with task_status and summarise results when the work is done.',
+  model: 'claude-opus-5-5',
+  tools: [
+    'Read',
+    'Grep',
+    'Glob',
+    'LS',
+    'TodoWrite',
+    'mcp__deskhaven__list_agents',
+    'mcp__deskhaven__create_task',
+    'mcp__deskhaven__assign_task',
+    'mcp__deskhaven__task_status',
+  ],
+  allowedTools: [
+    'Read',
+    'Grep',
+    'Glob',
+    'LS',
+    'TodoWrite',
+    'mcp__deskhaven__list_agents',
+    'mcp__deskhaven__create_task',
+    'mcp__deskhaven__assign_task',
+    'mcp__deskhaven__task_status',
+  ],
+  permissionMode: 'default',
+  manager: true,
+});
 
-/** Built-in ids that may be auto-migrated when the DB still holds an unmodified legacy copy. */
-export const BUILTIN_PRESET_LEGACY_HASH: Partial<Record<string, string>> = {
-  engineer: ENGINEER_PRESET_LEGACY_HASH,
+export const ENGINEER_PRESET_LEGACY_HASH = hashRolePreset(ENGINEER_PRESET_LEGACY);
+export const MANAGER_PRESET_MAIN_HASH = hashRolePreset(MANAGER_PRESET_MAIN);
+
+/** Prior shipped hashes per built-in id; auto-migrate when the DB row still matches one of them. */
+export const BUILTIN_PRESET_LEGACY_HASH: Record<string, readonly string[]> = {
+  engineer: [ENGINEER_PRESET_LEGACY_HASH],
+  manager: [MANAGER_PRESET_MAIN_HASH],
 };

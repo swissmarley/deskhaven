@@ -971,11 +971,11 @@ export class TaskService {
 export function buildTaskPrompt(
   task: Task,
   review?: { diff: string; files: string[] },
-  assignee?: Pick<Agent, 'rolePresetId'> | null,
+  assignee?: Agent | null,
 ): string {
   const assigneePreset = assignee ? presetById(assignee.rolePresetId) : undefined;
   const head = `# Task: ${task.title}\n\n${task.prompt}`;
-  const tail = taskTail(task, assigneePreset);
+  const tail = taskTail(task, assignee, assigneePreset);
   const target = task.reviewTarget;
   if (!target) return `${head}\n\n${tail}`;
   const files = review?.files ?? [];
@@ -998,7 +998,7 @@ Diff:
 \`\`\`diff
 ${diff || '(empty)'}
 \`\`\`
-${truncated ? '\nThe diff above is truncated. Read the files from the path.\n' : ''}`;
+${truncated ? '\nThe diff above is truncated. Read the files from the path.' : ''}`;
   return `${head}\n\n${reviewBlock}\n\n${tail}`;
 }
 

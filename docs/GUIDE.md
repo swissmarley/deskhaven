@@ -161,11 +161,12 @@ restart the server.
 
 Roles (editable JSON under Settings → Role presets):
 
-Deskhaven ships built-in role JSON in the app bundle. On startup, an unchanged copy of an older
-built-in (for example Engineer) is upgraded automatically; if you edited that preset, Settings shows
-**Built-in updated – Reset to apply** until you reset or save your version. Every task also carries
-scope rules in its prompt. Agents already hired keep the `systemPrompt` copied when they were created;
-change them under **Edit** or hire again to use an updated preset.
+Deskhaven ships built-in role JSON in the app bundle. On startup, a built-in row that still matches an
+older shipped hash is upgraded automatically. Settings shows **Built-in updated – Reset to apply** when
+the app bundle has a newer built-in than the `base_hash` your copy was last synced from (saving your
+edits in Settings marks them as synced with the current shipped version; Reset restores the bundle JSON).
+Every task also carries scope rules in its prompt. Agents already hired keep the `systemPrompt` copied
+when they were created; change them under **Edit** or hire again to use an updated preset.
 
 | Role | What it is for |
 |---|---|

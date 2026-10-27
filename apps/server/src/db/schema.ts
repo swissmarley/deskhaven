@@ -72,6 +72,8 @@ export const rolePresets = sqliteTable('role_presets', {
   id: text('id').primaryKey(),
   json: text('json').notNull(),
   builtin: integer('builtin').notNull(),
+  /** Hash of the shipped built-in this row was seeded, reset, migrated, or saved against. */
+  baseHash: text('base_hash'),
 });
 
 export const usageDaily = sqliteTable(

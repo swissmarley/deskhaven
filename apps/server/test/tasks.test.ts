@@ -40,7 +40,7 @@ function setup() {
     systemPrompt: '',
     model: 'm',
     tools: null,
-    allowedTools: [],
+    allowedTools: ['Read', 'Edit', 'Write'],
     permissionMode: 'default',
     workdir: process.cwd(),
     worktree: null,
@@ -133,6 +133,7 @@ describe('buildTaskPrompt', () => {
     const text = buildTaskPrompt(task, { diff: '+line\n', files: ['a.py'] });
     expect(text).not.toContain('Change only what this task asks for');
     expect(text).toContain('**Findings**');
+    expect(text).toContain('Out-of-scope changes (not asked for by the task)');
     expect(text).toContain('**Verdict**');
     expect(text.indexOf('## Review target')).toBeLessThan(text.indexOf('**Findings**'));
   });
