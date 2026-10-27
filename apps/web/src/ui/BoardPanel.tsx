@@ -15,8 +15,8 @@ import { api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
 import { AvatarPreview } from './AvatarPicker.js';
 import { fmtUsd } from './eventText.js';
-import { reviewerCanWrite } from './merge.js';
 import { plainTextFromMarkdown } from './markdownPlain.js';
+import { reviewerCanWrite } from './merge.js';
 import { TaskDetail } from './TaskDetail.js';
 import { getWorldHandle } from './worldHandle.js';
 
