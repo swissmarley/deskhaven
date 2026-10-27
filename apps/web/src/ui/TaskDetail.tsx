@@ -11,6 +11,7 @@ import { ApiError, api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
 import { fmtTime, fmtUsd } from './eventText.js';
 import { manualMergeCommands, reviewerCanWrite, showMergeControls } from './merge.js';
+import { TaskMarkdown } from './TaskMarkdown.js';
 
 export function TaskDetail({
   taskId,
