@@ -1,7 +1,5 @@
 import {
-  BUILTIN_PRESET_LEGACY_HASH,
   BUILTIN_PRESETS,
-  hashRolePreset,
   type RolePreset,
   type RolePresetListItem,
   RolePresetSchema,
@@ -9,6 +7,7 @@ import {
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { rolePresets } from '../db/schema.js';
+import { BUILTIN_PRESET_LEGACY_HASH, hashRolePreset } from './presetBuiltin.js';
 
 function shippedBuiltin(id: string): RolePreset | undefined {
   return BUILTIN_PRESETS.find((p) => p.id === id);

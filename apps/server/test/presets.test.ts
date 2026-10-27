@@ -1,13 +1,12 @@
-import {
-  BUILTIN_PRESETS,
-  ENGINEER_PRESET_LEGACY,
-  ENGINEER_PRESET_LEGACY_HASH,
-  hashRolePreset,
-  type RolePreset,
-} from '@deskhaven/shared';
+import { BUILTIN_PRESETS, type RolePreset } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../src/db/client.js';
 import { rolePresets } from '../src/db/schema.js';
+import {
+  ENGINEER_PRESET_LEGACY,
+  ENGINEER_PRESET_LEGACY_HASH,
+  hashRolePreset,
+} from '../src/presets/presetBuiltin.js';
 import { PresetService } from '../src/presets/service.js';
 
 function engineerShipped(): RolePreset {
