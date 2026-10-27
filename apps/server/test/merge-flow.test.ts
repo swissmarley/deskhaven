@@ -854,6 +854,18 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     expect(preview.json().hookFiles).toContain('.githooks/pre-commit');
   });
 
+  it('lists uncommitted hook runner configs in the preview', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'UncommittedRunner', true)).json();
+    fs.writeFileSync(
+      path.join(agent.worktree.path, 'lefthook.toml'),
+      '[pre-commit]\ncommands = {}\n',
+    );
+    const id = await reviewTask(agent.id, 'Runner preview');
+    const preview = await req({ method: 'GET', url: `/api/tasks/${id}/merge-preview` });
+    expect(preview.json().runnerFiles).toContain('lefthook.toml');
+  });
+
   it('merges with skipHooks without running hook scripts', async () => {
     const repo = tmpRepo();
     git(repo, 'config', 'core.hooksPath', '.husky');
