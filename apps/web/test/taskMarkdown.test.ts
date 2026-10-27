@@ -19,4 +19,25 @@ describe('TaskMarkdown', () => {
     expect(html.toLowerCase()).not.toContain('<script');
     expect(html).toContain('alert');
   });
+
+  it('renders images as external links, not img elements', () => {
+    const html = renderToStaticMarkup(
+      createElement(TaskMarkdown, {
+        content: '![tracker](https://evil.example/pixel.png)',
+      }),
+    );
+    expect(html.toLowerCase()).not.toContain('<img');
+    expect(html).toContain('href="https://evil.example/pixel.png"');
+    expect(html).toContain('[image: tracker]');
+    expect(html).toContain('rel="noopener noreferrer nofollow"');
+  });
+
+  it('forces safe rel and target on markdown links', () => {
+    const html = renderToStaticMarkup(
+      createElement(TaskMarkdown, { content: '[docs](https://example.com/docs)' }),
+    );
+    expect(html).toContain('href="https://example.com/docs"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer nofollow"');
+  });
 });
