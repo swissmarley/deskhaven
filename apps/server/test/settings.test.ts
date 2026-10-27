@@ -1,4 +1,4 @@
-import { MAX_PERMISSION_TIMEOUT_MS } from '@deskhaven/shared';
+import { MAX_PERMISSION_TIMEOUT_MS, UNKNOWN_MODEL_CODE } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { PermissionBroker } from '../src/agent/permission-broker.js';
 import { openDb } from '../src/db/client.js';
@@ -44,7 +44,10 @@ describe('model settings', () => {
       for (const payload of [{ defaultModel: 'pippo' }, { managerModel: 'pippo' }]) {
         const res = await req({ method: 'PATCH', url: '/api/settings', payload });
         expect(res.statusCode, JSON.stringify(payload)).toBe(400);
-        expect(res.json().error).toMatch(/Unknown model: pippo/);
+        expect(res.json()).toMatchObject({
+          error: 'Unknown model: pippo',
+          code: UNKNOWN_MODEL_CODE,
+        });
       }
       expect((await req({ method: 'GET', url: '/api/settings' })).json()).toEqual(before);
     } finally {

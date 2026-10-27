@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AgentStatusSchema } from './events.js';
+import { isKnownModel } from './models.js';
 
 /** Permission modes Deskhaven exposes. `bypassPermissions` is deliberately absent. */
 export const PermissionModeSchema = z.enum(['default', 'acceptEdits', 'plan', 'dontAsk']);
@@ -92,12 +93,39 @@ export function agentCwd(agent: Pick<Agent, 'workdir' | 'worktree'>): string {
   return wt.subdir ? `${wt.path.replace(/[\\/]+$/, '')}/${wt.subdir}` : wt.path;
 }
 
+const KnownModelIdSchema = z
+  .string()
+  .trim()
+  .min(1, 'Model must not be empty')
+  .refine(isKnownModel, { message: 'Unknown model' });
+
+/** Optional explicit model on hire; empty/whitespace is rejected. */
+const AgentHireModelSchema = KnownModelIdSchema.optional();
+
+/** Clear to Default (`null` / `''`) or set a known id. */
+const AgentPatchModelSchema = z
+  .union([z.string(), z.null()])
+  .optional()
+  .transform((v) => {
+    if (v === undefined) return undefined;
+    if (v === null) return null;
+    const t = v.trim();
+    if (t === '') return null;
+    return t;
+  })
+  .pipe(
+    z.union([
+      z.undefined(),
+      z.null(),
+      z.string().min(1).refine(isKnownModel, { message: 'Unknown model' }),
+    ]),
+  );
+
 export const CreateAgentSchema = AgentSchema.pick({
   name: true,
   avatar: true,
   rolePresetId: true,
   systemPrompt: true,
-  model: true,
   tools: true,
   allowedTools: true,
   permissionMode: true,
@@ -106,7 +134,6 @@ export const CreateAgentSchema = AgentSchema.pick({
 })
   .partial({
     systemPrompt: true,
-    model: true,
     tools: true,
     allowedTools: true,
     permissionMode: true,
@@ -116,14 +143,19 @@ export const CreateAgentSchema = AgentSchema.pick({
   .extend({
     /** Whitespace-only names are rejected; surrounding whitespace is trimmed. */
     name: z.string().trim().min(1, 'Name must not be empty').max(80),
+    model: AgentHireModelSchema,
     useWorktree: z.boolean().default(false),
     roomId: z.string().optional(),
   });
 export type CreateAgent = z.infer<typeof CreateAgentSchema>;
 
-export const UpdateAgentSchema = CreateAgentSchema.omit({ useWorktree: true })
+export const UpdateAgentSchema = CreateAgentSchema.omit({ useWorktree: true, model: true })
   .partial()
-  .extend({ deskId: z.string().nullable().optional() });
+  .extend({
+    deskId: z.string().nullable().optional(),
+    model: AgentPatchModelSchema,
+  })
+  .partial({ model: true });
 export type UpdateAgent = z.infer<typeof UpdateAgentSchema>;
 
 export const TaskStatusSchema = z.enum([

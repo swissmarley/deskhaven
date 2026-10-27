@@ -26,7 +26,7 @@ risk list. The milestone plan and open questions live in [PLAN.md](PLAN.md).
 | Pathfinding | Own A\* on the tile grid (8-dir, no corner cutting), ~80 lines, unit-tested | Grid is ≤ 30×30; a dependency would be heavier than the code |
 | Delegation | Manager agent gets an **in-process MCP server** (`createSdkMcpServer` + `tool()`) with `create_task`/`assign_task`/`list_agents`/`task_status`; employees never get these tools | Structured, flat, one level — no text parsing, and the SDK can't nest subagents beyond its own limits anyway |
 | Data dir | `~/.deskhaven/` (SQLite db, git worktrees, logs); override with `DESKHAVEN_DATA_DIR` | Keeps the repo clean and makes "delete everything" one command |
-| Models | Employees default to `claude-sonnet-5-5`, Manager to `claude-opus-5-5`; per-agent override from `supportedModels()` | Agreed 2026-10-02; balances plan usage against delegation quality |
+| Models | Employees default to `claude-sonnet-5-5`, Manager to `claude-opus-5-5`; Settings can change defaults for new hires; per-agent override from `GET /api/models` | Agreed 2026-10-02; balances plan usage against delegation quality |
 | Ports | server `127.0.0.1:8787` (REST + `/ws`), web `5173` with Vite proxy to the server | Single origin in dev, no CORS; prod build is served by the server |
 
 ---

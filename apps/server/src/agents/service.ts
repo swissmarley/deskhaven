@@ -8,13 +8,13 @@ import {
   type Avatar,
   agentCwd,
   type CreateAgent,
-  DEFAULT_MODEL,
   DEFAULT_ROOM_ID,
   emptyUsage,
   newId,
   presetById,
   type RolePreset,
   type Room,
+  resolveAgentModel,
   type UpdateAgent,
   WORKDIR_ERROR_PREFIX,
 } from '@deskhaven/shared';
@@ -192,11 +192,7 @@ export class AgentService {
       avatar: input.avatar ?? randomAvatar(),
       rolePresetId: preset.id,
       systemPrompt: input.systemPrompt ?? preset.systemPrompt,
-      model:
-        input.model ??
-        preset.model ??
-        (preset.manager ? settings.managerModel : settings.defaultModel) ??
-        DEFAULT_MODEL,
+      model: resolveAgentModel(input.model, preset, settings),
       tools: input.tools === undefined ? preset.tools : input.tools,
       allowedTools: input.allowedTools ?? preset.allowedTools,
       permissionMode: input.permissionMode ?? preset.permissionMode,
@@ -220,6 +216,15 @@ export class AgentService {
   update(id: string, patch: UpdateAgent): Agent {
     const current = this.mustGet(id);
     if (patch.name !== undefined && !patch.name.trim()) throw new Error('Name must not be empty');
+    const rolePresetId = patch.rolePresetId ?? current.rolePresetId;
+    const preset = this.presetLookup(rolePresetId);
+    if (!preset) throw new Error(`Unknown role preset ${rolePresetId}`);
+    if (patch.model === null) {
+      patch = {
+        ...patch,
+        model: resolveAgentModel(undefined, preset, this.settings.get()),
+      };
+    }
     let fixesWorkdirError = false;
     if (patch.workdir !== undefined) {
       const workdir = validateWorkdir(patch.workdir);

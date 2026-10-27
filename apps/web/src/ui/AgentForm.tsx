@@ -71,6 +71,7 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
   }, []);
 
   const preset = presets.find((p) => p.id === rolePresetId);
+  const roleIsManager = Boolean(preset?.manager);
   const room = Object.values(rooms)[0];
   const desks = room?.furniture.filter((f) => f.kind === 'desk') ?? [];
   const deskOwner = (id: string) =>
@@ -106,7 +107,7 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
           avatar,
           rolePresetId,
           workdir,
-          model: model || agent.model,
+          model: model ? model : null,
           permissionMode: permissionMode || agent.permissionMode,
           systemPrompt,
           allowedTools: list(allowedTools),
@@ -206,7 +207,7 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
         Model
         <select value={model} onChange={(e) => setModel(e.target.value)}>
           <option value="">
-            {preset?.manager
+            {roleIsManager
               ? `Manager default (${settings?.managerModel ?? ''})`
               : `Default (${settings?.defaultModel ?? ''})`}
           </option>

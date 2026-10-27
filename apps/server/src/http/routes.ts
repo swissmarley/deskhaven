@@ -4,6 +4,7 @@ import {
   CreateTaskSchema,
   newId,
   ResolvePermissionSchema,
+  UNKNOWN_MODEL_CODE,
   UpdateAgentSchema,
   UpdateSettingsSchema,
   UpdateTaskSchema,
@@ -70,7 +71,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     for (const field of ['defaultModel', 'managerModel'] as const) {
       const id = body[field];
       if (id !== undefined && !known.has(id)) {
-        return reply.code(400).send({ error: `Unknown model: ${id}` });
+        return reply.code(400).send({ error: `Unknown model: ${id}`, code: UNKNOWN_MODEL_CODE });
       }
     }
     try {

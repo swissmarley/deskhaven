@@ -2,10 +2,9 @@ import path from 'node:path';
 import {
   APP_VERSION,
   ClientMessageSchema,
-  DEFAULT_MANAGER_MODEL,
-  DEFAULT_MODEL,
   DEFAULT_ROOM_ID,
   defaultRoom,
+  KNOWN_MODELS,
   type RolePreset,
   type Room,
   type Settings,
@@ -71,13 +70,6 @@ export interface AppContext {
   log: FastifyBaseLogger;
   security: Security;
 }
-
-export const KNOWN_MODELS = [
-  { id: DEFAULT_MODEL, label: 'Claude Sonnet 5.5 (default)' },
-  { id: DEFAULT_MANAGER_MODEL, label: 'Claude Opus 5.5' },
-  { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-];
 
 export async function buildApp(
   config: ServerConfig,

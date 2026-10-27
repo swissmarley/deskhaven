@@ -8,7 +8,9 @@ import {
   agentCwd,
   classifyTool,
   newId,
+  presetById,
   type Settings,
+  sessionModel,
 } from '@deskhaven/shared';
 import { workdirProblem } from '../agents/service.js';
 import type { ChildEnv } from '../auth/env.js';
@@ -140,7 +142,6 @@ export class AgentRuntime {
       return;
     }
     const auth = this.deps.auth();
-    const settings = this.deps.settings();
     const env = auth.childEnv(this.deps.baseEnv());
     const external = auth.mode === 'API_KEY' ? externalCredentials(env, this.cwd()) : null;
     if (auth.mode === 'API_KEY' && !env.ANTHROPIC_API_KEY && !external) {
@@ -152,7 +153,7 @@ export class AgentRuntime {
     }
     const cfg: SessionConfig = {
       cwd: this.cwd(),
-      model: this.agent.model || settings.defaultModel,
+      model: sessionModel(this.agent, presetById(this.agent.rolePresetId)),
       systemPromptAppend: this.agent.systemPrompt,
       tools: this.agent.tools,
       allowedTools: this.agent.allowedTools,

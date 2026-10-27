@@ -128,7 +128,7 @@ Rule: schema changes in `packages/shared` go through the lead first; consumers a
 ## Resolved questions (answered 2026-10-02)
 
 1. **Sample repo** — bundle `examples/sample-repo`, a tiny TypeScript CLI, copied into `~/.deskhaven/sample` on first run.
-2. **Default models** — employees `claude-sonnet-5-5`, Manager `claude-opus-5-5`; selectable per agent from `supportedModels()`.
+2. **Default models** — employees `claude-sonnet-5-5`, Manager `claude-opus-5-5`; Settings overrides apply to new hires; selectable per agent from `GET /api/models`.
 3. **Auth mode** — API_KEY stays the documented product default, but subscription mode must **always** be available to the user: the feature flag defaults on, Settings always lists both modes, and the first-run wizard preselects subscription when the probe says "logged in" and no API key exists (the only mode that works on such a machine). The policy notice and check date are shown next to the switch.
 4. **Permission ceiling** — `bypassPermissions` is never exposed; the maximum is `acceptEdits` plus per-role `allowedTools`. Engineer preset auto-allows Edit/Write and asks for Bash.
 5. **Development spending** — approved: verification runs from M2 on use **Sonnet** sessions in subscription mode against the user's Max plan (short prompts, concurrency 1–2). No API key will be provided for dev.
