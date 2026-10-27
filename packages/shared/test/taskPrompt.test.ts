@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { agentIsManagerRole } from '../src/models.js';
 import { presetById } from '../src/presets.js';
-import { agentCanEdit, agentIsManagerRole, taskTail } from '../src/taskPrompt.js';
+import { agentCanEdit, taskTail } from '../src/taskPrompt.js';
 
 const baseTask = {
   id: 't',
@@ -20,23 +21,20 @@ const baseTask = {
 };
 
 describe('agentCanEdit', () => {
-  it('uses tools only, not allowedTools', () => {
-    expect(agentCanEdit(['Read', 'Edit'], ['Read'], 'default')).toBe(true);
-    expect(agentCanEdit(['Read'], ['Edit'], 'default')).toBe(false);
+  it('uses tools only and ignores Bash', () => {
+    expect(agentCanEdit(['Read', 'Edit'])).toBe(true);
+    expect(agentCanEdit(['Read'])).toBe(false);
+    expect(agentCanEdit(['Read', 'Bash'])).toBe(false);
+    expect(agentCanEdit(['Bash(npm test:*)'])).toBe(false);
   });
 
   it('treats tools null as able to edit', () => {
-    expect(agentCanEdit(null, ['Read', 'Grep'], 'default')).toBe(true);
-  });
-
-  it('treats unrestricted Bash as able to edit', () => {
-    expect(agentCanEdit(['Read', 'Bash'], [], 'default')).toBe(true);
-    expect(agentCanEdit(['Bash(npm test:*)'], [], 'default')).toBe(false);
+    expect(agentCanEdit(null)).toBe(true);
   });
 });
 
 describe('taskTail', () => {
-  it('uses findings format for agents that cannot edit', () => {
+  it('uses findings format for reviewer', () => {
     const reviewer = presetById('reviewer');
     if (!reviewer) throw new Error('missing reviewer preset');
     const tail = taskTail(
@@ -51,6 +49,24 @@ describe('taskTail', () => {
     );
     expect(tail).toContain('**Findings**');
     expect(tail).not.toContain('Change only what this task asks for');
+  });
+
+  it('uses findings format for QA even with Bash in tools', () => {
+    const qa = presetById('qa');
+    if (!qa) throw new Error('missing qa preset');
+    expect(qa.taskStyle).toBe('review');
+    const tail = taskTail(
+      baseTask,
+      {
+        tools: qa.tools,
+        allowedTools: qa.allowedTools,
+        permissionMode: qa.permissionMode,
+        rolePresetId: 'qa',
+      },
+      presetById,
+    );
+    expect(tail).toContain('**Findings**');
+    expect(tail).not.toContain('**Changed**');
   });
 
   it('uses implementation format for managers even without edit tools', () => {
@@ -82,17 +98,14 @@ describe('taskTail', () => {
       manager: true,
     };
     const lookup = (id: string) => (id === 'cto' ? customManager : presetById(id));
-    expect(agentIsManagerRole('cto', lookup)).toBe(true);
-    const tail = taskTail(
-      baseTask,
-      {
-        tools: customManager.tools,
-        allowedTools: customManager.allowedTools,
-        permissionMode: customManager.permissionMode,
-        rolePresetId: 'cto',
-      },
-      lookup,
-    );
+    const assignee = {
+      tools: customManager.tools,
+      allowedTools: customManager.allowedTools,
+      permissionMode: customManager.permissionMode,
+      rolePresetId: 'cto',
+    };
+    expect(agentIsManagerRole(assignee, customManager)).toBe(true);
+    const tail = taskTail(baseTask, assignee, lookup);
     expect(tail).toContain('**Changed**');
   });
 

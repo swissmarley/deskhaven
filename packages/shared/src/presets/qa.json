@@ -16,5 +16,6 @@
     "Bash(pnpm lint:*)",
     "Bash(pnpm typecheck:*)"
   ],
-  "permissionMode": "default"
+  "permissionMode": "default",
+  "taskStyle": "review"
 }

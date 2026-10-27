@@ -1,4 +1,5 @@
-import type { Agent, PermissionMode, RolePreset, Task } from './dto.js';
+import type { Agent, RolePreset, Task } from './dto.js';
+import { agentIsManagerRole } from './models.js';
 import { presetById } from './presets.js';
 
 /** Appended to implementation tasks (and the Engineer preset). Keep preset JSON in sync. */
@@ -11,33 +12,23 @@ function allowsEditTool(name: string): boolean {
   return EDIT_TOOL_PREFIXES.some((prefix) => name === prefix || name.startsWith(`${prefix}(`));
 }
 
-/** Unrestricted shell access can change files even without explicit Edit tools. */
-function isUnrestrictedBash(name: string): boolean {
-  return name === 'Bash';
-}
-
-function toolGrantsEdit(name: string): boolean {
-  return allowsEditTool(name) || isUnrestrictedBash(name);
-}
-
 /**
- * Whether the agent session exposes tools that can modify the workdir.
- * Uses `tools` only (`allowedTools` is auto-approval policy). `tools: null` means the full surface.
+ * Whether the agent session exposes file-edit tools (Bash is excluded; it is not a reliable edit signal).
+ * `tools: null` means the full Claude Code surface.
  */
-export function agentCanEdit(
-  tools: string[] | null,
-  _allowedTools: string[],
-  _permissionMode: PermissionMode,
-): boolean {
+export function agentCanEdit(tools: string[] | null): boolean {
   if (tools === null) return true;
-  return tools.some(toolGrantsEdit);
+  return tools.some(allowsEditTool);
 }
 
 export type PresetLookup = (id: string) => RolePreset | undefined;
 
-/** True when the role preset (from DB or shipped) is marked as a manager. */
-export function agentIsManagerRole(rolePresetId: string, lookup: PresetLookup): boolean {
-  return lookup(rolePresetId)?.manager === true;
+function usesReviewTaskStyle(
+  assignee: Pick<Agent, 'tools' | 'rolePresetId'>,
+  preset: RolePreset | undefined,
+): boolean {
+  if (preset?.taskStyle) return preset.taskStyle === 'review';
+  return !agentCanEdit(assignee.tools);
 }
 
 function summaryFormat(readOnlyOrReview: boolean): string {
@@ -65,10 +56,13 @@ export function taskTail(
   assignee?: Pick<Agent, 'tools' | 'allowedTools' | 'permissionMode' | 'rolePresetId'> | null,
   presetLookup: PresetLookup = presetById,
 ): string {
-  const isManager = assignee ? agentIsManagerRole(assignee.rolePresetId, presetLookup) : false;
-  const canEdit = assignee
-    ? agentCanEdit(assignee.tools, assignee.allowedTools, assignee.permissionMode)
-    : true;
-  const reviewStyle = Boolean(task.reviewTarget) || (!isManager && Boolean(assignee) && !canEdit);
+  const preset = assignee ? presetLookup(assignee.rolePresetId) : undefined;
+  const isManager = assignee ? agentIsManagerRole(assignee, preset) : false;
+  const reviewStyle =
+    Boolean(task.reviewTarget) ||
+    (!isManager &&
+      assignee !== null &&
+      assignee !== undefined &&
+      usesReviewTaskStyle(assignee, preset));
   return summaryFormat(reviewStyle);
 }

@@ -46,6 +46,8 @@ export const RolePresetSchema = z.object({
   additionalDirectories: z.array(z.string()).optional(),
   /** Manager presets get the delegation MCP tools. */
   manager: z.boolean().optional(),
+  /** When set, overrides tool-based inference for task summary sections. */
+  taskStyle: z.enum(['implementation', 'review']).optional(),
 });
 export type RolePreset = z.infer<typeof RolePresetSchema>;
 
