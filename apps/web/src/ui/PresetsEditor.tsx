@@ -1,4 +1,4 @@
-import type { RolePreset } from '@deskhaven/shared';
+import type { RolePresetListItem } from '@deskhaven/shared';
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
@@ -15,7 +15,7 @@ const TEMPLATE: Omit<RolePreset, 'id'> = {
 /** Role presets are plain JSON documents; this editor edits them as such. */
 export function PresetsEditor(): JSX.Element {
   const pushNotice = useAppStore((s) => s.pushNotice);
-  const [presets, setPresets] = useState<RolePreset[]>([]);
+  const [presets, setPresets] = useState<RolePresetListItem[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [newId, setNewId] = useState('');
@@ -30,7 +30,7 @@ export function PresetsEditor(): JSX.Element {
 
   useEffect(() => load(), [load]);
 
-  const open = (p: RolePreset) => {
+  const open = (p: RolePresetListItem) => {
     setSelected(p.id);
     const { id: _id, ...rest } = p;
     setText(JSON.stringify(rest, null, 2));
@@ -99,6 +99,7 @@ export function PresetsEditor(): JSX.Element {
             onClick={() => open(p)}
           >
             {p.name}
+            {p.builtinUpdatePending ? ' •' : ''}
           </button>
         ))}
       </div>
@@ -110,6 +111,13 @@ export function PresetsEditor(): JSX.Element {
       </div>
       {selected ? (
         <>
+          {presets.find((p) => p.id === selected)?.builtinUpdatePending ? (
+            <p className="warn small">
+              Built-in updated – Reset to apply the shipped definition, or keep your edits. Agents
+              already hired keep the system prompt copied at hire time; edit them individually or
+              re-hire to pick up preset changes.
+            </p>
+          ) : null}
           <p className="muted small">
             Editing <code>{selected}</code>. Fields: name, description, systemPrompt, model?, tools
             (array or null = all), allowedTools, permissionMode (default | acceptEdits | plan |

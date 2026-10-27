@@ -81,6 +81,63 @@ function setup() {
 const ev = (partial: Partial<AgentEvent> & { type: AgentEvent['type'] }): AgentEvent =>
   ({ id: Math.random().toString(36).slice(2), ts: 1, agentId: 'a1', ...partial }) as AgentEvent;
 
+describe('buildTaskPrompt', () => {
+  it('includes scope discipline and fixed summary sections', () => {
+    const text = buildTaskPrompt({
+      id: 't1',
+      title: 'Early return on cancel',
+      prompt: 'Change nothing else.',
+      status: 'backlog',
+      assigneeAgentId: null,
+      parentTaskId: null,
+      position: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      startedAt: null,
+      completedAt: null,
+      resultSummary: null,
+      costUsd: 0,
+      filesChanged: [],
+    });
+    expect(text).toContain('Change only what this task asks for');
+    expect(text).toContain('Suggested follow-ups (not done)');
+    expect(text).toContain('**Changed**');
+    expect(text).toContain('**How to verify**');
+    expect(text).not.toContain('exactly these sections');
+  });
+
+  it('uses review summary sections for review tasks and puts them last', () => {
+    const task = TaskSchema.parse({
+      id: 't1',
+      title: 'Review',
+      prompt: 'Check the diff',
+      status: 'assigned',
+      assigneeAgentId: 'rev',
+      parentTaskId: null,
+      position: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      startedAt: 1,
+      completedAt: null,
+      resultSummary: null,
+      costUsd: 0,
+      filesChanged: [],
+      reviewTarget: {
+        agentId: 'eng',
+        agentName: 'Ada',
+        path: '/wt',
+        branch: 'b',
+        baseBranch: 'main',
+      },
+    });
+    const text = buildTaskPrompt(task, { diff: '+line\n', files: ['a.py'] });
+    expect(text).not.toContain('Change only what this task asks for');
+    expect(text).toContain('**Findings**');
+    expect(text).toContain('**Verdict**');
+    expect(text.indexOf('## Review target')).toBeLessThan(text.indexOf('**Findings**'));
+  });
+});
+
 describe('TaskService', () => {
   it('creates in backlog, assigns, and dispatches the prompt tagged with the task id', async () => {
     const { tasks, sent, events } = setup();
@@ -91,6 +148,9 @@ describe('TaskService', () => {
     expect(assigned.assigneeAgentId).toBe('a1');
     expect(sent).toEqual([{ agentId: 'a1', text: buildTaskPrompt(assigned), taskId: t.id }]);
     expect(sent[0]?.text).toContain('# Task: Fix mean');
+    expect(sent[0]?.text).toContain('Change only what this task asks for');
+    expect(sent[0]?.text).toContain('**Changed**');
+    expect(sent[0]?.text).toContain('Suggested follow-ups (not done)');
     expect(events.list({ types: ['task_assigned'] })[0]).toMatchObject({
       taskId: t.id,
       title: 'Fix mean',

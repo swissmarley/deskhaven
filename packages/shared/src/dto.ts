@@ -49,6 +49,12 @@ export const RolePresetSchema = z.object({
 });
 export type RolePreset = z.infer<typeof RolePresetSchema>;
 
+/** GET /api/presets entries: shipped built-ins may report a newer definition in the app bundle. */
+export const RolePresetListItemSchema = RolePresetSchema.extend({
+  builtinUpdatePending: z.boolean().optional(),
+});
+export type RolePresetListItem = z.infer<typeof RolePresetListItemSchema>;
+
 export const AgentSchema = z.object({
   id: z.string(),
   name: z.string(),

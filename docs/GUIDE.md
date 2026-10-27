@@ -161,6 +161,12 @@ restart the server.
 
 Roles (editable JSON under Settings → Role presets):
 
+Deskhaven ships built-in role JSON in the app bundle. On startup, an unchanged copy of an older
+built-in (for example Engineer) is upgraded automatically; if you edited that preset, Settings shows
+**Built-in updated – Reset to apply** until you reset or save your version. Every task also carries
+scope rules in its prompt. Agents already hired keep the `systemPrompt` copied when they were created;
+change them under **Edit** or hire again to use an updated preset.
+
 | Role | What it is for |
 |---|---|
 | Architect | Read-only. Reads the code and writes plans. |

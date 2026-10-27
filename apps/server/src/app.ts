@@ -5,7 +5,7 @@ import {
   DEFAULT_ROOM_ID,
   defaultRoom,
   KNOWN_MODELS,
-  type RolePreset,
+  type RolePresetListItem,
   type Room,
   type Settings,
   WORKDIR_ERROR_PREFIX,
@@ -62,7 +62,7 @@ export interface AppContext {
   usage: UsageService;
   room: () => Room;
   rooms: RoomService;
-  presets: () => RolePreset[];
+  presets: () => RolePresetListItem[];
   presetService: PresetService;
   worktrees: WorktreeService;
   tasks: TaskService;
