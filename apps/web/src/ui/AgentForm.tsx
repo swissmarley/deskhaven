@@ -57,6 +57,9 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
   );
   const [deskId, setDeskId] = useState(agent?.deskId ?? '');
   const [useWorktree, setUseWorktree] = useState(false);
+  const [freshSessionPerTask, setFreshSessionPerTask] = useState(
+    agent?.budget.freshSessionPerTask ?? false,
+  );
   const [advanced, setAdvanced] = useState(Boolean(agent));
   const [busy, setBusy] = useState(false);
 
@@ -104,6 +107,7 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
       if (maxTurns) budget.maxTurns = Number(maxTurns);
       if (maxBudgetUsd) budget.maxBudgetUsd = Number(maxBudgetUsd);
       if (dailyCapUsd) budget.dailyCapUsd = Number(dailyCapUsd);
+      if (freshSessionPerTask) budget.freshSessionPerTask = true;
       if (agent) {
         const patch: UpdateAgent = {
           name: name || agent.name,
@@ -269,7 +273,7 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
               placeholder={preset?.tools?.join(', ') ?? 'all Claude Code tools'}
             />
           </label>
-          <div className="row">
+          <div className="field-grid">
             <label>
               Max turns
               <input
@@ -303,6 +307,20 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
               />
             </label>
           </div>
+          <p className="muted small">
+            Max $ / turn: Deskhaven interrupts the turn as soon as its running estimate reaches the
+            limit, so a turn can go over by at most the model call that crossed it. Costs are
+            estimates.
+          </p>
+          <label className="inline small">
+            <input
+              type="checkbox"
+              checked={freshSessionPerTask}
+              onChange={(e) => setFreshSessionPerTask(e.target.checked)}
+            />
+            Start a fresh session for each new task (cheaper: small tasks do not carry earlier
+            context; replies about the same task keep it)
+          </label>
           {agent ? (
             <label>
               Desk

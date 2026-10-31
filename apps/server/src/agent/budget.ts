@@ -3,7 +3,7 @@ import type { AgentService } from '../agents/service.js';
 
 /**
  * Per-agent and global daily caps on the SDK's cost estimate. Checked before every prompt is dispatched.
- * SDK-side limits (maxTurns, maxBudgetUsd) still apply per session on top of this.
+ * `maxTurns` (SDK) and the per-turn `maxBudgetUsd` (AgentRuntime) apply on top of this.
  */
 export function createBudgetGuard(
   agents: AgentService,

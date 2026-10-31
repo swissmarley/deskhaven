@@ -41,6 +41,14 @@ button {
 button:hover {
   border-color: var(--accent);
 }
+/* Disabled reads as disabled for every variant, primary (yellow) included. */
+button:disabled,
+button:disabled:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: var(--border);
+  filter: saturate(0.3);
+}
 button.primary {
   background: var(--accent);
   color: #1a1a1a;
@@ -281,6 +289,10 @@ label.inline {
 }
 .row > input {
   flex: 1;
+}
+.row > input[type="checkbox"],
+.row > input[type="radio"] {
+  flex: 0 0 auto;
 }
 .small {
   font-size: 12px;
@@ -553,7 +565,7 @@ textarea.mono {
 
 /* ---- task board drawer (M4) ---- */
 .app.with-board {
-  grid-template-rows: 44px 1fr 270px;
+  grid-template-rows: 44px 1fr clamp(270px, 36vh, 420px);
 }
 .board {
   grid-column: 1 / 2;
@@ -586,9 +598,11 @@ textarea.mono {
   flex: 1;
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
+  /* One row that fills the drawer: every column is the same height, whatever it holds. */
+  grid-template-rows: minmax(0, 1fr);
   gap: 8px;
   padding: 8px 12px;
-  overflow: auto;
+  overflow: hidden;
   min-height: 0;
 }
 .column {
@@ -621,6 +635,7 @@ textarea.mono {
   color: var(--ok);
 }
 .card-task {
+  flex-shrink: 0;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -664,6 +679,16 @@ textarea.mono {
   font-size: 11px;
   color: var(--muted);
   white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+/* Done cards are for reference: the full result is one click away. */
+.col-done .card-summary {
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
 }
 .task-detail {
   display: flex;
@@ -713,6 +738,22 @@ textarea.mono {
 }
 .merge-box.conflict {
   border-color: var(--danger);
+}
+.merge-box.empty {
+  border-style: dashed;
+}
+.merge-box h4 {
+  margin-top: 0;
+}
+.merge-confirm {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: rgba(255, 183, 3, 0.08);
+}
+.merge-confirm p {
+  margin: 0 0 8px;
 }
 .pill.ok {
   border-color: var(--ok);
@@ -879,4 +920,27 @@ kbd {
   grid-template-columns: 1fr 1fr;
   gap: 4px 12px;
   font-size: 12px;
+}
+
+/* Number fields that sit side by side (agent budgets): wrap into as many columns as fit. */
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+.field-grid > label {
+  min-width: 0;
+}
+.field-grid input {
+  width: 100%;
+  min-width: 0;
+}
+.form {
+  min-width: 0;
+}
+.form input,
+.form select,
+.form textarea {
+  max-width: 100%;
 }

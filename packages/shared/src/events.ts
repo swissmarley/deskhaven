@@ -151,7 +151,10 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
     type: z.literal('turn_completed'),
     ok: z.boolean(),
     subtype: z.string(),
+    /** This turn's estimated cost (the runtime differences the SDK's cumulative total). */
     costUsd: z.number(),
+    /** The SDK's cumulative `total_cost_usd` for the session after this turn. */
+    sessionCostUsd: z.number().optional(),
     inputTokens: z.number(),
     outputTokens: z.number(),
     cacheReadTokens: z.number(),

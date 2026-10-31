@@ -10,8 +10,16 @@ import { useShallow } from 'zustand/react/shallow';
 import { ApiError, api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
 import { fmtTime, fmtUsd } from './eventText.js';
-import { manualMergeCommands, reviewerCanWrite, showMergeControls } from './merge.js';
+import {
+  manualMergeCommands,
+  mergeButtonState,
+  nothingToMerge,
+  reviewerCanWrite,
+  showMergeControls,
+} from './merge.js';
 import { TaskMarkdown } from './TaskMarkdown.js';
+
+const CONFIRM_TIMEOUT_MS = 60_000;
 
 export function TaskDetail({
   taskId,
@@ -30,6 +38,8 @@ export function TaskDetail({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  /** The preview changed while a confirmation was open, so it was withdrawn. */
+  const [confirmWithdrawn, setConfirmWithdrawn] = useState(false);
   const [allowHookChanges, setAllowHookChanges] = useState(false);
   const [skipHooks, setSkipHooks] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -53,12 +63,18 @@ export function TaskDetail({
     previewKeyRef.current = previewKey;
     setAllowHookChanges(false);
     setSkipHooks(false);
-    if (confirming) setConfirming(false);
+    if (confirming) {
+      setConfirming(false);
+      setConfirmWithdrawn(true);
+    }
   }
   const confirmKeyRef = useRef(confirmKey);
   if (confirmKeyRef.current !== confirmKey) {
     confirmKeyRef.current = confirmKey;
-    if (confirming) setConfirming(false);
+    if (confirming) {
+      setConfirming(false);
+      setConfirmWithdrawn(true);
+    }
   }
   const hookConsentRequired = (preview?.hookFiles?.length ?? 0) > 0;
   const hookConsentOk = !hookConsentRequired || allowHookChanges || skipHooks;
@@ -78,13 +94,15 @@ export function TaskDetail({
     }
   };
 
-  // confirmKey restarts the timer when the preview changes during confirmation.
+  // An open confirmation expires after a minute; confirmKey restarts the timer.
   // biome-ignore lint/correctness/useExhaustiveDependencies: confirmKey is intentional
   useEffect(() => {
     if (!confirming) return;
-    const timer = window.setTimeout(() => setConfirming(false), 10_000);
+    const timer = window.setTimeout(() => setConfirming(false), CONFIRM_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [confirming, confirmKey]);
+
+  const mergeSectionRef = useRef<HTMLElement | null>(null);
 
   // revision is intentional: a merge updates the same task id, and the preview should follow.
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when the saved task changes
@@ -116,6 +134,8 @@ export function TaskDetail({
   const mergeMessage = defaultMergeMessage(task);
   const commands = preview ? manualMergeCommands(preview, mergeMessage, strategy) : '';
   const conflicted = task.merge?.status === 'conflict';
+  const empty = nothingToMerge(preview);
+  const button = mergeButtonState(preview, { merging, hookConsentOk, previewError });
 
   const acceptMerge = async () => {
     setMerging(true);
@@ -261,34 +281,33 @@ export function TaskDetail({
               </>
             ) : null}
           </dl>
-          <h4>Prompt</h4>
-          <pre className="details">{task.prompt}</pre>
-          <h4>Result</h4>
-          {task.resultSummary ? (
-            <TaskMarkdown content={task.resultSummary} />
-          ) : (
-            <p className="muted small">No result yet.</p>
-          )}
-          <h4>Files changed</h4>
-          {task.filesChanged.length ? (
-            <ul className="files">
-              {task.filesChanged.map((f) => (
-                <li key={f.path} className="mono small">
-                  {f.path}
-                  {f.additions !== undefined || f.deletions !== undefined ? (
-                    <span className="muted">
-                      {' '}
-                      +{f.additions ?? 0} −{f.deletions ?? 0}
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="muted small">None recorded.</p>
-          )}
-          {offerMerge ? (
-            <section className={conflicted ? 'merge-box conflict' : 'merge-box'}>
+          {offerMerge && empty && !conflicted ? (
+            <section className="merge-box empty" ref={mergeSectionRef}>
+              <h4>Merge</h4>
+              <p className="small">
+                <strong>Nothing to merge.</strong>{' '}
+                <span className="muted">
+                  {preview?.branch} has no commits ahead of {preview?.targetBranch} and no
+                  uncommitted changes. The branch is shared by all of this agent's tasks: if another
+                  of them was merged, this task's changes went in with it.
+                </span>
+              </p>
+              {task.status !== 'done' ? (
+                <div className="row wrap">
+                  <button
+                    type="button"
+                    onClick={() => void run(() => api.updateTask(task.id, { status: 'done' }))}
+                  >
+                    Mark done
+                  </button>
+                </div>
+              ) : null}
+            </section>
+          ) : offerMerge ? (
+            <section
+              className={conflicted ? 'merge-box conflict' : 'merge-box'}
+              ref={mergeSectionRef}
+            >
               <h4>Merge</h4>
               <p className="small warn-text">
                 The merge includes every change on the agent's branch, not only this task.
@@ -319,7 +338,7 @@ export function TaskDetail({
                   Merge without running git hooks on my source checkout
                 </label>
               ) : null}
-              {!hookConsentOk ? (
+              {preview && !hookConsentOk ? (
                 <p className="small warn-text">
                   Tick one of the options above to enable the merge.
                 </p>
@@ -359,6 +378,42 @@ export function TaskDetail({
                   ) : null}
                 </div>
               ) : null}
+              {confirming && preview ? (
+                <div className="merge-confirm" role="alertdialog" aria-label="Confirm merge">
+                  <p className="small">
+                    Merge {preview.ahead} commit{preview.ahead === 1 ? '' : 's'}
+                    {preview.dirty ? ' plus the uncommitted changes' : ''} ({preview.files.length}{' '}
+                    file{preview.files.length === 1 ? '' : 's'}) from{' '}
+                    <span className="mono">{preview.branch}</span> into{' '}
+                    <span className="mono">{preview.targetBranch}</span> as a{' '}
+                    {strategy === 'squash' ? 'squash commit' : 'merge commit'}?
+                  </p>
+                  <div className="row wrap">
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={merging}
+                      onClick={() => void acceptMerge()}
+                    >
+                      {merging ? 'Merging…' : 'Confirm merge'}
+                    </button>
+                    <button
+                      type="button"
+                      className="link"
+                      disabled={merging}
+                      onClick={() => setConfirming(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {confirmWithdrawn && !confirming ? (
+                <p className="small warn-text">
+                  The branch changed while the confirmation was open. Review the preview and merge
+                  again.
+                </p>
+              ) : null}
               <div className="row wrap">
                 <label className="small">
                   Strategy{' '}
@@ -370,24 +425,22 @@ export function TaskDetail({
                     <option value="merge">Merge commit (--no-ff)</option>
                   </select>
                 </label>
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={merging || preview?.canMerge === false || !hookConsentOk}
-                  onClick={() => {
-                    if (!confirming) {
+                {!confirming ? (
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={button.disabled}
+                    title={button.reason ?? undefined}
+                    onClick={() => {
+                      setConfirmWithdrawn(false);
                       setConfirming(true);
-                      return;
-                    }
-                    void acceptMerge();
-                  }}
-                >
-                  {merging ? 'Merging…' : confirming ? 'Confirm merge' : 'Accept & merge'}
-                </button>
-                {confirming ? (
-                  <button type="button" className="link" onClick={() => setConfirming(false)}>
-                    Cancel
+                    }}
+                  >
+                    {merging ? 'Merging…' : 'Accept & merge'}
                   </button>
+                ) : null}
+                {button.disabled && button.reason && preview ? (
+                  <span className="muted small">{button.reason}</span>
                 ) : null}
                 {task.status !== 'done' ? (
                   <button
@@ -412,6 +465,32 @@ export function TaskDetail({
               {conflicted && commands ? <pre className="details">{commands}</pre> : null}
             </section>
           ) : null}
+          <h4>Prompt</h4>
+          <pre className="details">{task.prompt}</pre>
+          <h4>Result</h4>
+          {task.resultSummary ? (
+            <TaskMarkdown content={task.resultSummary} />
+          ) : (
+            <p className="muted small">No result yet.</p>
+          )}
+          <h4>Files changed</h4>
+          {task.filesChanged.length ? (
+            <ul className="files">
+              {task.filesChanged.map((f) => (
+                <li key={f.path} className="mono small">
+                  {f.path}
+                  {f.additions !== undefined || f.deletions !== undefined ? (
+                    <span className="muted">
+                      {' '}
+                      +{f.additions ?? 0} −{f.deletions ?? 0}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted small">None recorded.</p>
+          )}
           {task.status === 'review' && assignee ? (
             <div className="row wrap">
               <button type="button" onClick={openReview}>
@@ -462,6 +541,16 @@ export function TaskDetail({
           ) : null}
         </div>
         <div className="task-detail-actions row wrap">
+          {offerMerge && !empty ? (
+            <button
+              type="button"
+              onClick={() =>
+                mergeSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }
+            >
+              Go to merge
+            </button>
+          ) : null}
           {(['backlog', 'review', 'done'] as TaskStatus[]).map((s) => (
             <button
               type="button"

@@ -2,6 +2,12 @@
 
 One 3-line note per milestone, newest first.
 
+## Fixes from the 2026-10-31 test
+
+1. Merge preview lists untracked files (`--untracked-files=all`); "Max $ / turn" is enforced by the runtime from assistant-message usage (`agent/turn-cost.ts`) and interrupts the turn when the estimate reaches the cap (the SDK cap, cumulative per process, is no longer passed); `turn_completed.costUsd` is now the turn's share of the SDK's cumulative `total_cost_usd` (it was summed as-is, inflating task, agent and daily totals); optional `budget.freshSessionPerTask`; credentials test isolated from a real `ANTHROPIC_API_KEY` and never prints a key.
+2. UI: "Nothing to merge" for an empty branch, merge section above the prompt plus a "Go to merge" button, "Accept & merge" disabled until the preview loads, an explicit confirmation (60 s, withdrawn with a notice if the branch changes), disabled buttons look disabled, budget fields wrap, Done cards compact and the board one row tall. "8 ahead → 0 ahead" is the shared per-agent worktree: merging any task of the agent realigns the branch (test added).
+3. Next: a live run to compare the per-turn estimate with the SDK figure on Opus; the entry chunk is 592 kB on main (CLAUDE.md says ≈416 kB), worth a look.
+
 ## Follow-ups to the security fixes (2026-10-08)
 
 1. Firing works when a worktree's source repo was moved or deleted (state check is clean/dirty/missing/unknown; unknown needs force; forced removal deletes the folder without git); the session cookie is `deskhaven_session_<port>`; remote binds list a login URL per interface address (never 0.0.0.0); worktrees for a repo subfolder keep the agent (and its edit guard) in that subfolder; `DESKHAVEN_SESSION_TOKEN` needs 32+ characters.

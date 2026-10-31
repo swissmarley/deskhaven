@@ -123,7 +123,7 @@ Gotchas confirmed in the type docs:
 | `system/compact_boundary`, `tool_use_summary`, `auth_status` | — | transcript markers |
 | `system/status`, `system/task_summary`, `system/post_turn_summary` (seen in recorded sessions) | — | ignored |
 
-**Cost.** `result.total_cost_usd` is a client-side **estimate** that includes subagents; `result.usage` is main-loop only; `modelUsage[model].costUSD` has the per-model breakdown. In streaming-input mode each turn emits its own `result`; we attribute each `result` to the task that was active for that turn. `Query.accountInfo()` returns `{ email?, organization?, subscriptionType?, apiProvider? }`.
+**Cost.** `result.total_cost_usd` is a client-side **estimate** that includes subagents and is **cumulative for the process** (see §7.3); `result.usage` is main-loop only and per turn; `modelUsage[model].costUSD` has the per-model breakdown. In streaming-input mode each turn emits its own `result`; we attribute each `result` to the task that was active for that turn. `Query.accountInfo()` returns `{ email?, organization?, subscriptionType?, apiProvider? }`.
 
 **Sessions.** `persistSession: true` writes transcripts to `~/.claude/projects/...`; we store `session_id` per agent and pass `resume` on restart. `listSessions()` / `getSessionMessages()` exist if we ever want to read the CLI's own transcript, but our replay uses our own event log.
 
@@ -238,7 +238,7 @@ Primary sources:
 - **Dangerous tools.** `Bash` and any write outside the agent's cwd always prompt unless the role preset lists them in `allowedTools`. A `PreToolUse` hook adds defence in depth: `Edit`/`Write`/`NotebookEdit` paths are resolved and must be inside `cwd` (or the role's `additionalDirectories`) else `permissionDecision: 'deny'`.
 - **`bypassPermissions` is not reachable from the UI or presets.** `allowDangerouslySkipPermissions` is never set.
 - **Sandboxing.** Each agent's `cwd` is its working directory or a dedicated git worktree (`~/.deskhaven/worktrees/<agentId>`, branch `deskhaven/<agent-slug>`). Worktrees are removed only through an explicit UI action that first checks for uncommitted changes.
-- **Budgets.** Per agent: `maxTurns`, `maxBudgetUsd` (SDK-enforced, yields `error_max_turns` / `error_max_budget_usd`), and a per-day cost cap enforced by `BudgetGuard` before each prompt is sent (sums today's `turn_completed.costUsd`). Global per-day cap as well.
+- **Budgets.** Per agent: `maxTurns` (SDK-enforced, yields `error_max_turns`), `maxBudgetUsd` (a **per-turn** cap enforced by `AgentRuntime`, see §7.3), an optional `freshSessionPerTask`, and a per-day cost cap enforced by `BudgetGuard` before each prompt is sent (sums today's `turn_completed.costUsd`). Global per-day cap as well.
 - **Kill switch.** One button/endpoint: aborts every `AbortController`, calls `interrupt()` first for a graceful stop, sets a `killed` flag that refuses new spawns until cleared, and emits a global event.
 - **Concurrency cap.** `AgentManager` counts *busy* agents (in a turn or waiting on a permission); an agent whose prompt would exceed the cap keeps the prompt queued with status `waiting` ("waiting for a desk") and starts as soon as another agent goes idle. Idle processes stay alive so sessions resume instantly; they do not count against the cap (memory is bounded by the idle-timeout in M6).
 
@@ -274,7 +274,13 @@ A Manager is an ordinary agent whose preset has `manager: true`. Its session get
 
 ## 7.3 Budgets, cap, idle timeout, kill switch
 
-`BudgetGuard` runs before every dispatched prompt: per-agent `budget.dailyCapUsd` and the global `settings.dailyCapUsd` compare against today's `usage_daily` totals (SDK cost estimates). A refusal turns the task into Needs input with the reason. SDK-side `maxTurns`/`maxBudgetUsd` still apply per session (`maxBudgetUsd` is cumulative for the session, verified: once exceeded every later turn returns `error_max_budget_usd` immediately). The concurrency cap counts busy agents; `idleTimeoutMinutes` stops processes that sat idle (default 15 min) while keeping `session_id`. The kill switch interrupts, ends input streams, aborts after a grace period, and refuses new work until reset.
+`BudgetGuard` runs before every dispatched prompt: per-agent `budget.dailyCapUsd` and the global `settings.dailyCapUsd` compare against today's `usage_daily` totals (SDK cost estimates). A refusal turns the task into Needs input with the reason. SDK-side `maxTurns` still applies per session.
+
+**Per-turn cost cap (2026-10-31).** The SDK's own `maxBudgetUsd` is cumulative for the process (once exceeded every later turn returns `error_max_budget_usd` immediately) and is checked late, so a turn capped at $0.30 was seen costing far more; it is no longer passed. Instead `AgentRuntime` keeps a running estimate of the current turn (`agent/turn-cost.ts`) from the `usage` of every assistant message (main loop and subagents, de-duplicated by `message.id`, priced per model family; cache writes at the 1-hour rate Claude Code uses) and calls `interrupt()` as soon as it reaches `budget.maxBudgetUsd`. A turn can still overshoot by the API call that crossed the cap. The turn then ends `ok: false` with the reason, so the task goes to Needs input. The estimate is within a few percent of the SDK's figure on the recorded fixture.
+
+**Per-turn cost accounting.** `result.total_cost_usd` is cumulative for the query() process in streaming-input mode (verified on the fixture: 0.165 then 0.185 for turns costing 0.165 and 0.020). The runtime stores each turn's share in `turn_completed.costUsd` and the raw running total in `sessionCostUsd`; a resumed process starts from the `sessionCostUsd` saved with the session's last turn, and a total below the baseline is treated as a restart of the counter.
+
+**Fresh session per task.** With `budget.freshSessionPerTask`, a prompt for a different task than the session's last one restarts the process without `resume`, so a trivial task does not pay for tens of thousands of cached tokens of earlier work. Replies about the same task (including after a server restart, read from the last `message_sent`) keep the session. The concurrency cap counts busy agents; `idleTimeoutMinutes` stops processes that sat idle (default 15 min) while keeping `session_id`. The kill switch interrupts, ends input streams, aborts after a grace period, and refuses new work until reset.
 
 ## 7.4 Replay
 

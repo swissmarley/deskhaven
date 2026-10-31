@@ -18,8 +18,17 @@ export type Avatar = z.infer<typeof AvatarSchema>;
 
 export const BudgetSchema = z.object({
   maxTurns: z.number().int().positive().optional(),
+  /**
+   * Per-turn cap on the estimated cost. Deskhaven interrupts the turn once the running estimate
+   * reaches it, so the overshoot is at most the API call that crossed it.
+   */
   maxBudgetUsd: z.number().positive().optional(),
   dailyCapUsd: z.number().positive().optional(),
+  /**
+   * Start a new session (no resume) when the agent picks up a different task, so a small task does
+   * not pay for the context of earlier ones. Replies about the same task keep the session.
+   */
+  freshSessionPerTask: z.boolean().optional(),
 });
 export type Budget = z.infer<typeof BudgetSchema>;
 
