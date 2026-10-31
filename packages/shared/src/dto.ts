@@ -258,6 +258,11 @@ export const TaskSchema = z.object({
   reviewTarget: ReviewTargetSchema.nullable().optional(),
   /** Bumped on each assign; stale dispatch failures must not roll back a newer assign. */
   dispatchSeq: z.number().int().nonnegative().optional(),
+  /**
+   * When a turn of this task last changed the content of the agent's worktree. The agent's tasks
+   * share one worktree, and the uncommitted work there belongs to the task that changed it last.
+   */
+  changedAt: z.number().nullable().optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;
 

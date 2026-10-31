@@ -26,4 +26,8 @@ describe('budget guard', () => {
     expect(guard(1, 20, undefined, 20)('a1')).toMatch(/global budget/);
     expect(guard(1, 20, undefined, 0)('a1')).toBeNull();
   });
+  it('states the amounts with three decimals, like the per-turn messages', () => {
+    expect(guard(0.0204, 5, 0.02)('a1')).toContain('($0.020 of $0.020 estimated)');
+    expect(guard(0, 2.5004, undefined, 2.5)('a1')).toContain('($2.500 of $2.500 estimated)');
+  });
 });

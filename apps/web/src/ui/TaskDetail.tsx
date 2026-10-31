@@ -298,9 +298,9 @@ export function TaskDetail({
                 <p className="small">
                   <strong>Nothing to merge for this task.</strong>{' '}
                   <span className="muted">
-                    The changes on {preview?.branch} belong to "{owner.title}" ({owner.status}),
-                    which the agent worked on after this task. Its worktree is shared by all of its
-                    tasks: merge them from that task.
+                    The changes on {preview?.branch} belong to "{owner.title}" ({owner.status}), the
+                    task that last changed files in the agent's worktree. The worktree is shared by
+                    all of the agent's tasks: merge them from that task.
                   </span>
                 </p>
               ) : (
@@ -335,8 +335,8 @@ export function TaskDetail({
               </p>
               {owner ? (
                 <p className="small warn-text">
-                  The agent's latest task is "{owner.title}" ({owner.status}): its changes are on
-                  the branch too.
+                  "{owner.title}" ({owner.status}) changed files on this branch last: its changes
+                  are in this merge too.
                 </p>
               ) : null}
               {preview?.hooksWarning ? (

@@ -1,5 +1,5 @@
-import type { AgentEvent } from '@deskhaven/shared';
-import { afterEach, describe, expect, it } from 'vitest';
+import { type AgentEvent, emptyUsage, type ServerMessage } from '@deskhaven/shared';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useAppStore } from '../src/state/store.js';
 
 const note = (seq: number): AgentEvent => ({
@@ -42,5 +42,44 @@ describe('store event stream', () => {
     expect(useAppStore.getState().lastSeq).toBe(0);
     applyServerMessage({ type: 'events_batch', events: [note(1), note(2)] });
     expect(useAppStore.getState().feed.map((e) => e.id)).toEqual(['e1', 'e2']);
+  });
+
+  it('starts over when the server log was reset below what the tab has seen', () => {
+    const resync = vi.fn();
+    useAppStore.setState({ requestResync: resync });
+    const { applyServerMessage } = useAppStore.getState();
+    applyServerMessage({ type: 'events_batch', events: [note(900), note(901)] });
+    const hello = (lastSeq: number) =>
+      ({
+        type: 'hello',
+        serverTime: 0,
+        version: 'test',
+        agents: [],
+        tasks: [],
+        rooms: [],
+        settings: { soundEnabled: false },
+        pendingPermissions: [],
+        usage: {
+          authModeInUse: 'API_KEY',
+          totals: emptyUsage(),
+          today: emptyUsage(),
+          perAgent: {},
+          rateLimits: [],
+          killSwitch: false,
+          running: 0,
+          concurrencyCap: 4,
+        },
+        lastSeq,
+      }) as unknown as ServerMessage;
+    // Same database: nothing happens.
+    applyServerMessage(hello(901));
+    expect(resync).not.toHaveBeenCalled();
+    // New database: seq restarted at 3.
+    applyServerMessage(hello(3));
+    expect(resync).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().lastSeq).toBe(0);
+    expect(useAppStore.getState().feed).toEqual([]);
+    applyServerMessage({ type: 'events_batch', events: [note(1), note(2), note(3)] });
+    expect(useAppStore.getState().feed.map((e) => e.id)).toEqual(['e1', 'e2', 'e3']);
   });
 });

@@ -156,6 +156,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   applyServerMessage: (m) => {
     switch (m.type) {
       case 'hello': {
+        // The server's log restarted below what this tab has seen (the database was reset): every new
+        // event would look already applied. Start the timeline over and ask for the recent events.
+        if (m.lastSeq !== undefined && m.lastSeq < get().lastSeq) {
+          set({ ...clearedTimeline(get()), lastSeq: 0 });
+          get().requestResync();
+        }
         const agents = Object.fromEntries(m.agents.map((a) => [a.id, a]));
         const behaviors: Record<string, Behavior> = {};
         for (const a of m.agents) behaviors[a.id] = get().behaviors[a.id] ?? initialBehavior(a);

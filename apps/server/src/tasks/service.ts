@@ -22,7 +22,7 @@ import { eq } from 'drizzle-orm';
 import type { AgentManager } from '../agent/manager.js';
 import type { AgentService } from '../agents/service.js';
 import type { Db } from '../db/client.js';
-import { tasks as tasksTable } from '../db/schema.js';
+import { tasks as tasksTable, worktreeTrees } from '../db/schema.js';
 import type { EventStore } from '../events/store.js';
 import { hookFileSetsEqual } from '../worktree/hook-detect.js';
 import { WorktreeMovedError, type WorktreeService } from '../worktree/service.js';
@@ -267,14 +267,32 @@ export class TaskService {
           );
         });
       } else if (t.status === 'in_progress' || t.status === 'needs_input') {
+        // Only a task whose turn was running when the server stopped was interrupted. A task already
+        // waiting in Needs input (a finished turn, a budget stop) is left as it was: a tsx-watch
+        // reload used to append the note again to every such task on every boot.
+        if (!this.turnInFlight(t.assigneeAgentId, t.id)) {
+          if (t.status === 'in_progress')
+            this.write({ ...t, status: 'needs_input', updatedAt: Date.now() });
+          continue;
+        }
         this.write({
           ...t,
           status: 'needs_input',
-          resultSummary: `${t.resultSummary ? `${t.resultSummary}\n\n` : ''}[Interrupted by a server restart at ${new Date().toLocaleTimeString()}. Reply to the agent to continue.]`,
+          resultSummary: withRestartNote(t.resultSummary, new Date()),
           updatedAt: Date.now(),
         });
       }
     }
+  }
+
+  /** The agent's last task prompt (for this task) has no `turn_completed` after it. */
+  private turnInFlight(agentId: string, taskId: string): boolean {
+    const [last] = this.deps.events.list({
+      agentId,
+      types: ['message_sent', 'turn_completed'],
+      limit: 1,
+    });
+    return last?.type === 'message_sent' && last.taskId === taskId;
   }
 
   /** Re-send the task prompt (after a fix, or when the agent asked for input and the user replied). */
@@ -383,7 +401,7 @@ export class TaskService {
       throw new TaskHttpError(
         409,
         'changes_belong_to_other_task',
-        `The changes on ${wt.branch} belong to "${owner.title}", which ran after this task. Merge them from that task.`,
+        `The changes on ${wt.branch} belong to "${owner.title}", the task that last changed files there. Merge them from that task.`,
       );
     }
     const strategy: MergeStrategy = input.strategy ?? 'squash';
@@ -506,6 +524,12 @@ export class TaskService {
       realign = err instanceof Error ? err.message : String(err);
       this.deps.log.warn({ taskId, err: realign }, 'merged, but the worktree was not realigned');
     }
+    // The merge integrated the worktree's work: what is there now belongs to no task.
+    await this.recordTree(agent.id, wt.path);
+    for (const t of this.list()) {
+      if (t.id !== taskId && t.assigneeAgentId === agent.id && t.changedAt)
+        this.write({ ...t, changedAt: null, updatedAt: Date.now() });
+    }
     const saved = this.write({
       ...this.mustGet(taskId),
       status: 'done',
@@ -608,7 +632,7 @@ export class TaskService {
           type: 'task_done',
           ok: e.ok,
         });
-        void this.collectFiles(next);
+        void this.afterTurn(next);
         break;
       }
       case 'error':
@@ -726,6 +750,7 @@ export class TaskService {
     if (this.merging.has(latest.assigneeAgentId)) return;
     this.syncReadDirs(latest.assigneeAgentId);
     this.assertAssignDispatch(task.id, dispatchSeq);
+    await this.ensureTreeBaseline(latest.assigneeAgentId);
     await Promise.resolve(this.deps.manager.sendPrompt(latest.assigneeAgentId, text, latest.id));
     this.assertAssignDispatch(task.id, dispatchSeq);
   }
@@ -856,20 +881,19 @@ export class TaskService {
   }
 
   /**
-   * The task whose turn ran last in the agent's worktree. Every task of an agent shares one worktree
-   * and branch, so the uncommitted work there is that task's (a turn of a later task would have
-   * come after it). Null when the agent has not completed a task turn, or when that task was deleted
-   * or already merged (whatever is left on the branch then belongs to no task, so any may merge it).
+   * The task that last changed the content of the agent's worktree (`changedAt`, set after a turn
+   * that left a different tree). Every task of an agent shares that worktree and branch, so the
+   * uncommitted work there is that task's. A task that ran later without changing files (a review,
+   * a test run, a question) does not take it over. Merged tasks no longer own anything; null when
+   * no unmerged task of the agent changed files.
    */
   private worktreeOwner(agentId: string): Task | null {
-    const turns = this.deps.events.list({ agentId, types: ['turn_completed'], limit: 50 });
-    for (const t of turns) {
-      if (!t.taskId) continue;
-      const task = this.get(t.taskId);
-      if (!task || task.merge?.status === 'merged') return null;
-      return task;
+    let owner: Task | null = null;
+    for (const t of this.list()) {
+      if (t.assigneeAgentId !== agentId || !t.changedAt || t.merge?.status === 'merged') continue;
+      if (!owner || t.changedAt > (owner.changedAt ?? 0)) owner = t;
     }
-    return null;
+    return owner;
   }
 
   private async locateWorktree(taskId: string): Promise<
@@ -961,6 +985,70 @@ export class TaskService {
     return null;
   }
 
+  private async afterTurn(task: Task): Promise<void> {
+    await this.collectFiles(task);
+    await this.recordTurnChanges(task);
+  }
+
+  /**
+   * Compares the agent's worktree with its content after the previous turn (or at the last merge, or
+   * when the first task was dispatched). A different tree means this turn changed files, so this task
+   * now owns the uncommitted work. A task that only read, reviewed or ran tests changes nothing and
+   * owns nothing. Without a recorded tree (agents from before this was tracked) nothing is attributed.
+   */
+  private async recordTurnChanges(task: Task): Promise<void> {
+    const agent = task.assigneeAgentId ? this.deps.agents.get(task.assigneeAgentId) : undefined;
+    const wt = agent?.worktree;
+    if (!agent || !wt) return;
+    try {
+      const tree = await this.deps.worktrees.previewTree(wt.path);
+      const before = this.storedTree(agent.id);
+      if (before !== null && tree !== before) {
+        const current = this.get(task.id);
+        if (current) this.write({ ...current, changedAt: Date.now(), updatedAt: Date.now() });
+      }
+      this.storeTree(agent.id, tree);
+    } catch (err) {
+      this.deps.log.warn({ taskId: task.id, err: String(err) }, 'could not compare the worktree');
+    }
+  }
+
+  /** Records the worktree's content before an agent's first tracked turn. */
+  private async ensureTreeBaseline(agentId: string): Promise<void> {
+    if (this.storedTree(agentId) !== null) return;
+    const wt = this.deps.agents.get(agentId)?.worktree;
+    if (wt) await this.recordTree(agentId, wt.path);
+  }
+
+  private async recordTree(agentId: string, worktreePath: string): Promise<void> {
+    try {
+      this.storeTree(agentId, await this.deps.worktrees.previewTree(worktreePath));
+    } catch (err) {
+      this.deps.log.warn({ agentId, err: String(err) }, 'could not record the worktree content');
+    }
+  }
+
+  private storedTree(agentId: string): string | null {
+    const row = this.db
+      .select()
+      .from(worktreeTrees)
+      .where(eq(worktreeTrees.agentId, agentId))
+      .get();
+    return row?.tree ?? null;
+  }
+
+  private storeTree(agentId: string, tree: string): void {
+    const row = { agentId, tree, updatedAt: Date.now() };
+    this.db
+      .insert(worktreeTrees)
+      .values(row)
+      .onConflictDoUpdate({
+        target: worktreeTrees.agentId,
+        set: { tree, updatedAt: row.updatedAt },
+      })
+      .run();
+  }
+
   private async collectFiles(task: Task): Promise<void> {
     const agent = task.assigneeAgentId ? this.deps.agents.get(task.assigneeAgentId) : undefined;
     if (!agent) return;
@@ -1050,4 +1138,16 @@ ${truncated ? '\nThe diff above is truncated. Read the files from the path.' : '
 
 function stripUndefined<T extends object>(o: T): Partial<T> {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+const RESTART_NOTE = /\n*\[Interrupted by a server restart at [^\]]*\]\s*$/;
+
+/**
+ * Appends the restart note once: a note already at the end of the summary (from an earlier restart
+ * while the same turn was pending) is replaced, so the summary carries one note with the latest time.
+ */
+export function withRestartNote(summary: string | null, at: Date): string {
+  const base = (summary ?? '').replace(RESTART_NOTE, '');
+  const note = `[Interrupted by a server restart at ${at.toLocaleTimeString()}. Reply to the agent to continue.]`;
+  return base ? `${base}\n\n${note}` : note;
 }

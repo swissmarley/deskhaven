@@ -2,6 +2,12 @@
 
 One 3-line note per milestone, newest first.
 
+## Round 4 (2026-10-31)
+
+1. Turns stopped by the per-turn cap (or any interruption) are stored at max(SDK, own estimate) in the event, the task, the agent and the daily totals (the SDK reported $0 / 0 tokens for an interrupted call estimated at $0.045). Merge ownership follows the last task that changed the worktree's content (tree compared after every turn), not the last one that ran. The restart note is added only to tasks whose turn was in flight, once.
+2. Retired tools (`LS`, `MultiEdit`) removed from presets (unmodified DB rows auto-update) and, with auto-approvals for tools an agent lacks, from existing agents at boot. Budget guard messages use three decimals; a tab notices a reset database (`hello.lastSeq`) and resyncs.
+3. Owner action: lower Tester-Rev's "Max $ / turn" to $0.10 in the HR desk (a data setting, not code).
+
 ## Round 3 polish (2026-10-31)
 
 1. A task whose branch holds a later task's work offers no merge in review either (it did in done only); events already applied are skipped after a reconnect (`hello` carries `sinceSeq`; first load gets the latest 500, not the oldest); budget messages use three decimals and say when the call in flight pushed the final cost past the stop point; the desks counter updates on every busy-count change.

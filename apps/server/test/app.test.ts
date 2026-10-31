@@ -46,7 +46,7 @@ describe('server', () => {
     expect(agent).toMatchObject({
       name: 'Ada',
       rolePresetId: 'reviewer',
-      tools: ['Read', 'Grep', 'Glob', 'LS'],
+      tools: ['Read', 'Grep', 'Glob'],
       permissionMode: 'default',
       status: 'stopped',
       deskId: 'desk-1',

@@ -25,7 +25,10 @@ afterAll(async () => {
 });
 
 /** Sends `hello` and returns the seqs of the events_batch that follows it. */
-async function batchAfterHello(hello: Record<string, unknown>): Promise<number[]> {
+async function batchAfterHello(
+  hello: Record<string, unknown>,
+  onHello?: (m: Record<string, unknown>) => void,
+): Promise<number[]> {
   const ws: WebSocket = await built.app.injectWS('/ws', {
     headers: {
       host: TEST_HOST,
@@ -36,6 +39,7 @@ async function batchAfterHello(hello: Record<string, unknown>): Promise<number[]
   const batch = new Promise<number[]>((resolve) => {
     ws.on('message', (raw) => {
       const m = JSON.parse(String(raw)) as { type: string; events?: { seq: number }[] };
+      if (m.type === 'hello') onHello?.(m);
       if (m.type === 'events_batch') resolve((m.events ?? []).map((e) => e.seq));
     });
   });
@@ -58,5 +62,14 @@ describe('websocket hello', () => {
     const seqs = await batchAfterHello({ type: 'hello' });
     expect(seqs).toHaveLength(500);
     expect(seqs).toEqual(all.slice(-500));
+  });
+
+  it('tells the client the highest seq in its log, so a tab can notice a reset database', async () => {
+    let lastSeq: unknown;
+    await batchAfterHello({ type: 'hello', sinceSeq: 1 }, (m) => {
+      lastSeq = m.lastSeq;
+    });
+    expect(lastSeq).toBe(built.ctx.events.maxSeq());
+    expect(lastSeq).toBeGreaterThanOrEqual(520);
   });
 });

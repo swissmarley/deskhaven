@@ -11,6 +11,7 @@ import {
   DEFAULT_ROOM_ID,
   emptyUsage,
   newId,
+  normalizeToolLists,
   presetById,
   type RolePreset,
   type Room,
@@ -195,8 +196,11 @@ export class AgentService {
       rolePresetId: preset.id,
       systemPrompt: input.systemPrompt ?? preset.systemPrompt,
       model: resolveAgentModel(input.model, preset, settings),
-      tools: input.tools === undefined ? preset.tools : input.tools,
-      allowedTools: input.allowedTools ?? preset.allowedTools,
+      ...normalizeToolLists(
+        input.tools === undefined ? preset.tools : input.tools,
+        input.allowedTools ?? preset.allowedTools,
+        preset.tools,
+      ),
       permissionMode: input.permissionMode ?? preset.permissionMode,
       workdir,
       worktree: extra.worktree ?? null,
@@ -244,9 +248,15 @@ export class AgentService {
       patch = { ...patch, workdir };
       fixesWorkdirError = Boolean(current.lastError?.startsWith(WORKDIR_ERROR_PREFIX));
     }
+    const merged = { ...current, ...patch };
+    const lists = normalizeToolLists(
+      merged.tools,
+      merged.allowedTools,
+      this.presetLookup(merged.rolePresetId)?.tools,
+    );
     const next = AgentSchema.parse({
-      ...current,
-      ...patch,
+      ...merged,
+      ...lists,
       // A valid new workdir clears the "invalid working directory" error so the agent can start.
       ...(fixesWorkdirError && !workdirProblem({ ...current, ...patch })
         ? { status: 'stopped', lastError: null }
@@ -255,6 +265,29 @@ export class AgentService {
     });
     this.write(next);
     return next;
+  }
+
+  /**
+   * Boot migration: drops retired tool names and auto-approve rules for tools an agent does not have
+   * (agents hired before the Engineer preset was narrowed kept LS, MultiEdit, NotebookEdit and
+   * TodoWrite in allowedTools). Idempotent; returns the names of the agents it changed.
+   */
+  normalizeToolLists(): string[] {
+    const changed: string[] = [];
+    for (const a of this.list()) {
+      const next = normalizeToolLists(
+        a.tools,
+        a.allowedTools,
+        this.presetLookup(a.rolePresetId)?.tools,
+      );
+      const same =
+        JSON.stringify(next.tools) === JSON.stringify(a.tools) &&
+        JSON.stringify(next.allowedTools) === JSON.stringify(a.allowedTools);
+      if (same) continue;
+      this.patch(a.id, (x) => ({ ...x, ...next }));
+      changed.push(a.name);
+    }
+    return changed;
   }
 
   /** Functional update used by the runtime callbacks. */

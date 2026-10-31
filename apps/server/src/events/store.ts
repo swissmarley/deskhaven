@@ -72,6 +72,17 @@ export class EventStore {
     return out;
   }
 
+  /** Highest seq in the log (0 when empty). */
+  maxSeq(): number {
+    const row = this.db
+      .select({ seq: eventsTable.seq })
+      .from(eventsTable)
+      .orderBy(desc(eventsTable.seq))
+      .limit(1)
+      .get();
+    return row?.seq ?? 0;
+  }
+
   /** Count and time span of the persisted log, for the replay picker. */
   summary(): { count: number; firstTs: number | null; lastTs: number | null } {
     const row = this.db.select({ n: count() }).from(eventsTable).get();
