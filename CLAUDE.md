@@ -88,6 +88,8 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
 - An interrupted turn (budget, pause, stop) is stored at the larger of the SDK's figures and the
   runtime's own (estimate, mid-turn SDK total, streamed token counts): the SDK's result leaves out the
   call that was cut off and reported $0 / 0 tokens.
+  Turns stopped by the cap before that fix were raised once at boot to the estimate in their `budget`
+  notification (`recoverInterruptedTurnCosts`, settings key `migration.interrupted_turn_cost`).
 - `reconcileOnBoot` adds the restart note only when the task's turn was in flight (its last
   `message_sent` has no `turn_completed` after it) and replaces an earlier note instead of stacking.
 - Tool lists are normalised (`normalizeToolLists` in shared) on hire, edit and at every boot: retired

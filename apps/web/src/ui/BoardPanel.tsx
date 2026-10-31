@@ -179,8 +179,9 @@ function Card({ task, onOpen }: { task: Task; onOpen: (id: string) => void }): J
       </button>
       <div className="card-meta">
         {agent ? (
-          <span className="assignee">
-            <AvatarPreview avatar={agent.avatar} size={18} /> {agent.name}
+          <span className="assignee" title={agent.name}>
+            <AvatarPreview avatar={agent.avatar} size={18} />
+            <span className="assignee-name">{agent.name}</span>
           </span>
         ) : task.assigneeAgentId ? (
           <span className="muted">unknown agent</span>

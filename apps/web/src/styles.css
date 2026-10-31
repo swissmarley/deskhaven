@@ -706,14 +706,33 @@ textarea.mono {
 }
 .card-meta {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 2px 8px;
   font-size: 11px;
   align-items: center;
+  min-width: 0;
+}
+/* In a narrow column the name shrinks with an ellipsis (full name in the tooltip) and the cost,
+   file count and pills move to the next line whole instead of being cut. */
+.card-meta > * {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.card-meta > .assignee {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
 }
 .assignee {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+.assignee-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .card-summary {
   margin: 0;
@@ -988,4 +1007,7 @@ kbd {
 
 .nowrap {
   white-space: nowrap;
+}
+.assignee > :first-child {
+  flex-shrink: 0;
 }

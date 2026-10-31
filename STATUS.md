@@ -2,6 +2,10 @@
 
 One 3-line note per milestone, newest first.
 
+## Recovered cost and card layout (2026-10-31)
+
+1. A one-shot boot migration raises turns the per-turn cap stopped before the fix (stored at $0) to the estimate their `budget` notification recorded, and adds it to the task, the agent and that day (the $0.045 of round 4). Board cards keep the assignee on one line (ellipsis, full name in the tooltip) and wrap cost, file count and pills whole instead of cutting "N files".
+
 ## Merge file authors (2026-10-31)
 
 1. The merge preview names, for each file, the task whose logged edit touched it last (works for changes made before ownership tracking); the task window lists them and warns which other tasks' changes, or which files of unknown origin, a merge brings in. The preview's `canMerge` is false outside review/done, as the merge endpoint already answered.

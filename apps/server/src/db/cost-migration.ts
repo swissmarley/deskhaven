@@ -128,3 +128,106 @@ export function migrateTurnCosts(sqlite: Database.Database): TurnCostMigrationRe
   apply();
   return { events: updates.length, deltaUsd };
 }
+
+/** Settings row for `recoverInterruptedTurnCosts`. */
+export const INTERRUPTED_COST_MIGRATION_KEY = 'migration.interrupted_turn_cost';
+
+/** The estimate in "… reached the per-turn budget ($0.045 of $0.020 estimated) …". */
+const BUDGET_NOTICE = /per-turn budget \(\$([0-9]+(?:\.[0-9]+)?) of \$[0-9.]+ estimated\)/;
+
+/**
+ * Before 2026-10-31 a turn stopped by the per-turn cap was stored at the SDK's figure, which leaves
+ * out the call that was cut off: $0 for a turn the runtime had estimated at $0.045. The estimate
+ * survives in the `budget` notification the runtime logged when it interrupted the turn. This raises
+ * each such turn (a failed `turn_completed` right after that notification, same agent and task) to
+ * the estimate and adds the difference to the task, the agent and the day. Token counts are not
+ * recoverable and stay as stored. Runs once; turns already stored at the estimate are left alone.
+ */
+export function recoverInterruptedTurnCosts(
+  sqlite: Database.Database,
+): TurnCostMigrationReport | null {
+  const done = sqlite
+    .prepare('SELECT value FROM settings WHERE key = ?')
+    .get(INTERRUPTED_COST_MIGRATION_KEY) as { value: string } | undefined;
+  if (done) return null;
+
+  const rows = sqlite
+    .prepare(
+      `SELECT seq, id, ts, agent_id, session_id, task_id, payload, type FROM events
+       WHERE type IN ('notification', 'turn_completed') ORDER BY seq ASC`,
+    )
+    .all() as (TurnRow & { type: string })[];
+
+  /** Latest budget notice per agent that no turn_completed has consumed yet. */
+  const pending = new Map<string, { taskId: string | null; estimate: number }>();
+  const fixes: { row: TurnRow; payload: Record<string, unknown>; delta: number }[] = [];
+  for (const row of rows) {
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(row.payload) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (row.type === 'notification') {
+      if (payload.kind !== 'budget' || typeof payload.message !== 'string') continue;
+      const m = BUDGET_NOTICE.exec(payload.message);
+      if (m?.[1]) pending.set(row.agent_id, { taskId: row.task_id, estimate: Number(m[1]) });
+      continue;
+    }
+    const notice = pending.get(row.agent_id);
+    pending.delete(row.agent_id);
+    if (!notice || notice.taskId !== row.task_id || payload.ok !== false) continue;
+    const stored = typeof payload.costUsd === 'number' ? payload.costUsd : 0;
+    if (!(notice.estimate > stored)) continue;
+    fixes.push({ row, payload, delta: notice.estimate - stored });
+  }
+
+  let deltaUsd = 0;
+  const apply = sqlite.transaction(() => {
+    const setPayload = sqlite.prepare('UPDATE events SET payload = ? WHERE seq = ?');
+    const getJson = (table: 'tasks' | 'agents', id: string) =>
+      sqlite.prepare(`SELECT json FROM ${table} WHERE id = ?`).get(id) as
+        | { json: string }
+        | undefined;
+    const setTask = sqlite.prepare('UPDATE tasks SET json = ? WHERE id = ?');
+    const setAgent = sqlite.prepare('UPDATE agents SET json = ? WHERE id = ?');
+    const setDay = sqlite.prepare(
+      'UPDATE usage_daily SET cost_usd = cost_usd + ? WHERE date = ? AND agent_id = ?',
+    );
+    for (const { row, payload, delta } of fixes) {
+      deltaUsd += delta;
+      setPayload.run(
+        JSON.stringify({
+          ...payload,
+          costUsd: ((payload.costUsd as number | undefined) ?? 0) + delta,
+        }),
+        row.seq,
+      );
+      if (row.task_id) {
+        const t = getJson('tasks', row.task_id);
+        if (t) {
+          const task = JSON.parse(t.json) as { costUsd?: number };
+          task.costUsd = (task.costUsd ?? 0) + delta;
+          setTask.run(JSON.stringify(task), row.task_id);
+        }
+      }
+      const a = getJson('agents', row.agent_id);
+      if (a) {
+        const agent = JSON.parse(a.json) as { usage?: { costUsd?: number } };
+        if (agent.usage) {
+          agent.usage.costUsd = (agent.usage.costUsd ?? 0) + delta;
+          setAgent.run(JSON.stringify(agent), row.agent_id);
+        }
+      }
+      setDay.run(delta, localDate(new Date(row.ts)), row.agent_id);
+    }
+    sqlite
+      .prepare('INSERT INTO settings (key, value) VALUES (?, ?)')
+      .run(
+        INTERRUPTED_COST_MIGRATION_KEY,
+        JSON.stringify({ at: new Date().toISOString(), turns: fixes.length, deltaUsd }),
+      );
+  });
+  apply();
+  return { events: fixes.length, deltaUsd };
+}

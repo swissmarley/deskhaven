@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../src/db/client.js';
-import { migrateTurnCosts, TURN_COST_MIGRATION_KEY } from '../src/db/cost-migration.js';
+import {
+  INTERRUPTED_COST_MIGRATION_KEY,
+  migrateTurnCosts,
+  recoverInterruptedTurnCosts,
+  TURN_COST_MIGRATION_KEY,
+} from '../src/db/cost-migration.js';
 import { localDate } from '../src/usage/date.js';
 
 const DAY = new Date(2026, 9, 30, 12).getTime();
@@ -135,5 +140,81 @@ describe('turn cost migration', () => {
     expect(task()).toBeCloseTo(0.2, 9);
     expect(migrateTurnCosts(sqlite)).toBeNull();
     expect(task()).toBeCloseTo(0.2, 9);
+  });
+
+  it('recovers the estimate of turns the per-turn cap stopped and the SDK stored at $0', () => {
+    const { sqlite, turn, json } = legacyDb();
+    sqlite.prepare('DELETE FROM settings WHERE key = ?').run(INTERRUPTED_COST_MIGRATION_KEY);
+    const notice = (id: string, agentId: string, taskId: string, message: string) =>
+      sqlite
+        .prepare(
+          `INSERT INTO events (id, ts, agent_id, session_id, task_id, type, payload)
+           VALUES (?, ?, ?, 's1', ?, 'notification', ?)`,
+        )
+        .run(
+          id,
+          DAY,
+          agentId,
+          taskId,
+          JSON.stringify({
+            id,
+            ts: DAY,
+            agentId,
+            taskId,
+            type: 'notification',
+            kind: 'budget',
+            message,
+          }),
+        );
+    // f4e2b15e: stopped at $0.045, stored at $0.
+    notice(
+      'n1',
+      'eng',
+      'f4e2b15e',
+      'Tester-Eng reached the per-turn budget ($0.045 of $0.020 estimated). Interrupting the turn.',
+    );
+    turn('t1', 'eng', 's1', 'f4e2b15e', 0, { ok: false, sessionCostUsd: 0.3 });
+    // Stored by the fixed runtime at the estimate already: untouched.
+    notice(
+      'n2',
+      'eng',
+      'other',
+      'Tester-Eng reached the per-turn budget ($0.031 of $0.020 estimated). Interrupting the turn.',
+    );
+    turn('t2', 'eng', 's1', 'other', 0.031, { ok: false, sessionCostUsd: 0.3 });
+    // A failed turn with no budget notice before it: untouched.
+    turn('t3', 'eng', 's1', 'third', 0, { ok: false, sessionCostUsd: 0.3 });
+    json('agents', 'eng', { id: 'eng', usage: { costUsd: 0.5 } });
+    json('tasks', 'f4e2b15e', { id: 'f4e2b15e', costUsd: 0 });
+    json('tasks', 'other', { id: 'other', costUsd: 0.031 });
+    const date = localDate(new Date(DAY));
+    sqlite.prepare('INSERT INTO usage_daily VALUES (?, ?, ?, 0, 0, 0, 0, 3)').run(date, 'eng', 0.5);
+
+    const report = recoverInterruptedTurnCosts(sqlite);
+    expect(report?.events).toBe(1);
+    expect(report?.deltaUsd).toBeCloseTo(0.045, 9);
+    const payload = (id: string) =>
+      JSON.parse(String(read(sqlite, 'SELECT payload FROM events WHERE id = ?', id).payload));
+    expect(payload('t1').costUsd).toBeCloseTo(0.045, 9);
+    expect(payload('t2').costUsd).toBe(0.031);
+    expect(payload('t3').costUsd).toBe(0);
+    const doc = (table: string, id: string) =>
+      JSON.parse(String(read(sqlite, `SELECT json FROM ${table} WHERE id = ?`, id).json));
+    expect(doc('tasks', 'f4e2b15e').costUsd).toBeCloseTo(0.045, 9);
+    expect(doc('tasks', 'other').costUsd).toBe(0.031);
+    expect(doc('agents', 'eng').usage.costUsd).toBeCloseTo(0.545, 9);
+    expect(
+      Number(
+        read(
+          sqlite,
+          'SELECT cost_usd FROM usage_daily WHERE date = ? AND agent_id = ?',
+          date,
+          'eng',
+        ).cost_usd,
+      ),
+    ).toBeCloseTo(0.545, 9);
+    // Runs once.
+    expect(recoverInterruptedTurnCosts(sqlite)).toBeNull();
+    expect(doc('tasks', 'f4e2b15e').costUsd).toBeCloseTo(0.045, 9);
   });
 });
