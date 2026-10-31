@@ -308,9 +308,10 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
             </label>
           </div>
           <p className="muted small">
-            Max $ / turn: Deskhaven interrupts the turn as soon as its running estimate reaches the
-            limit, so a turn can go over by at most the model call that crossed it. Costs are
-            estimates.
+            Max $ / turn: Deskhaven interrupts the turn as soon as its cost reaches the limit (its
+            own running estimate, priced like the SDK, or the SDK's running total, whichever is
+            higher), so a turn can go over by at most the model call that crossed it. Costs are the
+            SDK's estimates.
           </p>
           <label className="inline small">
             <input

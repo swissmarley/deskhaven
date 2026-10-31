@@ -285,4 +285,49 @@ describe('TaskDetail merge conflict', () => {
     expect(merge.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Go to merge' })).toBeTruthy();
   });
+
+  it('tells the user when an open confirmation expired', async () => {
+    vi.useFakeTimers();
+    useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    await vi.waitFor(() => screen.getByText(/deskhaven\/ada → main/));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept & merge' }));
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(screen.getByText(/confirmation expired after a minute/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Accept & merge' }));
+    expect(screen.queryByText(/confirmation expired/)).toBeNull();
+  });
+
+  it("offers no merge on a done task whose branch holds the agent's later task", async () => {
+    vi.mocked(api.mergePreview).mockResolvedValue({
+      ...preview,
+      ahead: 0,
+      dirty: true,
+      files: [{ path: 'notepad.py', status: ' M' }],
+      canMerge: false,
+      reason: 'The changes on the branch belong to "notepad.py header comment"',
+      ownerTask: { id: 't2', title: 'notepad.py header comment', status: 'review' },
+    });
+    useAppStore.setState({
+      agents: { eng: agent },
+      tasks: { t1: task({ title: 'Fix filetypes kwarg', status: 'done' }) },
+    });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    expect(await screen.findByText('Nothing to merge for this task.')).toBeTruthy();
+    expect(screen.getByText(/belong to "notepad.py header comment"/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Accept & merge' })).toBeNull();
+  });
+
+  it("warns on a review task that the branch also holds the agent's later task", async () => {
+    vi.mocked(api.mergePreview).mockResolvedValue({
+      ...preview,
+      ownerTask: { id: 't2', title: 'Later task', status: 'review' },
+    });
+    useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    expect(await screen.findByText(/latest task is "Later task"/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Accept & merge' })).toBeTruthy();
+  });
 });

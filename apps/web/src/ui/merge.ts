@@ -44,6 +44,18 @@ export function nothingToMerge(
 }
 
 /**
+ * The task whose work is on the branch, when it is not `task`. A done task does not offer the merge
+ * then: the agent's worktree is shared, and its latest task owns the uncommitted changes.
+ */
+export function changesOwnedElsewhere(
+  task: Pick<Task, 'id' | 'status'>,
+  preview: Pick<MergePreview, 'ownerTask'> | null | undefined,
+): NonNullable<MergePreview['ownerTask']> | null {
+  const owner = preview?.ownerTask;
+  return owner && owner.id !== task.id ? owner : null;
+}
+
+/**
  * Whether "Accept & merge" can be pressed, and why not. The button stays disabled until the preview
  * has loaded: confirming against a preview that is still on its way would be reset when it lands.
  */

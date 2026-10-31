@@ -27,6 +27,9 @@ class FakeSession {
   private waiting: ((r: IteratorResult<SDKMessage>) => void) | null = null;
   private closed = false;
   interrupts = 0;
+  /** What the experimental get_usage control request reports; null = not supported. */
+  sdkTotal: number | null = null;
+  usageCalls = 0;
   constructor(
     readonly cfg: SessionConfig,
     readonly cb: SessionCallbacks,
@@ -82,6 +85,11 @@ class FakeSession {
       interrupt: async () => {
         self.interrupts++;
         return { still_queued: [] };
+      },
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
+        self.usageCalls++;
+        if (self.sdkTotal === null) throw new Error('unsupported');
+        return { session: { total_cost_usd: self.sdkTotal } };
       },
     };
     return q as unknown as Query;
@@ -710,10 +718,143 @@ describe('AgentRuntime', () => {
     await rt.stop();
   });
 
+  it("gives an agent without its own tool list the preset's tools, not the whole surface", () => {
+    const { rt, sessions } = setup({ tools: null, rolePresetId: 'engineer' });
+    rt.sendPrompt('hi', null);
+    expect(sessions[0]?.cfg.tools).toEqual(['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep']);
+    const own = setup({ tools: ['Read'], rolePresetId: 'engineer' });
+    own.rt.sendPrompt('hi', null);
+    expect(own.sessions[0]?.cfg.tools).toEqual(['Read']);
+  });
+
   it('keeps resuming across tasks when freshSessionPerTask is off', async () => {
     const { rt, sessions } = setup({ sessionId: 'sess-old' });
     rt.sendPrompt('task A', 'A');
     expect(sessions[0]?.cfg.resume).toBe('sess-old');
+    await rt.stop();
+  });
+
+  it('interrupts a Haiku 5.5 turn the SDK prices at the default-model rate', async () => {
+    const { rt, sessions, all } = setup({
+      model: 'claude-haiku-5-5',
+      budget: { maxBudgetUsd: 0.1 },
+    });
+    rt.sendPrompt('small fix', 'task1');
+    const s = sessions[0] as FakeSession;
+    s.emit({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        id: 'h1',
+        model: 'claude-haiku-5-5',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'reading' }],
+        usage: {
+          input_tokens: 10,
+          cache_creation_input_tokens: 32_000,
+          cache_read_input_tokens: 63_000,
+          cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 32_000 },
+          output_tokens: 50,
+        },
+      },
+    });
+    await tick();
+    expect(s.interrupts).toBe(1);
+    expect(all().some((e) => e.type === 'notification' && e.kind === 'budget')).toBe(true);
+    await rt.stop();
+  });
+
+  it('counts the final output tokens from streamed message_delta events', async () => {
+    const { rt, sessions } = setup({ budget: { maxBudgetUsd: 0.05 } });
+    rt.sendPrompt('write a lot', 't1');
+    const s = sessions[0] as FakeSession;
+    s.emit({
+      type: 'stream_event',
+      parent_tool_use_id: null,
+      event: {
+        type: 'message_start',
+        message: {
+          id: 'm1',
+          model: 'claude-sonnet-5-5',
+          usage: { input_tokens: 100, output_tokens: 1 },
+        },
+      },
+    });
+    await tick();
+    expect(s.interrupts).toBe(0);
+    // 6,000 output tokens on Sonnet 5.5 = $0.06: only the delta reports them.
+    s.emit({
+      type: 'stream_event',
+      parent_tool_use_id: null,
+      event: { type: 'message_delta', delta: {}, usage: { output_tokens: 6_000 } },
+    });
+    await tick();
+    expect(s.interrupts).toBe(1);
+    await rt.stop();
+  });
+
+  it("also stops when the SDK's running total for the turn reaches the cap", async () => {
+    const { rt, sessions } = setup({ model: 'claude-haiku-4-5', budget: { maxBudgetUsd: 0.1 } });
+    rt.sendPrompt('first', 't1');
+    const s = sessions[0] as FakeSession;
+    s.sdkTotal = 0.5; // cumulative before this turn
+    await tick();
+    rt.sendPrompt('ignored until the turn ends', 't1');
+    const finish = () =>
+      s.emit({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        duration_ms: 1,
+        duration_api_ms: 1,
+        num_turns: 1,
+        result: 'ok',
+        stop_reason: 'end_turn',
+        total_cost_usd: s.sdkTotal,
+        usage: { input_tokens: 1, output_tokens: 1 },
+        modelUsage: {},
+        permission_denials: [],
+      });
+    finish();
+    await tick(); // the second prompt is dispatched; its baseline reading is 0.5
+    expect(s.usageCalls).toBeGreaterThan(0);
+    // The table prices this response at well under $0.10, but the SDK says the turn cost $0.15.
+    s.sdkTotal = 0.65;
+    s.emit({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        id: 'x1',
+        model: 'claude-haiku-4-5',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'hi' }],
+        usage: { input_tokens: 100, output_tokens: 100 },
+      },
+    });
+    await tick();
+    await tick();
+    expect(s.interrupts).toBe(1);
+    await rt.stop();
+  });
+
+  it('keeps working on its own estimate when the SDK cannot report a running total', async () => {
+    const { rt, sessions } = setup({ budget: { maxBudgetUsd: 1 } });
+    rt.sendPrompt('go', 't1');
+    const s = sessions[0] as FakeSession;
+    s.emit({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        id: 'a',
+        model: 'claude-sonnet-5-5',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'hi' }],
+        usage: { input_tokens: 10, output_tokens: 10 },
+      },
+    });
+    await tick();
+    expect(s.interrupts).toBe(0);
+    expect(rt.getStatus()).toBe('working');
     await rt.stop();
   });
 });

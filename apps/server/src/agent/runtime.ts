@@ -31,9 +31,15 @@ import {
   type SDKMessage,
   type SessionCallbacks,
   type SessionConfig,
+  sessionCostUsd,
   startAgentSession,
 } from './sdk-adapter.js';
 import { TurnCostMeter, turnCostFromCumulative } from './turn-cost.js';
+
+/** Minimum gap between two mid-turn reads of the SDK's running cost. */
+const COST_PROBE_INTERVAL_MS = 1500;
+
+type TurnUsage = Parameters<TurnCostMeter['add']>[2];
 
 export interface RuntimeLogger {
   info(obj: unknown, msg?: string): void;
@@ -107,6 +113,16 @@ export class AgentRuntime {
   private readonly turnCost = new TurnCostMeter();
   /** Set when this turn was interrupted for reaching `budget.maxBudgetUsd`. */
   private turnBudgetHit: { estimateUsd: number; capUsd: number } | null = null;
+  /** Bumped per dispatched prompt, so a late SDK cost reading cannot land on the next turn. */
+  private turnSeq = 0;
+  /** The SDK's cumulative cost when this turn was dispatched; null until (or unless) it answers. */
+  private turnSdkBase: number | null = null;
+  /** This turn's cost according to the SDK's running total (0 until a reading arrives). */
+  private turnSdkCost = 0;
+  private costProbeInFlight = false;
+  private lastCostProbeAt = 0;
+  /** Streamed responses: message id and model per parent tool use, for `message_delta` usage. */
+  private readonly streamMessage = new Map<string, { id: string; model: string }>();
   /** The SDK's cumulative `total_cost_usd` after the previous turn of the live process. */
   private sessionCostBase = 0;
   /** Task of the last prompt dispatched to the live session; undefined = not known yet. */
@@ -191,14 +207,15 @@ export class AgentRuntime {
     if (this.wantsFreshSession(this.queue[0]?.taskId ?? null)) this.dropSession();
     this.sessionCostBase = this.savedSessionCost();
     this.sessionClean = !this.sessionId;
+    const preset =
+      this.deps.presetLookup?.(this.agent.rolePresetId) ?? presetById(this.agent.rolePresetId);
     const cfg: SessionConfig = {
       cwd: this.cwd(),
-      model: sessionModel(
-        this.agent,
-        this.deps.presetLookup?.(this.agent.rolePresetId) ?? presetById(this.agent.rolePresetId),
-      ),
+      model: sessionModel(this.agent, preset),
       systemPromptAppend: this.agent.systemPrompt,
-      tools: this.agent.tools,
+      // An empty tool list means the preset's set (as the HR form says); only a preset without a
+      // list gives the whole Claude Code surface, whose definitions cost tens of thousands of tokens.
+      tools: this.agent.tools ?? preset?.tools ?? null,
       allowedTools: this.agent.allowedTools,
       permissionMode: this.agent.permissionMode,
       env,
@@ -449,8 +466,15 @@ export class AgentRuntime {
     this.sessionClean = false;
     this.turnCost.reset();
     this.turnBudgetHit = null;
+    this.turnSeq++;
+    this.turnSdkBase = null;
+    this.turnSdkCost = 0;
+    this.lastCostProbeAt = 0;
+    this.streamMessage.clear();
     this.inTurn = true;
     this.setStatus('working');
+    // Read the SDK's running total before the prompt goes out: it is the baseline for this turn.
+    if (this.agent.budget.maxBudgetUsd) this.readTurnBase(this.turnSeq);
     this.session.prompts.push(next.text);
   }
 
@@ -478,6 +502,7 @@ export class AgentRuntime {
     this.lastActivityAt = Date.now();
     recordSdkMessage(m);
     if (m.type === 'assistant') this.onAssistantUsage(m);
+    else if (m.type === 'stream_event') this.onStreamUsage(m);
     for (const ev of normalizeSdkMessage(m, this.ctx())) this.process(ev);
     if (m.type === 'result') this.onTurnEnd();
   }
@@ -491,21 +516,89 @@ export class AgentRuntime {
     if (!this.inTurn) return;
     const msg = m.message as { id?: string; model?: string; usage?: unknown } | undefined;
     if (!msg?.usage || typeof msg.usage !== 'object') return;
-    const estimate = this.turnCost.add(
-      msg.id,
-      msg.model ?? this.agent.model,
-      msg.usage as Parameters<TurnCostMeter['add']>[2],
-    );
+    this.turnCost.add(msg.id, msg.model ?? this.agent.model, msg.usage as TurnUsage);
+    this.checkTurnBudget();
+  }
+
+  /**
+   * With partial messages on, `message_start` carries a response's input and cache usage and
+   * `message_delta` its final output count, which the assistant messages report only partially.
+   */
+  private onStreamUsage(m: Extract<SDKMessage, { type: 'stream_event' }>): void {
+    if (!this.inTurn) return;
+    const key = m.parent_tool_use_id ?? '';
+    const ev = m.event as {
+      type?: string;
+      message?: { id?: string; model?: string; usage?: unknown };
+      usage?: unknown;
+    };
+    if (ev.type === 'message_start' && ev.message?.id) {
+      const model = ev.message.model ?? this.agent.model;
+      this.streamMessage.set(key, { id: ev.message.id, model });
+      if (ev.message.usage && typeof ev.message.usage === 'object')
+        this.turnCost.add(ev.message.id, model, ev.message.usage as TurnUsage);
+    } else if (ev.type === 'message_delta' && ev.usage && typeof ev.usage === 'object') {
+      const current = this.streamMessage.get(key);
+      if (!current) return;
+      this.turnCost.add(current.id, current.model, ev.usage as TurnUsage);
+    } else return;
+    this.checkTurnBudget();
+  }
+
+  /**
+   * Interrupts the turn once the larger of two readings reaches `budget.maxBudgetUsd`: the runtime's
+   * own estimate (updated as each API response streams in, priced like the SDK) and the SDK's running
+   * total minus its value when the turn started. The second catches anything the price table misses
+   * (a model the bundled CLI prices differently, managed pricing), one reading behind.
+   */
+  private checkTurnBudget(): void {
     const cap = this.agent.budget.maxBudgetUsd;
-    if (!cap || this.turnBudgetHit || estimate < cap) return;
-    this.turnBudgetHit = { estimateUsd: estimate, capUsd: cap };
-    this.emit({
-      ...this.baseEvent(),
-      type: 'notification',
-      kind: 'budget',
-      message: `${this.agent.name} reached the per-turn budget ($${estimate.toFixed(2)} of $${cap.toFixed(2)} estimated). Interrupting the turn.`,
+    if (!cap || this.turnBudgetHit) return;
+    const spent = Math.max(this.turnCost.totalUsd, this.turnSdkCost);
+    if (spent >= cap) {
+      this.turnBudgetHit = { estimateUsd: spent, capUsd: cap };
+      this.emit({
+        ...this.baseEvent(),
+        type: 'notification',
+        kind: 'budget',
+        message: `${this.agent.name} reached the per-turn budget ($${spent.toFixed(2)} of $${cap.toFixed(2)} estimated). Interrupting the turn.`,
+      });
+      void this.interrupt();
+      return;
+    }
+    this.probeSdkCost();
+  }
+
+  private readTurnBase(seq: number): void {
+    const q = this.session?.query;
+    if (!q) return;
+    void sessionCostUsd(q).then((total) => {
+      if (seq === this.turnSeq && total !== null) this.turnSdkBase = total;
     });
-    void this.interrupt();
+  }
+
+  /** Ask the SDK for its running total, at most one request in flight and one per interval. */
+  private probeSdkCost(): void {
+    const q = this.session?.query;
+    if (!q || this.costProbeInFlight || this.turnSdkBase === null) return;
+    const now = Date.now();
+    if (now - this.lastCostProbeAt < COST_PROBE_INTERVAL_MS) return;
+    this.lastCostProbeAt = now;
+    this.costProbeInFlight = true;
+    const seq = this.turnSeq;
+    void sessionCostUsd(q)
+      .then((total) => {
+        if (seq !== this.turnSeq || !this.inTurn || total === null || this.turnSdkBase === null)
+          return;
+        this.turnSdkCost = Math.max(
+          this.turnSdkCost,
+          turnCostFromCumulative(total, this.turnSdkBase),
+        );
+        this.checkTurnBudget();
+      })
+      .finally(() => {
+        this.costProbeInFlight = false;
+      });
   }
 
   /** True when `freshSessionPerTask` is on and the next prompt belongs to another task. */

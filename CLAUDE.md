@@ -62,9 +62,25 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
 - `result.total_cost_usd` is an estimate, includes subagents and is **cumulative per process** (resumed
   processes continue from the saved total); the runtime differences it per turn (`turn_completed.costUsd`,
   raw total in `sessionCostUsd`). `result.usage` is main-loop only and per turn.
-- "Max $ / turn" (`budget.maxBudgetUsd`) is enforced by `AgentRuntime` from assistant-message usage
-  (`agent/turn-cost.ts`, price table per model family; update it when prices change). It is no longer
-  passed to the SDK, whose cap is cumulative per process.
+- "Max $ / turn" (`budget.maxBudgetUsd`) is enforced by `AgentRuntime` and no longer passed to the SDK
+  (whose cap is cumulative per process). It stops at the larger of its own estimate (`agent/turn-cost.ts`,
+  from `message_start`/`message_delta`/assistant usage) and the SDK's running total read mid-turn through
+  the experimental `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET` (null-safe).
+- `turn-cost.ts` mirrors the price catalog **of the bundled `claude` binary**, not the public price list,
+  because every cap and total uses the SDK's figure. SDK 0.3.287 does not know `claude-haiku-5-5` and
+  prices it (like any unknown id) at its default model's rate, Sonnet 5.5 ($2/$10, 1h cache write $4,
+  read $0.20): Haiku 5.5 turns are reported ~20x above list price. Re-check on every SDK upgrade:
+  `strings $(find node_modules/.pnpm -path '*claude-agent-sdk-linux-x64*' -name claude -type f) | grep -o 'tier_[0-9a-z_]*:{input:[^}]*}'`
+  and the `{id:"claude-…",…pricing:"tier_…"}` catalog entries.
+- Stored turn costs before 2026-10-31 were cumulative; `db/cost-migration.ts` rewrote them once at boot
+  (settings key `migration.turn_cost_per_turn`) and corrected task, agent and daily totals.
+- Office totals in the header (today and all time) sum `usage_daily`, which keeps the rows of fired
+  agents; the HR list shows each agent's cost today and a line for agents no longer on staff.
+- Every task of an agent shares one worktree and branch. The merge preview names the task that ran last
+  there (`ownerTask`); a done task whose branch holds another task's work offers no merge (409
+  `changes_belong_to_other_task` on the API).
+- An agent's `tools: null` means its preset's list; the Engineer preset now ships Read, Edit, Write,
+  Bash, Glob, Grep (the whole Claude Code surface cost ~95k tokens per new session).
 - The SDK prints `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` at every spawn: bare `allowedTools` names skip
   `canUseTool`. Intended: `allowedTools` is the auto-approve list; the workdir edit guard is a
   `PreToolUse` hook and still runs for them.

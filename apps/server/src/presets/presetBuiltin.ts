@@ -29,6 +29,29 @@ export const ENGINEER_PRESET_LEGACY: RolePreset = RolePresetSchema.parse({
   permissionMode: 'default',
 });
 
+/** Engineer built-in with task-scope discipline and the full tool set (main @ 31.10.2026). */
+export const ENGINEER_PRESET_FULL_TOOLS: RolePreset = RolePresetSchema.parse({
+  id: 'engineer',
+  name: 'Engineer',
+  description:
+    'Implements changes. Edits are auto-approved inside the workdir; shell commands ask first.',
+  systemPrompt:
+    'You are an Engineer. Implement the task end to end inside your working directory: read the relevant code first, make focused edits, and keep the code style of the repository. Change only what this task asks for. If you notice other improvements or bugs, do not fix them: list them under "Suggested follow-ups (not done)" in your summary. When you finish, end with a short summary with sections Changed, How to verify, and Suggested follow-ups (not done). Ask for permission before running shell commands; prefer running the project\'s own test command.',
+  tools: null,
+  allowedTools: [
+    'Read',
+    'Grep',
+    'Glob',
+    'LS',
+    'Edit',
+    'Write',
+    'MultiEdit',
+    'NotebookEdit',
+    'TodoWrite',
+  ],
+  permissionMode: 'default',
+});
+
 /** Manager built-in on main before PR #4 model/settings changes (hash pinned for migration). */
 export const MANAGER_PRESET_MAIN: RolePreset = RolePresetSchema.parse({
   id: 'manager',
@@ -65,10 +88,11 @@ export const MANAGER_PRESET_MAIN: RolePreset = RolePresetSchema.parse({
 });
 
 export const ENGINEER_PRESET_LEGACY_HASH = hashRolePreset(ENGINEER_PRESET_LEGACY);
+export const ENGINEER_PRESET_FULL_TOOLS_HASH = hashRolePreset(ENGINEER_PRESET_FULL_TOOLS);
 export const MANAGER_PRESET_MAIN_HASH = hashRolePreset(MANAGER_PRESET_MAIN);
 
 /** Prior shipped hashes per built-in id; auto-migrate when the DB row still matches one of them. */
 export const BUILTIN_PRESET_LEGACY_HASH: Record<string, readonly string[]> = {
-  engineer: [ENGINEER_PRESET_LEGACY_HASH],
+  engineer: [ENGINEER_PRESET_LEGACY_HASH, ENGINEER_PRESET_FULL_TOOLS_HASH],
   manager: [MANAGER_PRESET_MAIN_HASH],
 };
