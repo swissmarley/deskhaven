@@ -958,4 +958,41 @@ describe('AgentRuntime', () => {
     expect(turn).toMatchObject({ costUsd: 0.15 });
     await rt.stop();
   });
+
+  it("logs a prompt with the session it will run in, and without another turn's task", async () => {
+    const { rt, sessions, events, all } = setup({
+      sessionId: 'sess-old',
+      budget: { freshSessionPerTask: true },
+    });
+    events.append({
+      id: 'prev',
+      ts: 1,
+      agentId: 'a1',
+      taskId: 'A',
+      type: 'message_sent',
+      text: 'A',
+    });
+    rt.sendPrompt('more on A', 'A'); // same task: resumes sess-old
+    rt.sendPrompt('a chat line', null); // not a task prompt
+    const sent = all().filter((e) => e.type === 'message_sent' && e.id !== 'prev');
+    expect(sent[0]).toMatchObject({ sessionId: 'sess-old', taskId: 'A' });
+    expect(sent[1]?.taskId).toBeUndefined();
+    await rt.stop();
+    // A new task starts a fresh session: its prompt must not claim sess-old.
+    const fresh = setup({ sessionId: 'sess-old', budget: { freshSessionPerTask: true } });
+    fresh.events.append({
+      id: 'p',
+      ts: 1,
+      agentId: 'a1',
+      taskId: 'A',
+      type: 'message_sent',
+      text: 'A',
+    });
+    fresh.rt.sendPrompt('task B', 'B');
+    const b = fresh.all().find((e) => e.type === 'message_sent' && e.taskId === 'B');
+    expect(b?.sessionId).toBeUndefined();
+    expect(fresh.sessions[0]?.cfg.resume).toBeUndefined();
+    void sessions;
+    await fresh.rt.stop();
+  });
 });

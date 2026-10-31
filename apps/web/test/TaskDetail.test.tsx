@@ -355,4 +355,44 @@ describe('TaskDetail merge conflict', () => {
     expect(screen.getByText('— "notepad header"')).toBeTruthy();
     expect(screen.getByText('— origin unknown')).toBeTruthy();
   });
+
+  it('links a task whose changes went in with another task to that task and commit', () => {
+    useAppStore.setState({
+      agents: { eng: agent },
+      tasks: {
+        t1: task({
+          title: 'README run note',
+          status: 'done',
+          merge: {
+            status: 'merged',
+            strategy: 'squash',
+            branch: 'deskhaven/ada',
+            targetBranch: 'main',
+            commit: '85c9a05aaaaaaa',
+            conflictFiles: [],
+            error: null,
+            mergedAt: 2,
+            viaTaskId: 't2',
+          },
+        }),
+        t2: task({ id: 't2', title: 'Final: comment above open_file', status: 'done' }),
+      },
+    });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    expect(
+      screen.getByText(/Its changes went in with "Final: comment above open_file"/).textContent,
+    ).toContain('85c9a05');
+  });
+
+  it('tells how to reach the merge when the owning task is not in review yet', async () => {
+    vi.mocked(api.mergePreview).mockResolvedValue({
+      ...preview,
+      canMerge: false,
+      ownerTask: { id: 't2', title: 'Final: comment above open_file', status: 'needs_input' },
+    });
+    useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    expect(await screen.findByText(/once it is in Review/)).toBeTruthy();
+    expect(screen.getByText(/a task in needs input has no merge controls/)).toBeTruthy();
+  });
 });

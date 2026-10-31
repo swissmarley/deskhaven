@@ -3,10 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../app.js';
+import { REPO_ROOT } from '../config.js';
 
 /** Where the bundled sample repo lives inside this monorepo. */
 export function bundledSamplePath(): string {
-  return path.resolve(import.meta.dirname, '../../../../examples/sample-repo');
+  return path.join(REPO_ROOT, 'examples', 'sample-repo');
 }
 
 /**

@@ -31,6 +31,10 @@ export function TaskDetail({
   onClose: () => void;
 }): JSX.Element | null {
   const task = useAppStore((s) => s.tasks[taskId]);
+  const viaTitle = useAppStore((s) => {
+    const via = s.tasks[taskId]?.merge?.viaTaskId;
+    return via ? s.tasks[via]?.title : undefined;
+  });
   const agents = useAppStore(useShallow((s) => Object.values(s.agents)));
   const pushNotice = useAppStore((s) => s.pushNotice);
   const selectAgent = useAppStore((s) => s.selectAgent);
@@ -247,6 +251,12 @@ export function TaskDetail({
               </button>
             </span>
           </div>
+          {task.merge?.status === 'merged' && task.merge.viaTaskId ? (
+            <p className="small muted">
+              Its changes went in with "{viaTitle ?? 'another task'}" (same worktree), in commit{' '}
+              <span className="mono">{task.merge.commit?.slice(0, 7)}</span>.
+            </p>
+          ) : null}
           <dl className="kv">
             <dt>Assignee</dt>
             <dd className="assignee-row">
@@ -302,7 +312,10 @@ export function TaskDetail({
                   <span className="muted">
                     The changes on {preview?.branch} belong to "{owner.title}" ({owner.status}), the
                     task that last changed files in the agent's worktree. The worktree is shared by
-                    all of the agent's tasks: merge them from that task.
+                    all of the agent's tasks: merge them from that task
+                    {owner.status === 'review' || owner.status === 'done'
+                      ? '.'
+                      : ` once it is in Review (a task in ${owner.status.replace('_', ' ')} has no merge controls: move it to Review from its window).`}
                   </span>
                 </p>
               ) : (

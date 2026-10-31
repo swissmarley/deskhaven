@@ -985,6 +985,33 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     expect(after.canMerge).toBe(true);
   });
 
+  it('waits for the post-turn comparison before answering a preview', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Quick', true)).json();
+    const first = await reviewTask(agent.id, 'Earlier');
+    const later = await reviewTask(agent.id, 'Later');
+    fs.writeFileSync(path.join(agent.worktree.path, 'later.txt'), 'later\n');
+    built.ctx.events.append({
+      id: `quick-${later}`,
+      ts: Date.now(),
+      agentId: agent.id,
+      taskId: later,
+      type: 'turn_completed',
+      ok: true,
+      subtype: 'success',
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      numTurns: 1,
+      durationMs: 1,
+    });
+    // No sleep: the preview itself waits for the turn to be recorded.
+    const p = (await req({ method: 'GET', url: `/api/tasks/${first}/merge-preview` })).json();
+    expect(p).toMatchObject({ canMerge: false, ownerTask: { id: later } });
+  });
+
   it('attributes nothing for an agent whose worktree was never compared (older data)', async () => {
     const repo = tmpRepo();
     const agent = (await hire(repo, 'Legacy', true)).json();
@@ -1077,6 +1104,85 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     // Refused either way (the open task also makes the agent count as busy).
     expect(refused.statusCode).toBe(409);
     expect(['not_ready', 'agent_busy']).toContain(refused.json().error);
+  });
+
+  it('says in the preview that the agent is busy, and stops counting a stalled Needs-input task', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Busy', true)).json();
+    fs.writeFileSync(path.join(agent.worktree.path, 'done.txt'), 'done\n');
+    const ready = await reviewTask(agent.id, 'Ready to merge');
+    const created = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { title: 'Still working', prompt: 'p', assigneeAgentId: agent.id },
+    });
+    const other = created.json().id as string;
+    await req({ method: 'PATCH', url: `/api/tasks/${other}`, payload: { status: 'in_progress' } });
+
+    const busy = (await req({ method: 'GET', url: `/api/tasks/${ready}/merge-preview` })).json();
+    expect(busy.canMerge).toBe(false);
+    expect(busy.reason).toMatch(/busy on "Still working"/);
+    const refused = await req({
+      method: 'POST',
+      url: `/api/tasks/${ready}/merge`,
+      payload: await mergePayload(ready),
+    });
+    expect(refused.json().error).toBe('agent_busy');
+
+    // Stopped by the per-turn cap (or waiting for a reply) while the agent sits idle: not a blocker.
+    await req({ method: 'PATCH', url: `/api/tasks/${other}`, payload: { status: 'needs_input' } });
+    const free = (await req({ method: 'GET', url: `/api/tasks/${ready}/merge-preview` })).json();
+    expect(free.canMerge).toBe(true);
+    const merged = await req({
+      method: 'POST',
+      url: `/api/tasks/${ready}/merge`,
+      payload: await mergePayload(ready),
+    });
+    expect(merged.statusCode).toBe(200);
+  });
+
+  it('marks a finished task whose edits rode along as merged with the same commit', async () => {
+    const repo = tmpRepo();
+    fs.writeFileSync(path.join(repo, 'README.md'), '# app\n');
+    fs.writeFileSync(path.join(repo, 'notepad.py'), 'print(1)\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'files');
+    const agent = (await hire(repo, 'Riders', true)).json();
+    const wt = agent.worktree.path as string;
+    const readme = await reviewTask(agent.id, 'README run note');
+    const notepad = await reviewTask(agent.id, 'Final: comment above open_file');
+    const editEvent = (taskId: string, file: string) =>
+      built.ctx.events.append({
+        id: `ride-${taskId}-${file}`,
+        ts: Date.now(),
+        agentId: agent.id,
+        taskId,
+        type: 'tool_started',
+        toolUseId: `ride-${taskId}-${file}`,
+        tool: 'Edit',
+        category: 'edit',
+        input: { file_path: path.join(wt, file) },
+        summary: file,
+      });
+    fs.appendFileSync(path.join(wt, 'README.md'), 'Run: python notepad.py\n');
+    editEvent(readme, 'README.md');
+    fs.writeFileSync(path.join(wt, 'notepad.py'), '# open_file\nprint(1)\n');
+    editEvent(notepad, 'notepad.py');
+
+    const merged = await req({
+      method: 'POST',
+      url: `/api/tasks/${notepad}/merge`,
+      payload: await mergePayload(notepad),
+    });
+    expect(merged.statusCode).toBe(200);
+    const commit = built.ctx.tasks.get(notepad)?.merge?.commit;
+    expect(commit).toMatch(/^[0-9a-f]{7,}/);
+    const rider = built.ctx.tasks.get(readme);
+    expect(rider).toMatchObject({
+      status: 'done',
+      merge: { status: 'merged', commit, viaTaskId: notepad },
+    });
+    expect(fs.readFileSync(path.join(repo, 'README.md'), 'utf8')).toContain('Run: python');
   });
 
   it('lists uncommitted hook runner configs in the preview', async () => {

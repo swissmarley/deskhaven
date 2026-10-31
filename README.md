@@ -29,12 +29,29 @@ pnpm i          # Node >= 22 and pnpm 10; downloads the SDK's native claude bina
 pnpm dev        # server on http://127.0.0.1:8787, web UI on http://127.0.0.1:5173
 ```
 
-Open http://127.0.0.1:5173. On first run the app picks an authentication mode (below), prepares a small
-sample repository under `~/.deskhaven/sample-repo`, and lets you hire your first agent.
+Open http://127.0.0.1:5173. On first run a short wizard picks an authentication mode (below), offers
+a small sample repository at step 2 (it is copied to `~/.deskhaven/sample-repo` only when you choose it
+there), and lets you hire your first agent.
 
-Other commands: `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, `pnpm start` (production
-server; set `DESKHAVEN_WEB_DIST=apps/web/dist` to serve the built UI from the same port; relative paths
-are resolved from the repository root).
+Other commands: `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`.
+
+**Ports.** `DESKHAVEN_PORT` (API, default 8787) and `DESKHAVEN_DEV_WEB_PORT` (web UI in `pnpm dev`,
+default 5173) set both sides at once: the Vite proxy and the server's origin check read the same
+variables, e.g. `DESKHAVEN_PORT=9000 DESKHAVEN_DEV_WEB_PORT=5200 pnpm dev`. Nothing to edit in
+`vite.config.ts`.
+
+### Production
+
+```bash
+pnpm i                      # full install: the build needs the dev tools
+pnpm build                  # type-checks, bundles the server into apps/server/dist, builds the UI
+pnpm i --prod               # optional: drop the dev tools afterwards
+DESKHAVEN_WEB_DIST=apps/web/dist pnpm start   # API and UI from one port (8787 unless DESKHAVEN_PORT)
+```
+
+`pnpm start` runs the bundled JavaScript (`node apps/server/dist/index.js`), so it needs no TypeScript
+runner and works after `pnpm i --prod`; run `pnpm build` again after pulling changes. Relative
+`DESKHAVEN_WEB_DIST` paths are resolved from the repository root.
 
 ## Authentication: two modes
 
@@ -73,6 +90,16 @@ Caveats worth knowing:
 - **Task board** — Backlog → Assigned → In progress → Needs input → Review → Done. Drag a card onto an
   avatar to assign it. Each card keeps the prompt, assignee, result summary, files changed, cost and
   timestamps.
+- **One worktree per agent, shared by its tasks** — an agent hired with a git worktree works in
+  `~/.deskhaven/worktrees/<agent>` on its own branch, and every task you give it edits that same folder
+  and branch. Changes are not committed per task: "Accept & merge" commits whatever the worktree holds
+  and merges it into the branch the agent was hired from (squash by default). The merge is offered on
+  the task that last changed files; the preview names, file by file, the task behind each change, and
+  finished tasks whose edits went in with that merge are marked merged with the same commit. Give one
+  agent one change at a time, or merge before starting the next, if you want one commit per task.
+  Merge commits use your git `user.name`/`user.email` from the source repository; when git has none
+  configured they are authored as `Deskhaven <deskhaven@localhost>` (set `git config user.name` and
+  `user.email` to change that). Nothing is pushed.
 - **Manager** — give a Manager agent a goal; it lists employees, creates tasks and assigns them through
   in-process MCP tools. Delegation is flat: managers never delegate to managers.
 - **Permissions** — the default mode is *ask*. Dangerous tools (Bash, writes outside the workdir) open an
@@ -80,7 +107,10 @@ Caveats worth knowing:
   suggested rule scoped to the session. Unanswered requests time out into a deny.
 - **Safety** — kill switch, per-agent and global daily budgets, per-session `maxTurns`, a per-turn cost cap
   ("Max $ / turn": the turn is interrupted as soon as its running estimate reaches the cap, so it can
-  overshoot by at most one model call), an optional fresh session per task,
+  overshoot by at most one model call; the task then waits in Needs input with the reason in its result
+  and does not block merges of the agent's other tasks), an optional fresh session per task (its first
+  turn costs about $0.11 just to load the system prompt and tools, so keep "Max $ / turn" at $0.22 or more
+  with it; the HR form warns below that),
   concurrency cap (busy agents), idle processes stopped after a timeout (sessions stay resumable), a
   `PreToolUse` guard that denies edits outside the working directory.
 - **Room editor** — place, move, rotate and remove furniture, paint floors and walls; layouts are saved

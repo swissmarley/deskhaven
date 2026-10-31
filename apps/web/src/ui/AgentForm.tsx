@@ -322,6 +322,11 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
             Start a fresh session for each new task (cheaper: small tasks do not carry earlier
             context; replies about the same task keep it)
           </label>
+          {freshSessionWarning(freshSessionPerTask, maxBudgetUsd) ? (
+            <p className="small warn-text">
+              {freshSessionWarning(freshSessionPerTask, maxBudgetUsd)}
+            </p>
+          ) : null}
           {agent ? (
             <label>
               Desk
@@ -343,4 +348,19 @@ export function AgentForm({ agent, initialWorkdir, onDone }: Props): JSX.Element
       </button>
     </form>
   );
+}
+
+/** Measured on a live run: the first turn of a new session cost about $0.11 before any work. */
+export const FRESH_SESSION_START_USD = 0.11;
+
+/**
+ * Warns when a fresh session per task meets a per-turn cap that its own start-up nearly uses up:
+ * writing the system prompt and tool definitions to the cache costs about $0.11, so a $0.10 cap
+ * stopped even a one-line change (recorded at $0.1215).
+ */
+export function freshSessionWarning(fresh: boolean, maxBudgetUsd: string): string | null {
+  const cap = Number(maxBudgetUsd);
+  if (!fresh || !maxBudgetUsd || !Number.isFinite(cap) || cap >= FRESH_SESSION_START_USD * 2)
+    return null;
+  return `A fresh session costs about $${FRESH_SESSION_START_USD.toFixed(2)} to start (system prompt and tools written to the cache), so a "Max $ / turn" of $${cap.toFixed(2)} can stop even a one-line change. Use $${(FRESH_SESSION_START_USD * 2).toFixed(2)} or more.`;
 }

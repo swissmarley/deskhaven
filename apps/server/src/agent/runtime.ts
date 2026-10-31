@@ -283,7 +283,7 @@ export class AgentRuntime {
 
   /** Queue a prompt; starts the session if needed (unless paused). */
   sendPrompt(text: string, taskId: string | null): void {
-    this.emit({ ...this.baseEvent(), type: 'message_sent', text, ...(taskId ? { taskId } : {}) });
+    this.emit(this.promptEvent(text, taskId));
     this.queue.push({ text, taskId });
     if (this.status === 'paused' || this.status === 'waiting' || this.restarting) return;
     if (!this.session) {
@@ -307,7 +307,7 @@ export class AgentRuntime {
 
   /** Queue without starting (the manager uses this when the concurrency cap is reached). */
   enqueueOnly(text: string, taskId: string | null): void {
-    this.emit({ ...this.baseEvent(), type: 'message_sent', text, ...(taskId ? { taskId } : {}) });
+    this.emit(this.promptEvent(text, taskId));
     this.queue.push({ text, taskId });
     this.setStatus('waiting');
   }
@@ -644,6 +644,24 @@ export class AgentRuntime {
       outputTokens: Math.max(ev.outputTokens, t.output),
       cacheReadTokens: Math.max(ev.cacheReadTokens, t.cacheRead),
       cacheCreationTokens: Math.max(ev.cacheCreationTokens, t.cacheCreation),
+    };
+  }
+
+  /**
+   * The log entry for a queued prompt. It names the session only when the prompt will run in it: a
+   * prompt that starts a fresh session (freshSessionPerTask) used to carry the previous session's id,
+   * and a chat prompt sent during a task turn used to carry that turn's task.
+   */
+  private promptEvent(text: string, taskId: string | null): AgentEventOf<'message_sent'> {
+    const session = this.sessionId && !this.wantsFreshSession(taskId) ? this.sessionId : null;
+    return {
+      id: newId(),
+      ts: Date.now(),
+      agentId: this.agent.id,
+      ...(session ? { sessionId: session } : {}),
+      ...(taskId ? { taskId } : {}),
+      type: 'message_sent',
+      text,
     };
   }
 

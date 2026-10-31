@@ -16,6 +16,7 @@ import {
   type TaskStatus,
   taskTail,
   truncate,
+  truncateBlock,
   type UpdateTask,
 } from '@deskhaven/shared';
 import { eq } from 'drizzle-orm';
@@ -347,6 +348,8 @@ export class TaskService {
     // A task must not close another task's work, in review or done: the merge is offered on the
     // task that made the latest changes (its merge carries the earlier unmerged work too).
     const blockedByOwner = Boolean(ownedElsewhere && (st.dirty || st.ahead > 0));
+    // The merge endpoint refuses with 409 agent_busy while the agent works; say so up front.
+    const busy = this.agentBusy(agent.id);
     return {
       branch: wt.branch,
       targetBranch,
@@ -356,14 +359,16 @@ export class TaskService {
       behind: st.behind,
       dirty: st.dirty,
       files: this.withAuthors(st.files, agent),
-      canMerge: st.canMerge && !blockedByOwner && !notReady,
+      canMerge: st.canMerge && !blockedByOwner && !notReady && !busy,
       ...(blockedByOwner && ownedElsewhere
         ? { reason: `The changes on the branch belong to "${ownedElsewhere.title}"` }
-        : notReady && st.canMerge
-          ? { reason: 'Move the task to review or done before merging its branch.' }
-          : st.reason
-            ? { reason: st.reason }
-            : {}),
+        : busy && st.canMerge
+          ? { reason: busy }
+          : notReady && st.canMerge
+            ? { reason: 'Move the task to review or done before merging its branch.' }
+            : st.reason
+              ? { reason: st.reason }
+              : {}),
       ...(ownedElsewhere
         ? {
             ownerTask: {
@@ -469,6 +474,11 @@ export class TaskService {
     const busyNow = this.runtimeBusy(agent.id);
     if (busyNow) throw new TaskHttpError(409, 'agent_busy', busyNow);
     await this.assertMergeConsent(wt, sourceRoot, targetBranch, input);
+    // Which other tasks' edits ride along (read before the commit folds them into one).
+    const included = this.withAuthors(
+      (await this.deps.worktrees.status(wt, targetBranch)).files,
+      agent,
+    );
     try {
       await this.deps.worktrees.commitAll(wt, message);
     } catch (err) {
@@ -531,9 +541,40 @@ export class TaskService {
     }
     // The merge integrated the worktree's work: what is there now belongs to no task.
     await this.recordTree(agent.id, wt.path);
+    const riders = new Set(
+      included.map((f) => f.author?.taskId).filter((id): id is string => !!id && id !== taskId),
+    );
+    const now = Date.now();
     for (const t of this.list()) {
-      if (t.id !== taskId && t.assigneeAgentId === agent.id && t.changedAt)
-        this.write({ ...t, changedAt: null, updatedAt: Date.now() });
+      if (t.id === taskId || t.assigneeAgentId !== agent.id) continue;
+      // A finished task (review/done) whose edits this merge carried is merged too, with the same
+      // commit and a link to this task: it used to stay in Review with no trace of the commit.
+      const rode =
+        riders.has(t.id) &&
+        (t.status === 'review' || t.status === 'done') &&
+        t.merge?.status !== 'merged';
+      if (rode) {
+        this.write({
+          ...t,
+          status: 'done',
+          completedAt: t.completedAt ?? now,
+          changedAt: null,
+          merge: {
+            status: 'merged',
+            strategy,
+            branch: wt.branch,
+            targetBranch,
+            commit: outcome.commit,
+            conflictFiles: [],
+            error: null,
+            mergedAt: now,
+            viaTaskId: taskId,
+          },
+          updatedAt: now,
+        });
+      } else if (t.changedAt) {
+        this.write({ ...t, changedAt: null, updatedAt: now });
+      }
     }
     const saved = this.write({
       ...this.mustGet(taskId),
@@ -619,11 +660,16 @@ export class TaskService {
       case 'turn_completed': {
         // An aborted turn can carry an SDK diagnostic string instead of prose; prefer the last real text.
         const result = e.result && !/^\[\w*diagnostic\]/.test(e.result) ? e.result : undefined;
-        const summary = result ?? this.lastText.get(task.id) ?? (e.errors?.join('; ') || null);
+        const text = result ?? this.lastText.get(task.id) ?? null;
+        // Why a failed turn stopped (the per-turn budget, an interruption) goes after the agent's last
+        // words: a budget stop used to leave Needs input with no hint of the limit.
+        const why = !e.ok && e.errors?.length ? e.errors.join('; ') : null;
+        const summary = text && why ? `${text}\n\n**${why}**` : (text ?? why);
         const next: Task = {
           ...task,
           status: e.ok ? 'review' : 'needs_input',
-          resultSummary: summary ? truncate(summary, 4000) : task.resultSummary,
+          // truncateBlock keeps the markdown's line breaks (truncate flattened the whole result).
+          resultSummary: summary ? truncateBlock(summary, 4000) : task.resultSummary,
           costUsd: task.costUsd + e.costUsd,
           updatedAt: Date.now(),
         };
@@ -637,7 +683,7 @@ export class TaskService {
           type: 'task_done',
           ok: e.ok,
         });
-        void this.afterTurn(next);
+        this.trackTurnWork(e.agentId, this.afterTurn(next));
         break;
       }
       case 'error':
@@ -990,6 +1036,7 @@ export class TaskService {
         ),
       };
     }
+    await this.turnWork.get(agent.id);
     return { ok: true, task, agent, sourceRoot, targetBranch };
   }
 
@@ -1010,13 +1057,32 @@ export class TaskService {
       return 'The agent is working. Wait until it is idle before merging or snapshotting its worktree.';
     if ((this.deps.broker?.pendingForAgent(agentId).length ?? 0) > 0)
       return 'The agent has an open permission request.';
+    // A task in Needs input whose agent is idle (a finished turn, a budget stop, a restart) holds no
+    // turn, so it does not block: it used to keep every other task of the agent from merging until it
+    // was moved by hand. A pending question or permission is caught by the checks above.
     const open = this.list().find(
-      (t) =>
-        t.assigneeAgentId === agentId && (t.status === 'in_progress' || t.status === 'needs_input'),
+      (t) => t.assigneeAgentId === agentId && t.status === 'in_progress',
     );
     if (open)
-      return `The agent is busy on "${open.title}" (${open.status.replace('_', ' ')}). Wait until that task is idle.`;
+      return `The agent is busy on "${open.title}" (in progress). Wait until that task is idle.`;
     return null;
+  }
+
+  /**
+   * Post-turn work (changed files, worktree comparison) runs in the background of the event handler.
+   * Merge preview and merge wait for it, so they never judge ownership on a half-recorded turn.
+   */
+  private readonly turnWork = new Map<string, Promise<void>>();
+
+  private trackTurnWork(agentId: string, work: Promise<void>): void {
+    const logged = work.catch((err) => {
+      this.deps.log.warn({ agentId, err: String(err) }, 'post-turn bookkeeping failed');
+    });
+    // Chained with any earlier work of the agent, so waiting covers every turn still being recorded.
+    const tracked: Promise<void> = Promise.all([this.turnWork.get(agentId), logged]).then(() => {
+      if (this.turnWork.get(agentId) === tracked) this.turnWork.delete(agentId);
+    });
+    this.turnWork.set(agentId, tracked);
   }
 
   private async afterTurn(task: Task): Promise<void> {

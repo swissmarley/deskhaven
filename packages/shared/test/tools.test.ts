@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_PRESETS, normalizeToolLists, RETIRED_TOOLS, toolRuleName } from '../src/index.js';
+import {
+  BUILTIN_PRESETS,
+  normalizeToolLists,
+  RETIRED_TOOLS,
+  toolRuleName,
+  truncateBlock,
+} from '../src/index.js';
 
 const ENGINEER_TOOLS = ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'];
 
@@ -45,5 +51,14 @@ describe('normalizeToolLists', () => {
         p.allowedTools,
       );
     }
+  });
+});
+
+describe('truncateBlock', () => {
+  it('shortens markdown without flattening its lines', () => {
+    expect(truncateBlock('## Changed\n- a\n\n## How to verify\n- b\n\n', 100)).toBe(
+      '## Changed\n- a\n\n## How to verify\n- b',
+    );
+    expect(truncateBlock('line one\nline two', 12)).toBe('line one\nli…');
   });
 });
