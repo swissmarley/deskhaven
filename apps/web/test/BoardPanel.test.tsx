@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import fs from 'node:fs';
+import path from 'node:path';
 import { AgentSchema, emptyUsage, TaskSchema } from '@deskhaven/shared';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -163,5 +165,51 @@ describe('click versus drag on a card', () => {
     expect(isClickDrag({ x: 0, y: 11 })).toBe(true);
     expect(isClickDrag({ x: 10, y: 10 })).toBe(false);
     expect(isClickDrag({ x: 140, y: 0 })).toBe(false);
+  });
+});
+
+describe('card meta row', () => {
+  afterEach(() => {
+    cleanup();
+    useAppStore.setState({ agents: {}, tasks: {}, notices: [] });
+  });
+
+  it('keeps the assignee on one line with the full name in a tooltip', () => {
+    const eng = AgentSchema.parse({ ...ada, name: 'Tester-Eng' });
+    const t = TaskSchema.parse({
+      id: 'x1',
+      title: 'With files',
+      prompt: 'p',
+      status: 'review',
+      assigneeAgentId: 'ada',
+      parentTaskId: null,
+      resultSummary: null,
+      filesChanged: [{ path: 'a' }, { path: 'b' }],
+      costUsd: 0.0451,
+      position: 1,
+      createdAt: 1,
+      startedAt: 1,
+      completedAt: null,
+      updatedAt: 1,
+      merge: null,
+      reviewTarget: null,
+    });
+    useAppStore.setState({ agents: { ada: eng }, tasks: { x1: t } });
+    const { container } = render(<BoardPanel />);
+    const name = container.querySelector('.card-meta .assignee-name');
+    expect(name?.textContent).toBe('Tester-Eng');
+    expect(name?.closest('.assignee')?.getAttribute('title')).toBe('Tester-Eng');
+    expect(screen.getByText('2 files')).toBeTruthy();
+  });
+
+  it('wraps the meta row whole and ellipsises the name instead of cutting the file count', () => {
+    const css = fs.readFileSync(path.join(import.meta.dirname, '../src/styles.css'), 'utf8');
+    const block = (selector: string) => {
+      const start = css.indexOf(`${selector} {`);
+      return css.slice(start, css.indexOf('}', start));
+    };
+    expect(block('.card-meta')).toMatch(/flex-wrap:\s*wrap/);
+    expect(block('.card-meta > *')).toMatch(/white-space:\s*nowrap/);
+    expect(block('.assignee-name')).toMatch(/text-overflow:\s*ellipsis/);
   });
 });
