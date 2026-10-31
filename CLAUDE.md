@@ -81,7 +81,10 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   after each merge); a different tree sets the task's `changedAt`. The owner is the unmerged task with
   the latest `changedAt` (a task that only read or ran tests owns nothing); every other task offers no
   merge (409 `changes_belong_to_other_task`). A merge clears all claims. Agents without a stored tree
-  (older data) attribute nothing.
+  (older data) attribute nothing. Separately, each file in the preview carries `author` (the task of
+  the latest logged Edit/Write/NotebookEdit on it, `tasks/file-authors.ts`; null for shell-only
+  changes), so the UI can say whose changes a merge brings in. The preview's `canMerge` is false for a
+  task outside review/done, matching the merge endpoint.
 - An interrupted turn (budget, pause, stop) is stored at the larger of the SDK's figures and the
   runtime's own (estimate, mid-turn SDK total, streamed token counts): the SDK's result leaves out the
   call that was cut off and reported $0 / 0 tokens.

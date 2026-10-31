@@ -15,6 +15,7 @@ import {
   manualMergeCommands,
   mergeButtonState,
   nothingToMerge,
+  otherWorkInMerge,
   reviewerCanWrite,
   showMergeControls,
 } from './merge.js';
@@ -141,6 +142,7 @@ export function TaskDetail({
   const commands = preview ? manualMergeCommands(preview, mergeMessage, strategy) : '';
   const conflicted = task.merge?.status === 'conflict';
   const owner = changesOwnedElsewhere(task, preview);
+  const others = otherWorkInMerge(task, preview);
   // No task, in review or done, closes the work of the agent's later task (the worktree is shared):
   // the merge is offered on the task that made the latest changes.
   const ownedElsewhere = Boolean(owner);
@@ -333,6 +335,18 @@ export function TaskDetail({
               <p className="small warn-text">
                 The merge includes every change on the agent's branch, not only this task.
               </p>
+              {others.byTask.map((o) => (
+                <p key={o.title} className="small warn-text">
+                  It also brings in the changes of "{o.title}": {o.files.join(', ')}.
+                </p>
+              ))}
+              {others.unknown.length ? (
+                <p className="small warn-text">
+                  No task's edit is logged for {others.unknown.join(', ')} (changed through a shell
+                  command or by hand): check {others.unknown.length === 1 ? 'it' : 'them'} in the
+                  diff.
+                </p>
+              ) : null}
               {owner ? (
                 <p className="small warn-text">
                   "{owner.title}" ({owner.status}) changed files on this branch last: its changes
@@ -385,6 +399,14 @@ export function TaskDetail({
                   {preview?.files.map((f) => (
                     <li key={`${f.status}:${f.path}`} className="mono small">
                       {f.status} {f.path}
+                      {f.author ? (
+                        <span className="muted">
+                          {' '}
+                          — {f.author.taskId === task.id ? 'this task' : `"${f.author.title}"`}
+                        </span>
+                      ) : f.author === null ? (
+                        <span className="muted"> — origin unknown</span>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

@@ -27,6 +27,7 @@ import type { EventStore } from '../events/store.js';
 import { hookFileSetsEqual } from '../worktree/hook-detect.js';
 import { WorktreeMovedError, type WorktreeService } from '../worktree/service.js';
 import type { WsHub } from '../ws/hub.js';
+import { fileAuthors } from './file-authors.js';
 
 /** Review diffs longer than this are cut, and the prompt says so. */
 export const REVIEW_DIFF_LIMIT = 60_000;
@@ -314,11 +315,13 @@ export class TaskService {
   async mergePreview(taskId: string): Promise<MergePreview> {
     const located = await this.locateWorktree(taskId);
     if (!located.ok) throw located.error;
-    const { agent, sourceRoot, targetBranch } = located;
+    const { task, agent, sourceRoot, targetBranch } = located;
     const wt = agent.worktree;
     if (!wt) throw new TaskHttpError(400, 'no_worktree', 'no worktree');
     const st = await this.deps.worktrees.status(wt, targetBranch);
     const branchSha = await this.deps.worktrees.headSha(wt.path);
+    // The merge endpoint answers 409 not_ready for these; the preview says the same.
+    const notReady = task.status !== 'review' && task.status !== 'done';
     const hookCheck = await this.deps.worktrees.hookConsentSnapshot(
       sourceRoot,
       wt.path,
@@ -352,13 +355,15 @@ export class TaskService {
       ahead: st.ahead,
       behind: st.behind,
       dirty: st.dirty,
-      files: st.files,
-      canMerge: st.canMerge && !blockedByOwner,
+      files: this.withAuthors(st.files, agent),
+      canMerge: st.canMerge && !blockedByOwner && !notReady,
       ...(blockedByOwner && ownedElsewhere
         ? { reason: `The changes on the branch belong to "${ownedElsewhere.title}"` }
-        : st.reason
-          ? { reason: st.reason }
-          : {}),
+        : notReady && st.canMerge
+          ? { reason: 'Move the task to review or done before merging its branch.' }
+          : st.reason
+            ? { reason: st.reason }
+            : {}),
       ...(ownedElsewhere
         ? {
             ownerTask: {
@@ -878,6 +883,35 @@ export class TaskService {
     const agent = this.deps.agents.get(agentId);
     if (!agent) throw new TaskHttpError(400, 'unknown_agent', `Unknown agent ${agentId}`);
     return agent;
+  }
+
+  /** Names, per file, the task that last edited it (from the agent's logged edit-tool calls). */
+  private withAuthors(files: MergePreview['files'], agent: Agent): MergePreview['files'] {
+    const wt = agent.worktree;
+    if (!wt || !files.length) return files;
+    let realRoot: string | undefined;
+    try {
+      realRoot = fs.realpathSync(wt.path);
+    } catch {
+      realRoot = undefined;
+    }
+    const authors = fileAuthors(
+      this.deps.events.list({ agentId: agent.id, types: ['tool_started'], limit: 5000 }),
+      wt.path,
+      agentCwd(agent),
+      realRoot,
+    );
+    const titles = new Map<string, string>();
+    return files.map((f) => {
+      const taskId = authors.get(f.path);
+      if (!taskId) return { ...f, author: null };
+      let title = titles.get(taskId);
+      if (title === undefined) {
+        title = this.get(taskId)?.title ?? 'a deleted task';
+        titles.set(taskId, title);
+      }
+      return { ...f, author: { taskId, title } };
+    });
   }
 
   /**

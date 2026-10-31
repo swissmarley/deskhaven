@@ -2,6 +2,10 @@
 
 One 3-line note per milestone, newest first.
 
+## Merge file authors (2026-10-31)
+
+1. The merge preview names, for each file, the task whose logged edit touched it last (works for changes made before ownership tracking); the task window lists them and warns which other tasks' changes, or which files of unknown origin, a merge brings in. The preview's `canMerge` is false outside review/done, as the merge endpoint already answered.
+
 ## Round 4 (2026-10-31)
 
 1. Turns stopped by the per-turn cap (or any interruption) are stored at max(SDK, own estimate) in the event, the task, the agent and the daily totals (the SDK reported $0 / 0 tokens for an interrupted call estimated at $0.045). Merge ownership follows the last task that changed the worktree's content (tree compared after every turn), not the last one that ran. The restart note is added only to tasks whose turn was in flight, once.

@@ -1000,6 +1000,85 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     expect(p.ownerTask).toBeUndefined();
   });
 
+  it('names the task behind each file when changes predate ownership tracking', async () => {
+    const repo = tmpRepo();
+    fs.writeFileSync(path.join(repo, 'README.md'), '# app\n');
+    fs.writeFileSync(path.join(repo, 'notepad.py'), 'print(1)\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'files');
+    const agent = (await hire(repo, 'Before', true)).json();
+    const wt = agent.worktree.path as string;
+    const readme = await reviewTask(agent.id, 'README line');
+    const notepad = await reviewTask(agent.id, 'notepad.py header comment');
+    // Made before this version: edit-tool events exist, but no worktree comparison was recorded.
+    built.ctx.db.run(sql`DELETE FROM worktree_trees WHERE agent_id = ${agent.id}`);
+    const editEvent = (taskId: string, file: string) =>
+      built.ctx.events.append({
+        id: `edit-${taskId}-${file}`,
+        ts: Date.now(),
+        agentId: agent.id,
+        taskId,
+        type: 'tool_started',
+        toolUseId: `tu-${taskId}-${file}`,
+        tool: 'Edit',
+        category: 'edit',
+        input: { file_path: path.join(wt, file) },
+        summary: file,
+      });
+    fs.appendFileSync(path.join(wt, 'README.md'), 'One more line.\n');
+    editEvent(readme, 'README.md');
+    fs.writeFileSync(path.join(wt, 'notepad.py'), '# header\nprint(1)\n');
+    editEvent(notepad, 'notepad.py');
+    fs.writeFileSync(path.join(wt, 'by-shell.txt'), 'x\n');
+
+    const p = (await req({ method: 'GET', url: `/api/tasks/${readme}/merge-preview` })).json();
+    expect(p.canMerge).toBe(true);
+    const byPath = Object.fromEntries(
+      (p.files as { path: string; author: unknown }[]).map((f) => [f.path, f.author]),
+    );
+    expect(byPath).toEqual({
+      'README.md': { taskId: readme, title: 'README line' },
+      'notepad.py': { taskId: notepad, title: 'notepad.py header comment' },
+      'by-shell.txt': null,
+    });
+  });
+
+  it('reports a task that is not in review or done as not mergeable in the preview too', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'NotReady', true)).json();
+    fs.writeFileSync(path.join(agent.worktree.path, 'wip.txt'), 'wip\n');
+    const created = await req({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { title: 'Asked a question', prompt: 'p', assigneeAgentId: agent.id },
+    });
+    const id = created.json().id as string;
+    const moved = await req({
+      method: 'PATCH',
+      url: `/api/tasks/${id}`,
+      payload: { status: 'needs_input' },
+    });
+    expect(moved.json().status).toBe('needs_input');
+    const p = (await req({ method: 'GET', url: `/api/tasks/${id}/merge-preview` })).json();
+    expect(p).toMatchObject({
+      dirty: true,
+      canMerge: false,
+      reason: 'Move the task to review or done before merging its branch.',
+    });
+    const refused = await req({
+      method: 'POST',
+      url: `/api/tasks/${id}/merge`,
+      payload: {
+        expectedBranchSha: p.branchSha,
+        consentedHookFiles: [],
+        previewTree: p.previewTree,
+      },
+    });
+    // Refused either way (the open task also makes the agent count as busy).
+    expect(refused.statusCode).toBe(409);
+    expect(['not_ready', 'agent_busy']).toContain(refused.json().error);
+  });
+
   it('lists uncommitted hook runner configs in the preview', async () => {
     const repo = tmpRepo();
     const agent = (await hire(repo, 'UncommittedRunner', true)).json();
