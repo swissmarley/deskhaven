@@ -7,6 +7,11 @@ export interface WsClientOptions {
   url: string;
   onMessage: (message: ServerMessage) => void;
   onState: (state: ConnectionState) => void;
+  /**
+   * The last event seq the app has applied. Sent with `hello` on every (re)connect so the server
+   * replays only what was missed; without it a reconnect resends events the feed already shows.
+   */
+  lastSeq?: () => number;
 }
 
 const PING_EVERY_MS = 15_000;
@@ -30,6 +35,12 @@ export class WsClient {
   connect(): void {
     this.closed = false;
     this.open();
+  }
+
+  /** `hello` with the last applied seq, when there is one. */
+  sendHello(): void {
+    const since = this.opts.lastSeq?.() ?? 0;
+    this.send(since > 0 ? { type: 'hello', sinceSeq: since } : { type: 'hello' });
   }
 
   send(message: ClientMessage): void {
@@ -76,7 +87,7 @@ export class WsClient {
       }
       this.attempt = 0;
       this.opts.onState('open');
-      this.send({ type: 'hello' });
+      this.sendHello();
       this.startHeartbeat();
     };
     socket.onmessage = (ev) => {

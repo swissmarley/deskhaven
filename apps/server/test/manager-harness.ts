@@ -122,10 +122,12 @@ export function managerHarness(
     };
     return { query: fake.asQuery(), prompts, abort: new AbortController() };
   };
+  const desks: number[] = [];
   const manager = new AgentManager({
     agents,
     hub,
     concurrencyCap: () => settings.get().concurrencyCap,
+    onDesksChanged: (busy) => desks.push(busy),
     runtimeDeps: {
       auth: opts.auth ?? (() => defaultAuth),
       events,
@@ -154,7 +156,7 @@ export function managerHarness(
       workdir: opts.workdir ?? process.cwd(),
       useWorktree: false,
     });
-  return { db, settings, events, agents, manager, tasks, sessions, hire };
+  return { db, settings, events, agents, manager, tasks, sessions, hire, desks };
 }
 
 export const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));

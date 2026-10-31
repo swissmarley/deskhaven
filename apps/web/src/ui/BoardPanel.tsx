@@ -29,6 +29,13 @@ export const COLUMNS: { id: TaskStatus; label: string }[] = [
   { id: 'done', label: 'Done' },
 ];
 
+/** A drag shorter than this is a click: no column or avatar is that close to where it started. */
+export const CLICK_SLOP_PX = 12;
+
+export function isClickDrag(delta: { x: number; y: number }): boolean {
+  return Math.hypot(delta.x, delta.y) < CLICK_SLOP_PX;
+}
+
 const selectTasks = (s: { tasks: Record<string, Task> }) =>
   Object.values(s.tasks).sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
 
@@ -54,6 +61,12 @@ export function BoardPanel(): JSX.Element {
     const world = getWorldHandle();
     world?.setHighlight(null);
     const taskId = String(e.active.id);
+    // A click with a slightly shaky hand or trackpad crosses the 6 px activation distance and becomes
+    // a tiny drag, which swallows the click: treat it as the click it was meant to be.
+    if (isClickDrag(e.delta)) {
+      setOpenTask(taskId);
+      return;
+    }
     try {
       if (e.over) {
         const status = String(e.over.id) as TaskStatus;

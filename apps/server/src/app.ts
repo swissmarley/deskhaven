@@ -190,6 +190,7 @@ export async function buildApp(
     concurrencyCap: () => settings.get().concurrencyCap,
     budgetCheck: createBudgetGuard(agents, () => settings.get()),
     idleTimeoutMs: () => settings.get().idleTimeoutMinutes * 60_000,
+    onDesksChanged: () => hub.broadcast({ type: 'usage', usage: usage.snapshot() }),
     runtimeDeps: {
       mcpServers: (agent) =>
         presetService.get(agent.rolePresetId)?.manager
@@ -283,7 +284,13 @@ export async function buildApp(
           pendingPermissions: broker.listPending(),
           usage: usage.snapshot(),
         });
-        const recent = events.list({ sinceSeq: parsed.data.sinceSeq, limit: 500, ascending: true });
+        // With a seq: what the client missed, oldest first. Without one (first load): the latest 500,
+        // not the oldest 500 the log ever held.
+        const since = parsed.data.sinceSeq;
+        const recent =
+          since !== undefined
+            ? events.list({ sinceSeq: since, limit: 500, ascending: true })
+            : events.list({ limit: 500 }).reverse();
         if (recent.length) hub.send(socket, { type: 'events_batch', events: recent });
       }
     });

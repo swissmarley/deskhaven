@@ -17,6 +17,12 @@ export interface ManagerDeps {
   /** Returns a reason string when the agent must not spend more today, or null. */
   budgetCheck?: (agentId: string) => string | null;
   idleTimeoutMs?: () => number;
+  /**
+   * Called when the number of busy agents (the HUD's "desks") changes. The usage snapshot carries
+   * that number, and it used to be broadcast only at the end of a turn, while the agent still read as
+   * working: the counter stayed one too high until the page was reloaded.
+   */
+  onDesksChanged?: (busy: number) => void;
 }
 
 /**
@@ -38,8 +44,16 @@ export class AgentManager {
   private readonly runtimes = new Map<string, AgentRuntime>();
   private readonly waiting: string[] = [];
   killSwitch = false;
+  private lastBusy = 0;
 
   constructor(private readonly deps: ManagerDeps) {}
+
+  private notifyDesks(): void {
+    const busy = this.busyCount();
+    if (busy === this.lastBusy) return;
+    this.lastBusy = busy;
+    this.deps.onDesksChanged?.(busy);
+  }
 
   get(agentId: string): AgentRuntime | undefined {
     return this.runtimes.get(agentId);
@@ -97,6 +111,7 @@ export class AgentManager {
         currentTaskId: rt?.getCurrentTaskId() ?? null,
       };
     });
+    this.notifyDesks();
     // A desk frees up whenever an agent leaves the busy states.
     if (status === 'idle' || status === 'stopped' || status === 'error' || status === 'paused') {
       queueMicrotask(() => this.startWaiting());
@@ -105,6 +120,7 @@ export class AgentManager {
 
   private onStopped(agentId: string): void {
     this.unqueue(agentId);
+    this.notifyDesks();
     this.startWaiting();
   }
 

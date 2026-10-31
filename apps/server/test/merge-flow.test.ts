@@ -958,6 +958,56 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     expect(b.ownerTask).toBeUndefined();
   });
 
+  it("does not let a review task merge the changes of the agent's later task", async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'ReviewOwner', true)).json();
+    const turn = (taskId: string) =>
+      built.ctx.events.append({
+        id: `rturn-${taskId}`,
+        ts: Date.now(),
+        agentId: agent.id,
+        taskId,
+        type: 'turn_completed',
+        ok: true,
+        subtype: 'success',
+        costUsd: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        numTurns: 1,
+        durationMs: 1,
+      });
+    const first = await reviewTask(agent.id, 'Earlier');
+    turn(first);
+    const second = await reviewTask(agent.id, 'Later');
+    turn(second);
+    fs.writeFileSync(path.join(agent.worktree.path, 'later.txt'), 'later\n');
+    const a = (await req({ method: 'GET', url: `/api/tasks/${first}/merge-preview` })).json();
+    expect(a).toMatchObject({ canMerge: false, ownerTask: { id: second } });
+    const refused = await req({
+      method: 'POST',
+      url: `/api/tasks/${first}/merge`,
+      payload: {
+        expectedBranchSha: a.branchSha,
+        consentedHookFiles: [],
+        previewTree: a.previewTree,
+      },
+    });
+    expect(refused.json().error).toBe('changes_belong_to_other_task');
+    // Once the later task is merged, nothing on the branch belongs to it any more.
+    const merged = await req({
+      method: 'POST',
+      url: `/api/tasks/${second}/merge`,
+      payload: await mergePayload(second),
+    });
+    expect(merged.statusCode).toBe(200);
+    fs.writeFileSync(path.join(agent.worktree.path, 'stray.txt'), 'left over\n');
+    const after = (await req({ method: 'GET', url: `/api/tasks/${first}/merge-preview` })).json();
+    expect(after.ownerTask).toBeUndefined();
+    expect(after.canMerge).toBe(true);
+  });
+
   it('lists uncommitted hook runner configs in the preview', async () => {
     const repo = tmpRepo();
     const agent = (await hire(repo, 'UncommittedRunner', true)).json();

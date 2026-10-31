@@ -255,7 +255,16 @@ function initialBehavior(a: Agent): Behavior {
 function clearedTimeline(s: AppState): Partial<AppState> {
   const behaviors: Record<string, Behavior> = {};
   for (const id of Object.keys(s.agents)) behaviors[id] = IDLE;
-  return { feed: [], transcripts: {}, liveText: {}, openTools: {}, behaviors, seeds: {} };
+  // lastSeq goes back to 0 so the resync after a replay sends the recent events again.
+  return {
+    feed: [],
+    transcripts: {},
+    liveText: {},
+    openTools: {},
+    behaviors,
+    seeds: {},
+    lastSeq: 0,
+  };
 }
 
 type Set = (fn: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void;
@@ -263,6 +272,10 @@ type Get = () => AppState;
 
 function applyEvent(event: AgentEvent, set: Set, get: Get, live: boolean, replaying = false): void {
   const s = get();
+  // A reconnect (for example after the server restarted) can deliver events already applied: the
+  // server replays from the seq the client sent, and an old server or a race can overlap. Applying
+  // one twice duplicated feed rows and made React warn about duplicate keys on every render.
+  if (!replaying && event.seq !== undefined && event.seq <= s.lastSeq) return;
   const agentId = event.agentId;
   // open-tool bookkeeping first so the behaviour mapping sees the post-event state
   let open = s.openTools[agentId] ?? [];

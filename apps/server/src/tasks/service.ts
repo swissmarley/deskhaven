@@ -323,11 +323,9 @@ export class TaskService {
     const previewTree = await this.deps.worktrees.previewTree(wt.path);
     const owner = this.worktreeOwner(agent.id);
     const ownedElsewhere = owner && owner.id !== taskId ? owner : null;
-    const task = this.mustGet(taskId);
-    // A finished task must not close another task's work: offer the merge on the task that made it.
-    const blockedByOwner = Boolean(
-      ownedElsewhere && task.status === 'done' && (st.dirty || st.ahead > 0),
-    );
+    // A task must not close another task's work, in review or done: the merge is offered on the
+    // task that made the latest changes (its merge carries the earlier unmerged work too).
+    const blockedByOwner = Boolean(ownedElsewhere && (st.dirty || st.ahead > 0));
     return {
       branch: wt.branch,
       targetBranch,
@@ -380,7 +378,7 @@ export class TaskService {
         'Move the task to review or done before merging its branch.',
       );
     }
-    const owner = task.status === 'done' ? this.worktreeOwner(agent.id) : null;
+    const owner = this.worktreeOwner(agent.id);
     if (owner && owner.id !== task.id) {
       throw new TaskHttpError(
         409,
@@ -860,13 +858,16 @@ export class TaskService {
   /**
    * The task whose turn ran last in the agent's worktree. Every task of an agent shares one worktree
    * and branch, so the uncommitted work there is that task's (a turn of a later task would have
-   * come after it). Null when the agent has not completed a task turn.
+   * come after it). Null when the agent has not completed a task turn, or when that task was deleted
+   * or already merged (whatever is left on the branch then belongs to no task, so any may merge it).
    */
   private worktreeOwner(agentId: string): Task | null {
     const turns = this.deps.events.list({ agentId, types: ['turn_completed'], limit: 50 });
     for (const t of turns) {
       if (!t.taskId) continue;
-      return this.get(t.taskId) ?? null;
+      const task = this.get(t.taskId);
+      if (!task || task.merge?.status === 'merged') return null;
+      return task;
     }
     return null;
   }

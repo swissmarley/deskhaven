@@ -57,9 +57,12 @@ export function TopBar(): JSX.Element {
           <span className="hud-label">tokens</span>{' '}
           {fmtTokens((usage?.today.inputTokens ?? 0) + (usage?.today.outputTokens ?? 0))}
         </span>
-        <span className="hud-item" title="Running agents / concurrency cap">
+        <span
+          className="hud-item"
+          title="Busy agents (in a turn or waiting on a permission) / concurrency cap"
+        >
           <span className="hud-label">desks</span> {usage?.running ?? 0}/
-          {usage?.concurrencyCap ?? settings?.concurrencyCap ?? '-'}
+          {settings?.concurrencyCap ?? usage?.concurrencyCap ?? '-'}
         </span>
         {usage?.rateLimits.map((w) => (
           <span

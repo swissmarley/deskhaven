@@ -497,13 +497,38 @@ button.link.name {
   flex-direction: column;
   gap: 6px;
   z-index: 60;
+  /* Toasts sit over modals: their bodies must not take the clicks meant for what is underneath. */
+  pointer-events: none;
 }
 .notice-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   text-align: left;
   max-width: 420px;
   background: var(--panel);
+  border: 1px solid var(--border);
   border-left: 4px solid var(--accent-2);
+  border-radius: 6px;
+  padding: 6px 8px;
   font-size: 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.notice-text {
+  flex: 1;
+}
+.notice-dismiss {
+  pointer-events: auto;
+  flex-shrink: 0;
+  padding: 0 6px;
+  line-height: 18px;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.notice-dismiss:hover {
+  color: var(--text);
 }
 .notice-toast.warn {
   border-left-color: var(--accent);

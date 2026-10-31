@@ -16,9 +16,10 @@ export function App(): JSX.Element {
       url: wsUrl(),
       onMessage: (m) => useAppStore.getState().applyServerMessage(m),
       onState: (c) => useAppStore.getState().setConnection(c),
+      lastSeq: () => useAppStore.getState().lastSeq,
     });
     client.connect();
-    useAppStore.setState({ requestResync: () => client.send({ type: 'hello' }) });
+    useAppStore.setState({ requestResync: () => client.sendHello() });
     return () => client.close();
   }, []);
 

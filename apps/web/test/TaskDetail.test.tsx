@@ -320,14 +320,18 @@ describe('TaskDetail merge conflict', () => {
     expect(screen.queryByRole('button', { name: 'Accept & merge' })).toBeNull();
   });
 
-  it("warns on a review task that the branch also holds the agent's later task", async () => {
+  it("offers no merge on a review task either when the agent's later task made the changes", async () => {
     vi.mocked(api.mergePreview).mockResolvedValue({
       ...preview,
+      canMerge: false,
+      reason: 'The changes on the branch belong to "Later task"',
       ownerTask: { id: 't2', title: 'Later task', status: 'review' },
     });
     useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
     render(<TaskDetail taskId="t1" onClose={() => {}} />);
-    expect(await screen.findByText(/latest task is "Later task"/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Accept & merge' })).toBeTruthy();
+    expect(await screen.findByText('Nothing to merge for this task.')).toBeTruthy();
+    expect(screen.getByText(/belong to "Later task"/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Accept & merge' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Mark done' })).toBeTruthy();
   });
 });
