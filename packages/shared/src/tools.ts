@@ -77,6 +77,15 @@ export function summarizeToolInput(toolName: string, input: unknown): string {
   }
 }
 
+/**
+ * Shortens multi-line text (markdown) to `max` characters without flattening it: line breaks stay,
+ * trailing whitespace goes. Use `truncate` for one-line labels.
+ */
+export function truncateBlock(text: string, max: number): string {
+  const trimmed = text.trimEnd();
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1).trimEnd()}…` : trimmed;
+}
+
 export function truncate(text: string, max = 80): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
   return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;

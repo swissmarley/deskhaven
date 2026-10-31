@@ -366,9 +366,15 @@ transcripts under `~/.claude/projects/`; Deskhaven stores only the session ids.
 agent processes, though sessions stay resumable). To run without the dev tooling:
 
 ```bash
-pnpm build                                  # type-checks and builds apps/web/dist
+pnpm i                                      # full install (the build needs the dev tools)
+pnpm build                                  # type-checks, bundles apps/server/dist, builds apps/web/dist
+pnpm i --prod                               # optional: remove the dev tools
 DESKHAVEN_WEB_DIST=apps/web/dist pnpm start # one process: http://127.0.0.1:8787
 ```
+
+`pnpm start` runs `node apps/server/dist/index.js` (an esbuild bundle of the server and the shared
+package; other packages load from `node_modules`), so it needs no TypeScript runner. Rebuild after
+pulling changes. `DESKHAVEN_PORT` changes the port.
 
 `DESKHAVEN_WEB_DIST` may be relative (resolved from the repository root, whatever folder `pnpm start` runs
 the server in) or absolute, e.g. `DESKHAVEN_WEB_DIST="$PWD/apps/web/dist"`.

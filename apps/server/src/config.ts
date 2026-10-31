@@ -53,8 +53,25 @@ export function defaultDbPath(
   return !exists(current) && exists(legacy) ? legacy : current;
 }
 
-/** The monorepo root (this file lives in apps/server/src). */
-export const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
+/**
+ * The monorepo root: the nearest folder above `start` holding `pnpm-workspace.yaml`. Found by
+ * walking up rather than by a fixed `../..`, because the same code runs from `apps/server/src`
+ * (tsx, tests) and bundled into `apps/server/dist/index.js` (`pnpm start`).
+ */
+export function findRepoRoot(
+  start: string,
+  exists: (p: string) => boolean = fs.existsSync,
+): string {
+  let dir = path.resolve(start);
+  for (;;) {
+    if (exists(path.join(dir, 'pnpm-workspace.yaml'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return path.resolve(start, '../../..');
+    dir = parent;
+  }
+}
+
+export const REPO_ROOT = findRepoRoot(import.meta.dirname);
 
 /**
  * `pnpm start` runs the server with apps/server as its cwd, so a relative DESKHAVEN_WEB_DIST such as

@@ -216,6 +216,11 @@ export const TaskMergeSchema = z.object({
   conflictFiles: z.array(z.string()).optional(),
   error: z.string().nullable().optional(),
   mergedAt: z.number().nullable().optional(),
+  /**
+   * Set on a task whose changes went in with another task's merge (the agent's tasks share one
+   * worktree): the id of the task that was merged.
+   */
+  viaTaskId: z.string().optional(),
 });
 export type TaskMerge = z.infer<typeof TaskMergeSchema>;
 

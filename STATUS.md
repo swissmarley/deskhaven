@@ -2,6 +2,12 @@
 
 One 3-line note per milestone, newest first.
 
+## Release fixes after the final test (2026-10-31)
+
+1. Merge preview reports a busy agent (`canMerge: false` + reason) instead of failing on the button; `pnpm start` runs an esbuild bundle (`apps/server/dist`) and works after `pnpm i --prod` (verified on a clean copy: UI, API, sample repo). A Needs-input task with an idle agent no longer blocks the agent's other merges, and its result says why the turn stopped; finished tasks whose edits rode along in a merge are marked merged with a link; the HR form warns when a fresh session per task meets a cap under $0.22.
+2. README: production steps, ports by `DESKHAVEN_PORT` / `DESKHAVEN_DEV_WEB_PORT` (Vite reads them too), the sample repo at wizard step 2, the shared worktree per agent and the fallback commit author. Small: `message_sent` names only the session it runs in, post-turn bookkeeping is awaited by preview and merge, result summaries keep their markdown line breaks.
+3. Next: the owner re-checks points 1 and 2 in a short run.
+
 ## Recovered cost and card layout (2026-10-31)
 
 1. A one-shot boot migration raises turns the per-turn cap stopped before the fix (stored at $0) to the estimate their `budget` notification recorded, and adds it to the task, the agent and that day (the $0.045 of round 4). Board cards keep the assignee on one line (ellipsis, full name in the tooltip) and wrap cost, file count and pills whole instead of cutting "N files".

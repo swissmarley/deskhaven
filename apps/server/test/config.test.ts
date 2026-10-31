@@ -6,6 +6,7 @@ import {
   defaultDataDir,
   defaultDbPath,
   envVar,
+  findRepoRoot,
   loadConfig,
   MIN_SESSION_TOKEN_LENGTH,
   REPO_ROOT,
@@ -62,5 +63,20 @@ describe('DESKHAVEN_SESSION_TOKEN', () => {
     expect(loadConfig({ DESKHAVEN_SESSION_TOKEN: t }).sessionToken).toBe(t);
     expect(loadConfig({}).sessionToken).toBeNull();
     expect(loadConfig({ DESKHAVEN_SESSION_TOKEN: '' }).sessionToken).toBeNull();
+  });
+});
+
+describe('findRepoRoot', () => {
+  it('finds the workspace root from the sources and from the bundle alike', () => {
+    const root = '/repo';
+    const exists = (p: string) => p === '/repo/pnpm-workspace.yaml';
+    expect(findRepoRoot('/repo/apps/server/src', exists)).toBe(root);
+    expect(findRepoRoot('/repo/apps/server/dist', exists)).toBe(root);
+    expect(findRepoRoot('/repo/apps/server/src/http', exists)).toBe(root);
+  });
+
+  it('points at the real checkout', () => {
+    expect(fs.existsSync(path.join(REPO_ROOT, 'pnpm-workspace.yaml'))).toBe(true);
+    expect(fs.existsSync(path.join(REPO_ROOT, 'examples', 'sample-repo'))).toBe(true);
   });
 });

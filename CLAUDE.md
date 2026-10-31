@@ -13,7 +13,8 @@ pnpm typecheck         # tsc --noEmit in every package
 pnpm lint              # biome check .   (pnpm lint:fix / pnpm format to auto-fix)
 pnpm test              # vitest run in every package
 pnpm build             # typecheck + vite build for the web app
-pnpm start             # production server (serves apps/web/dist when DESKHAVEN_WEB_DIST is set)
+pnpm start             # production server: node apps/server/dist/index.js (after pnpm build; serves
+                       # apps/web/dist when DESKHAVEN_WEB_DIST is set). DESKHAVEN_PORT / _DEV_WEB_PORT set ports
 ```
 
 Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
@@ -89,7 +90,16 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   runtime's own (estimate, mid-turn SDK total, streamed token counts): the SDK's result leaves out the
   call that was cut off and reported $0 / 0 tokens.
   Turns stopped by the cap before that fix were raised once at boot to the estimate in their `budget`
-  notification (`recoverInterruptedTurnCosts`, settings key `migration.interrupted_turn_cost`).
+  notification (`recoverInterruptedTurnCosts`, settings key `migration.interrupted_turn_cost`); that
+  notice is rounded to $0.001, so a recovered turn can be off by up to $0.0005.
+- The server is bundled for production by `apps/server/scripts/build.mjs` (esbuild; `@deskhaven/shared`
+  bundled in, every other package external). Code must not locate files with a fixed `../..` from its
+  own folder: use `REPO_ROOT` (`findRepoRoot`), which works from `src/` and from `dist/`.
+- `mergePreview` answers `canMerge: false` with the reason while `agentBusy()` would refuse the merge.
+  A task in Needs input no longer makes its agent busy (only a running turn, a pending permission or an
+  `in_progress` task do). A merge marks review/done tasks whose edits rode along as merged
+  (`merge.viaTaskId`). Failed turns append their reason to the task's result; result summaries keep
+  their line breaks (`truncateBlock`).
 - `reconcileOnBoot` adds the restart note only when the task's turn was in flight (its last
   `message_sent` has no `turn_completed` after it) and replaces an earlier note instead of stacking.
 - Tool lists are normalised (`normalizeToolLists` in shared) on hire, edit and at every boot: retired
