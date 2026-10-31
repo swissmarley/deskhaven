@@ -33,7 +33,7 @@ vi.mock('../src/net/api.js', () => {
 
 import { ApiError, api } from '../src/net/api.js';
 import { useAppStore } from '../src/state/store.js';
-import { BoardPanel } from '../src/ui/BoardPanel.js';
+import { BoardPanel, isClickDrag } from '../src/ui/BoardPanel.js';
 
 const ada = AgentSchema.parse({
   id: 'ada',
@@ -154,5 +154,14 @@ describe('BoardPanel cards', () => {
     const list = container.querySelector('.col-done .column-cards');
     expect(list?.querySelector('.column-head')).toBeNull();
     expect(list?.querySelectorAll('.card-task')).toHaveLength(1);
+  });
+});
+
+describe('click versus drag on a card', () => {
+  it('treats a drag of a few pixels as a click and a real drag as a drag', () => {
+    expect(isClickDrag({ x: 6, y: 5 })).toBe(true);
+    expect(isClickDrag({ x: 0, y: 11 })).toBe(true);
+    expect(isClickDrag({ x: 10, y: 10 })).toBe(false);
+    expect(isClickDrag({ x: 140, y: 0 })).toBe(false);
   });
 });

@@ -77,8 +77,16 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
 - Office totals in the header (today and all time) sum `usage_daily`, which keeps the rows of fired
   agents; the HR list shows each agent's cost today and a line for agents no longer on staff.
 - Every task of an agent shares one worktree and branch. The merge preview names the task that ran last
-  there (`ownerTask`); a done task whose branch holds another task's work offers no merge (409
-  `changes_belong_to_other_task` on the API).
+  there (`ownerTask`); any other task (review or done) offers no merge (409
+  `changes_belong_to_other_task` on the API) until that task is merged or deleted.
+- The client sends `hello` with `sinceSeq` = its last applied seq on every (re)connect, and `applyEvent`
+  drops events at or below it; without a seq the server sends the latest 500 events. A reconnect after a
+  server restart used to re-append events (duplicate React keys in the feed).
+- The HUD "desks" count is broadcast with the usage snapshot whenever the busy count changes
+  (`AgentManager.onDesksChanged`); it used to go out only at turn end, while the agent still read busy.
+- Toasts (`Notices`) float above modals with `pointer-events: none`; only their × takes clicks (one used to
+  swallow the first click on the task window's "close"). Info toasts expire after 6 s. A card drag under
+  12 px (`CLICK_SLOP_PX`) opens the task instead: dnd-kit swallows the click once its 6 px distance is met.
 - An agent's `tools: null` means its preset's list; the Engineer preset now ships Read, Edit, Write,
   Bash, Glob, Grep (the whole Claude Code surface cost ~95k tokens per new session).
 - The SDK prints `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` at every spawn: bare `allowedTools` names skip

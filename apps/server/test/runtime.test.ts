@@ -4,7 +4,7 @@ import path from 'node:path';
 import { type Agent, AgentSchema, emptyUsage } from '@deskhaven/shared';
 import { describe, expect, it } from 'vitest';
 import { PermissionBroker } from '../src/agent/permission-broker.js';
-import { AgentRuntime, type RuntimeDeps } from '../src/agent/runtime.js';
+import { AgentRuntime, budgetStopReason, type RuntimeDeps, usd } from '../src/agent/runtime.js';
 import {
   type AgentSession,
   buildOptions,
@@ -856,5 +856,15 @@ describe('AgentRuntime', () => {
     expect(s.interrupts).toBe(0);
     expect(rt.getStatus()).toBe('working');
     await rt.stop();
+  });
+
+  it('words budget amounts with three decimals so the notice and the final cost agree', () => {
+    expect(usd(0.0214)).toBe('$0.021');
+    expect(usd(0.02)).toBe('$0.020');
+    const reason = budgetStopReason(0.04, 0.0214, 0.02);
+    expect(reason).toContain('budget of $0.020');
+    expect(reason).toContain('interrupted at $0.021');
+    expect(reason).toContain('the turn cost $0.040');
+    expect(budgetStopReason(0.0214, 0.0214, 0.02)).not.toContain('the turn cost');
   });
 });

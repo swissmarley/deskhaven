@@ -141,8 +141,9 @@ export function TaskDetail({
   const commands = preview ? manualMergeCommands(preview, mergeMessage, strategy) : '';
   const conflicted = task.merge?.status === 'conflict';
   const owner = changesOwnedElsewhere(task, preview);
-  // A done task never closes the work of the agent's later task (the worktree is shared).
-  const ownedElsewhere = Boolean(owner && task.status === 'done');
+  // No task, in review or done, closes the work of the agent's later task (the worktree is shared):
+  // the merge is offered on the task that made the latest changes.
+  const ownedElsewhere = Boolean(owner);
   const empty = nothingToMerge(preview) || ownedElsewhere;
   const button = mergeButtonState(preview, { merging, hookConsentOk, previewError });
 

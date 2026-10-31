@@ -41,6 +41,27 @@ const COST_PROBE_INTERVAL_MS = 1500;
 
 type TurnUsage = Parameters<TurnCostMeter['add']>[2];
 
+/**
+ * Budget amounts with three decimals: a $0.02 cap is reached at $0.021, and with two decimals the
+ * notice read "$0.02 of $0.02" while the turn's final cost read "$0.04".
+ */
+export function usd(v: number): string {
+  return `$${v.toFixed(3)}`;
+}
+
+/**
+ * Why a turn stopped at its budget. The model call that crossed the cap is already running and is
+ * billed in full, so the final cost is usually above the amount the turn was interrupted at.
+ */
+export function budgetStopReason(finalUsd: number, stoppedAtUsd: number, capUsd: number): string {
+  const head = `Stopped: this turn reached its budget of ${usd(capUsd)} (interrupted at ${usd(stoppedAtUsd)} estimated).`;
+  const tail = 'Reply to continue, or raise "Max $ / turn" in the HR desk.';
+  if (finalUsd > stoppedAtUsd + 0.0005) {
+    return `${head} The model call already under way finished, so the turn cost ${usd(finalUsd)}. ${tail}`;
+  }
+  return `${head} ${tail}`;
+}
+
 export interface RuntimeLogger {
   info(obj: unknown, msg?: string): void;
   warn(obj: unknown, msg?: string): void;
@@ -561,7 +582,7 @@ export class AgentRuntime {
         ...this.baseEvent(),
         type: 'notification',
         kind: 'budget',
-        message: `${this.agent.name} reached the per-turn budget ($${spent.toFixed(2)} of $${cap.toFixed(2)} estimated). Interrupting the turn.`,
+        message: `${this.agent.name} reached the per-turn budget (${usd(spent)} of ${usd(cap)} estimated). Interrupting the turn.`,
       });
       void this.interrupt();
       return;
@@ -711,7 +732,7 @@ export class AgentRuntime {
         if (total > 0) this.sessionCostBase = total;
         const hit = this.turnBudgetHit;
         if (hit) {
-          const reason = `Stopped: this turn reached its budget ($${Math.max(costUsd, hit.estimateUsd).toFixed(2)} of $${hit.capUsd.toFixed(2)} estimated). Reply to continue, or raise "Max $ / turn" in the HR desk.`;
+          const reason = budgetStopReason(costUsd, hit.estimateUsd, hit.capUsd);
           this.emit({ ...ev, ok: false, costUsd, sessionCostUsd: total, errors: [reason] });
           return;
         }

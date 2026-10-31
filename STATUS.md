@@ -2,6 +2,12 @@
 
 One 3-line note per milestone, newest first.
 
+## Round 3 polish (2026-10-31)
+
+1. A task whose branch holds a later task's work offers no merge in review either (it did in done only); events already applied are skipped after a reconnect (`hello` carries `sinceSeq`; first load gets the latest 500, not the oldest); budget messages use three decimals and say when the call in flight pushed the final cost past the stop point; the desks counter updates on every busy-count change.
+2. First clicks: toasts no longer take clicks except on their × (two toasts covered "close" on a 1700 px window and the click dismissed one), info toasts expire; a card drag under 12 px opens the task (a 6-8 px wobble used to start a drag and swallow the click). Both reproduced in Chromium before the fix.
+3. Live check confirmed by the owner: a $0.02 cap stopped a turn after 1.7 s (final $0.04 with the call in flight).
+
 ## Follow-ups to PR #9 (2026-10-31)
 
 1. Per-turn cap fires on Haiku 5.5: `turn-cost.ts` mirrors the bundled CLI catalog (unknown ids such as `claude-haiku-5-5` at the Sonnet 5.5 rate, as the SDK bills them), reads final output from `message_delta`, and the runtime stops at max(own estimate, SDK running total via the experimental `get_usage`). Done tasks no longer offer to merge another task's work (`ownerTask`, 409 `changes_belong_to_other_task`). Stored turn costs migrated once from cumulative to per turn (tasks, agents, daily rows corrected); office totals now include fired agents and the HR list shows today per agent.
