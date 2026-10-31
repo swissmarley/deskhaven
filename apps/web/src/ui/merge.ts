@@ -44,6 +44,31 @@ export function nothingToMerge(
 }
 
 /**
+ * Files in the merge that were not edited by `task`: grouped by the task that last edited them, and
+ * the ones no logged edit names (changed through Bash or by hand). Empty when the preview carries no
+ * authors (an older server) or every file is this task's.
+ */
+export function otherWorkInMerge(
+  task: Pick<Task, 'id'>,
+  preview: Pick<MergePreview, 'files'> | null | undefined,
+): { byTask: { title: string; files: string[] }[]; unknown: string[] } {
+  const byTask = new Map<string, { title: string; files: string[] }>();
+  const unknown: string[] = [];
+  for (const f of preview?.files ?? []) {
+    if (f.author === undefined) continue;
+    if (f.author === null) {
+      unknown.push(f.path);
+      continue;
+    }
+    if (f.author.taskId === task.id) continue;
+    const entry = byTask.get(f.author.taskId) ?? { title: f.author.title, files: [] };
+    entry.files.push(f.path);
+    byTask.set(f.author.taskId, entry);
+  }
+  return { byTask: [...byTask.values()], unknown };
+}
+
+/**
  * The task whose work is on the branch, when it is not `task`. A done task does not offer the merge
  * then: the agent's worktree is shared, and its latest task owns the uncommitted changes.
  */

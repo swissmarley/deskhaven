@@ -4,6 +4,7 @@ import {
   manualMergeCommands,
   mergeButtonState,
   nothingToMerge,
+  otherWorkInMerge,
   reviewerCanWrite,
   showMergeControls,
 } from '../src/ui/merge.js';
@@ -86,5 +87,23 @@ describe('merge controls', () => {
     expect(changesOwnedElsewhere({ id: 'b', status: 'review' }, { ownerTask: owner })).toBeNull();
     expect(changesOwnedElsewhere({ id: 'a', status: 'done' }, {})).toBeNull();
     expect(changesOwnedElsewhere({ id: 'a', status: 'done' }, null)).toBeNull();
+  });
+
+  it('groups the files another task edited and the ones with no logged edit', () => {
+    const files = [
+      { path: 'README.md', status: ' M', author: { taskId: 'a', title: 'README line' } },
+      { path: 'notepad.py', status: ' M', author: { taskId: 'b', title: 'notepad header' } },
+      { path: 'x.py', status: ' M', author: { taskId: 'b', title: 'notepad header' } },
+      { path: 'by-shell.txt', status: '??', author: null },
+    ];
+    expect(otherWorkInMerge({ id: 'a' }, { files })).toEqual({
+      byTask: [{ title: 'notepad header', files: ['notepad.py', 'x.py'] }],
+      unknown: ['by-shell.txt'],
+    });
+    // An older server sends no authors: nothing to say.
+    expect(otherWorkInMerge({ id: 'a' }, { files: [{ path: 'a', status: 'M' }] })).toEqual({
+      byTask: [],
+      unknown: [],
+    });
   });
 });

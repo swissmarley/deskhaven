@@ -297,6 +297,11 @@ export type MergeTask = z.infer<typeof MergeTaskSchema>;
 export const MergeFileSchema = z.object({
   path: z.string(),
   status: z.string(),
+  /**
+   * The task that last edited this file through an edit tool (merge preview only); null when no
+   * logged edit names it (changed through Bash, or by hand).
+   */
+  author: z.object({ taskId: z.string(), title: z.string() }).nullable().optional(),
 });
 
 export const MergePreviewSchema = z.object({

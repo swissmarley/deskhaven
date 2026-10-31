@@ -334,4 +334,25 @@ describe('TaskDetail merge conflict', () => {
     expect(screen.queryByRole('button', { name: 'Accept & merge' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Mark done' })).toBeTruthy();
   });
+
+  it('names the other task whose changes the merge brings in, file by file', async () => {
+    vi.mocked(api.mergePreview).mockResolvedValue({
+      ...preview,
+      dirty: true,
+      files: [
+        { path: 'README.md', status: ' M', author: { taskId: 't1', title: 'Ship it' } },
+        { path: 'notepad.py', status: ' M', author: { taskId: 't2', title: 'notepad header' } },
+        { path: 'by-shell.txt', status: '??', author: null },
+      ],
+    });
+    useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    expect(
+      await screen.findByText('It also brings in the changes of "notepad header": notepad.py.'),
+    ).toBeTruthy();
+    expect(screen.getByText(/No task's edit is logged for by-shell.txt/)).toBeTruthy();
+    expect(screen.getByText('— this task')).toBeTruthy();
+    expect(screen.getByText('— "notepad header"')).toBeTruthy();
+    expect(screen.getByText('— origin unknown')).toBeTruthy();
+  });
 });
