@@ -99,6 +99,18 @@ export class TurnCostMeter {
     return this.cached;
   }
 
+  /** Token counts of the turn so far, summed over its API responses (largest value per response). */
+  tokens(): { input: number; output: number; cacheRead: number; cacheCreation: number } {
+    const out = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
+    for (const { usage } of this.byMessage.values()) {
+      out.input += n(usage.input_tokens);
+      out.output += n(usage.output_tokens);
+      out.cacheRead += n(usage.cache_read_input_tokens);
+      out.cacheCreation += n(usage.cache_creation_input_tokens);
+    }
+    return out;
+  }
+
   /** Record one assistant message and return the turn's estimated cost so far. */
   add(messageId: string | undefined | null, model: string, usage: MessageUsage): number {
     const key = messageId || `anon-${this.anon++}`;

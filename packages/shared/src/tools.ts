@@ -81,3 +81,37 @@ export function truncate(text: string, max = 80): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
   return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
 }
+
+/**
+ * Tool names the bundled Claude Code no longer has (not in the SDK's `sdk-tools.d.ts`, 0.3.287).
+ * Re-check on SDK upgrades.
+ */
+export const RETIRED_TOOLS: ReadonlySet<string> = new Set(['LS', 'MultiEdit']);
+
+/** The tool an `allowedTools` rule names: `Bash(npm test:*)` → `Bash`. */
+export function toolRuleName(rule: string): string {
+  const i = rule.indexOf('(');
+  return (i < 0 ? rule : rule.slice(0, i)).trim();
+}
+
+/**
+ * An agent's tool lists without dead entries: retired tool names are dropped from both, and
+ * `allowedTools` (the auto-approve list) keeps only rules for tools the session actually has, which
+ * are the agent's own `tools` or, when that is null, its preset's. With neither, every tool exists
+ * and only retired names go.
+ */
+export function normalizeToolLists(
+  tools: string[] | null,
+  allowedTools: string[],
+  presetTools: string[] | null | undefined,
+): { tools: string[] | null; allowedTools: string[] } {
+  const live = (name: string) => !RETIRED_TOOLS.has(name);
+  const ownTools = tools ? tools.filter(live) : null;
+  const effective = ownTools ?? presetTools?.filter(live) ?? null;
+  const available = effective ? new Set(effective) : null;
+  const allowed = allowedTools.filter((rule) => {
+    const name = toolRuleName(rule);
+    return live(name) && (!available || available.has(name));
+  });
+  return { tools: ownTools, allowedTools: [...new Set(allowed)] };
+}

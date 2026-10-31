@@ -141,6 +141,8 @@ export class AgentRuntime {
   /** This turn's cost according to the SDK's running total (0 until a reading arrives). */
   private turnSdkCost = 0;
   private costProbeInFlight = false;
+  /** This turn was interrupted (budget, pause, stop): the SDK may not count the call in flight. */
+  private turnInterrupted = false;
   private lastCostProbeAt = 0;
   /** Streamed responses: message id and model per parent tool use, for `message_delta` usage. */
   private readonly streamMessage = new Map<string, { id: string; model: string }>();
@@ -313,6 +315,7 @@ export class AgentRuntime {
   async interrupt(): Promise<void> {
     if (!this.session) return;
     try {
+      if (this.inTurn) this.turnInterrupted = true;
       await this.session.query.interrupt();
       this.emit({ ...this.baseEvent(), type: 'interrupted' });
     } catch (err) {
@@ -487,6 +490,7 @@ export class AgentRuntime {
     this.sessionClean = false;
     this.turnCost.reset();
     this.turnBudgetHit = null;
+    this.turnInterrupted = false;
     this.turnSeq++;
     this.turnSdkBase = null;
     this.turnSdkCost = 0;
@@ -622,6 +626,27 @@ export class AgentRuntime {
       });
   }
 
+  /**
+   * An interrupted turn's result leaves out the API call that was cut off: the SDK reported $0 and 0
+   * tokens for a turn the runtime had estimated at $0.045. Such a turn is stored at the larger of the
+   * SDK's figures and the runtime's own (estimate, SDK running total read mid-turn, streamed usage),
+   * so the task, the agent and the daily totals count what was spent.
+   */
+  private interruptedTurnUsage(
+    ev: AgentEventOf<'turn_completed'>,
+    sdkCost: number,
+  ): AgentEventOf<'turn_completed'> {
+    const t = this.turnCost.tokens();
+    return {
+      ...ev,
+      costUsd: Math.max(sdkCost, this.turnCost.totalUsd, this.turnSdkCost),
+      inputTokens: Math.max(ev.inputTokens, t.input),
+      outputTokens: Math.max(ev.outputTokens, t.output),
+      cacheReadTokens: Math.max(ev.cacheReadTokens, t.cacheRead),
+      cacheCreationTokens: Math.max(ev.cacheCreationTokens, t.cacheCreation),
+    };
+  }
+
   /** True when `freshSessionPerTask` is on and the next prompt belongs to another task. */
   private wantsFreshSession(nextTaskId: string | null): boolean {
     if (!this.agent.budget.freshSessionPerTask || !nextTaskId) return false;
@@ -728,15 +753,17 @@ export class AgentRuntime {
       case 'turn_completed': {
         // total_cost_usd is cumulative for the process: store this turn's share.
         const total = ev.costUsd;
-        const costUsd = turnCostFromCumulative(total, this.sessionCostBase);
+        const sdkCost = turnCostFromCumulative(total, this.sessionCostBase);
         if (total > 0) this.sessionCostBase = total;
         const hit = this.turnBudgetHit;
+        const cut = hit !== null || this.turnInterrupted || ev.subtype !== 'success';
+        const turn = cut ? this.interruptedTurnUsage(ev, sdkCost) : { ...ev, costUsd: sdkCost };
         if (hit) {
-          const reason = budgetStopReason(costUsd, hit.estimateUsd, hit.capUsd);
-          this.emit({ ...ev, ok: false, costUsd, sessionCostUsd: total, errors: [reason] });
+          const reason = budgetStopReason(turn.costUsd, hit.estimateUsd, hit.capUsd);
+          this.emit({ ...turn, ok: false, sessionCostUsd: total, errors: [reason] });
           return;
         }
-        this.emit({ ...ev, costUsd, sessionCostUsd: total });
+        this.emit({ ...turn, sessionCostUsd: total });
         return;
       }
       default:

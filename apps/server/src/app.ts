@@ -148,6 +148,12 @@ export async function buildApp(
   const roomService = new RoomService(db, hub, () => agents);
   const room = () => roomService.get(DEFAULT_ROOM_ID) ?? defaultRoom();
   agents = new AgentService(db, hub, settings, room, (id) => presetService.get(id));
+  const retooled = agents.normalizeToolLists();
+  if (retooled.length)
+    app.log.info(
+      { agents: retooled },
+      'removed retired or unavailable tools from agent tool lists',
+    );
   // Agents from a previous process are not running anymore. Agents saved before the workdir rules
   // (e.g. with workdir "/") are flagged now, so the UI asks for a new folder before they can start.
   for (const a of agents.list()) {
@@ -283,6 +289,7 @@ export async function buildApp(
           settings: settings.get(),
           pendingPermissions: broker.listPending(),
           usage: usage.snapshot(),
+          lastSeq: events.maxSeq(),
         });
         // With a seq: what the client missed, oldest first. Without one (first load): the latest 500,
         // not the oldest 500 the log ever held.

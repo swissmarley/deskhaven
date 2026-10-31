@@ -33,6 +33,8 @@ const MIGRATIONS: string[] = [
      date TEXT NOT NULL, agent_id TEXT NOT NULL, cost_usd REAL NOT NULL, input_tokens INTEGER NOT NULL,
      output_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL, cache_creation_tokens INTEGER NOT NULL,
      turns INTEGER NOT NULL, PRIMARY KEY(date, agent_id));`,
+  `CREATE TABLE IF NOT EXISTS worktree_trees (
+     agent_id TEXT PRIMARY KEY, tree TEXT NOT NULL, updated_at INTEGER NOT NULL);`,
 ];
 
 export function openDb(dbPath: string): { db: Db; sqlite: Database.Database } {

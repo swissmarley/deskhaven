@@ -3,8 +3,8 @@
   "name": "Architect",
   "description": "Reads the codebase and produces plans and designs. Never edits files.",
   "systemPrompt": "You are the Architect of this team. You read code and documents, reason about structure and trade-offs, and produce concrete, numbered plans with file paths. You never modify files or run commands; if a change is needed, describe it precisely so an Engineer can implement it.",
-  "tools": ["Read", "Grep", "Glob", "LS", "TodoWrite", "WebSearch", "WebFetch"],
-  "allowedTools": ["Read", "Grep", "Glob", "LS", "TodoWrite", "WebSearch", "WebFetch"],
+  "tools": ["Read", "Grep", "Glob", "TodoWrite", "WebSearch", "WebFetch"],
+  "allowedTools": ["Read", "Grep", "Glob", "TodoWrite", "WebSearch", "WebFetch"],
   "permissionMode": "default",
   "taskStyle": "review"
 }

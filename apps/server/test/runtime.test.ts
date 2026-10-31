@@ -574,7 +574,9 @@ describe('AgentRuntime', () => {
     });
     await tick();
     const turn = all().find((e) => e.type === 'turn_completed');
-    expect(turn).toMatchObject({ ok: false, taskId: 'task1', costUsd: 0.31 });
+    expect(turn).toMatchObject({ ok: false, taskId: 'task1' });
+    // Interrupted: the larger of the SDK's $0.31 and the runtime's estimate when it stopped.
+    expect(turn?.type === 'turn_completed' && turn.costUsd).toBeGreaterThanOrEqual(0.31);
     expect(turn?.type === 'turn_completed' && turn.errors?.[0]).toMatch(/reached its budget/);
     expect(rt.getStatus()).toBe('idle');
     await rt.stop();
@@ -866,5 +868,94 @@ describe('AgentRuntime', () => {
     expect(reason).toContain('interrupted at $0.021');
     expect(reason).toContain('the turn cost $0.040');
     expect(budgetStopReason(0.0214, 0.0214, 0.02)).not.toContain('the turn cost');
+  });
+
+  it('stores an interrupted turn at its own estimate when the SDK reports $0 and 0 tokens', async () => {
+    const { rt, sessions, all } = setup({ budget: { maxBudgetUsd: 0.02 } });
+    rt.sendPrompt('small fix', 'f4e2b15e');
+    const s = sessions[0] as FakeSession;
+    s.emit({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        id: 'm1',
+        model: 'claude-sonnet-5-5',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'reading' }],
+        usage: {
+          input_tokens: 5,
+          cache_creation_input_tokens: 10_000,
+          cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 10_000 },
+          cache_read_input_tokens: 20_000,
+          output_tokens: 300,
+        },
+      },
+    });
+    await tick();
+    expect(s.interrupts).toBe(1);
+    // The interrupted call is not in the SDK's result.
+    s.emit({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      duration_ms: 1700,
+      duration_api_ms: 1600,
+      num_turns: 1,
+      stop_reason: null,
+      total_cost_usd: 0,
+      usage: { input_tokens: 0, output_tokens: 0 },
+      modelUsage: {},
+      permission_denials: [],
+      errors: [],
+    });
+    await tick();
+    const turn = all().find((e) => e.type === 'turn_completed');
+    if (turn?.type !== 'turn_completed') throw new Error('no turn');
+    // 10k cache writes at $4/M + 20k reads at $0.20/M + 300 output at $10/M + 5 input = $0.04701
+    expect(turn.costUsd).toBeCloseTo(0.04701, 8);
+    expect(turn).toMatchObject({
+      ok: false,
+      inputTokens: 5,
+      outputTokens: 300,
+      cacheReadTokens: 20_000,
+      cacheCreationTokens: 10_000,
+    });
+    expect(turn.errors?.[0]).toContain('interrupted at $0.047');
+    await rt.stop();
+  });
+
+  it('keeps the SDK figure for a turn that ended normally', async () => {
+    const { rt, sessions, all } = setup();
+    rt.sendPrompt('go', 't1');
+    const s = sessions[0] as FakeSession;
+    s.emit({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        id: 'm1',
+        model: 'claude-sonnet-5-5',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+        usage: { input_tokens: 100_000, output_tokens: 10 },
+      },
+    });
+    s.emit({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 1,
+      duration_api_ms: 1,
+      num_turns: 1,
+      result: 'ok',
+      stop_reason: 'end_turn',
+      total_cost_usd: 0.15,
+      usage: { input_tokens: 100_000, output_tokens: 10 },
+      modelUsage: {},
+      permission_denials: [],
+    });
+    await tick();
+    const turn = all().find((e) => e.type === 'turn_completed');
+    expect(turn).toMatchObject({ costUsd: 0.15 });
+    await rt.stop();
   });
 });

@@ -28,6 +28,11 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
     settings: SettingsSchema,
     pendingPermissions: z.array(PermissionRequestSchema),
     usage: UsageSnapshotSchema,
+    /**
+     * The highest event seq in the server's log. Lower than a client's own last seq means the log was
+     * reset (a new database): the client must drop its timeline and ask again from the start.
+     */
+    lastSeq: z.number().int().nonnegative().optional(),
   }),
   z.object({ type: z.literal('pong') }),
   z.object({ type: z.literal('event'), event: AgentEventSchema }),

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type Built, client, testApp } from './helpers.js';
 
@@ -902,110 +903,101 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     });
   });
 
-  it("does not let a done task merge the changes of the agent's later task", async () => {
+  /** Ends a turn of `taskId` and waits until the service has compared the worktree. */
+  async function finishTurn(agentId: string, taskId: string): Promise<void> {
+    const before = built.ctx.tasks.get(taskId)?.updatedAt ?? 0;
+    built.ctx.events.append({
+      id: `turn-${taskId}-${Math.random()}`,
+      ts: Date.now(),
+      agentId,
+      taskId,
+      type: 'turn_completed',
+      ok: true,
+      subtype: 'success',
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      numTurns: 1,
+      durationMs: 1,
+    });
+    // collectFiles always rewrites the task; the tree comparison runs right after it.
+    for (let i = 0; i < 100 && (built.ctx.tasks.get(taskId)?.updatedAt ?? 0) <= before; i++)
+      await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 150));
+  }
+
+  it('gives the changes to the last task that changed files, not the last one that ran', async () => {
     const repo = tmpRepo();
+    fs.writeFileSync(path.join(repo, 'README.md'), '# app\n');
+    fs.writeFileSync(path.join(repo, 'notepad.py'), 'print(1)\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'files');
     const agent = (await hire(repo, 'Owner', true)).json();
-    const turn = (taskId: string, n: number) =>
-      built.ctx.events.append({
-        id: `turn-${taskId}-${n}`,
-        ts: Date.now(),
-        agentId: agent.id,
-        taskId,
-        type: 'turn_completed',
-        ok: true,
-        subtype: 'success',
-        costUsd: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
-        numTurns: 1,
-        durationMs: 1,
+    const wt = agent.worktree.path as string;
+
+    const readme = await reviewTask(agent.id, 'README line'); // 83b858d5
+    fs.appendFileSync(path.join(wt, 'README.md'), 'One more line.\n');
+    await finishTurn(agent.id, readme);
+    const notepad = await reviewTask(agent.id, 'notepad.py header comment'); // b1ccbaa1
+    fs.writeFileSync(path.join(wt, 'notepad.py'), '# header\nprint(1)\n');
+    await finishTurn(agent.id, notepad);
+    const idle = await reviewTask(agent.id, 'Fix filetypes kwarg'); // f4e2b15e: changes nothing
+    await finishTurn(agent.id, idle);
+
+    expect(built.ctx.tasks.get(readme)?.changedAt).toBeTruthy();
+    expect(built.ctx.tasks.get(notepad)?.changedAt).toBeTruthy();
+    expect(built.ctx.tasks.get(idle)?.changedAt).toBeFalsy();
+
+    const preview = async (id: string) =>
+      (await req({ method: 'GET', url: `/api/tasks/${id}/merge-preview` })).json();
+    const p = await preview(notepad);
+    expect(p).toMatchObject({ dirty: true, canMerge: true });
+    expect(p.ownerTask).toBeUndefined();
+    for (const other of [idle, readme]) {
+      const q = await preview(other);
+      expect(q).toMatchObject({ canMerge: false, ownerTask: { id: notepad } });
+      const refused = await req({
+        method: 'POST',
+        url: `/api/tasks/${other}/merge`,
+        payload: {
+          expectedBranchSha: q.branchSha,
+          consentedHookFiles: [],
+          previewTree: q.previewTree,
+        },
       });
-    const first = await reviewTask(agent.id, 'Fix filetypes kwarg');
-    turn(first, 1);
-    const done = await req({
-      method: 'PATCH',
-      url: `/api/tasks/${first}`,
-      payload: { status: 'done' },
-    });
-    expect(done.statusCode).toBe(200);
-    const second = await reviewTask(agent.id, 'notepad.py header comment');
-    turn(second, 2);
-    fs.writeFileSync(path.join(agent.worktree.path, 'notepad.py'), '# header\n');
+      expect(refused.json().error).toBe('changes_belong_to_other_task');
+    }
 
-    const a = (await req({ method: 'GET', url: `/api/tasks/${first}/merge-preview` })).json();
-    expect(a).toMatchObject({
-      dirty: true,
-      canMerge: false,
-      ownerTask: { id: second, title: 'notepad.py header comment' },
-    });
-    expect(a.reason).toMatch(/belong to "notepad.py header comment"/);
-    const refused = await req({
-      method: 'POST',
-      url: `/api/tasks/${first}/merge`,
-      payload: {
-        expectedBranchSha: a.branchSha,
-        consentedHookFiles: [],
-        previewTree: a.previewTree,
-      },
-    });
-    expect(refused.statusCode).toBe(409);
-    expect(refused.json().error).toBe('changes_belong_to_other_task');
-
-    const b = (await req({ method: 'GET', url: `/api/tasks/${second}/merge-preview` })).json();
-    expect(b).toMatchObject({ canMerge: true });
-    expect(b.ownerTask).toBeUndefined();
-  });
-
-  it("does not let a review task merge the changes of the agent's later task", async () => {
-    const repo = tmpRepo();
-    const agent = (await hire(repo, 'ReviewOwner', true)).json();
-    const turn = (taskId: string) =>
-      built.ctx.events.append({
-        id: `rturn-${taskId}`,
-        ts: Date.now(),
-        agentId: agent.id,
-        taskId,
-        type: 'turn_completed',
-        ok: true,
-        subtype: 'success',
-        costUsd: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
-        numTurns: 1,
-        durationMs: 1,
-      });
-    const first = await reviewTask(agent.id, 'Earlier');
-    turn(first);
-    const second = await reviewTask(agent.id, 'Later');
-    turn(second);
-    fs.writeFileSync(path.join(agent.worktree.path, 'later.txt'), 'later\n');
-    const a = (await req({ method: 'GET', url: `/api/tasks/${first}/merge-preview` })).json();
-    expect(a).toMatchObject({ canMerge: false, ownerTask: { id: second } });
-    const refused = await req({
-      method: 'POST',
-      url: `/api/tasks/${first}/merge`,
-      payload: {
-        expectedBranchSha: a.branchSha,
-        consentedHookFiles: [],
-        previewTree: a.previewTree,
-      },
-    });
-    expect(refused.json().error).toBe('changes_belong_to_other_task');
-    // Once the later task is merged, nothing on the branch belongs to it any more.
+    // Merging the owner integrates everything on the branch, and frees the other tasks.
     const merged = await req({
       method: 'POST',
-      url: `/api/tasks/${second}/merge`,
-      payload: await mergePayload(second),
+      url: `/api/tasks/${notepad}/merge`,
+      payload: await mergePayload(notepad),
     });
     expect(merged.statusCode).toBe(200);
-    fs.writeFileSync(path.join(agent.worktree.path, 'stray.txt'), 'left over\n');
-    const after = (await req({ method: 'GET', url: `/api/tasks/${first}/merge-preview` })).json();
+    expect(fs.readFileSync(path.join(repo, 'README.md'), 'utf8')).toContain('One more line.');
+    expect(built.ctx.tasks.get(readme)?.changedAt).toBeFalsy();
+    fs.writeFileSync(path.join(wt, 'stray.txt'), 'left over\n');
+    const after = await preview(readme);
     expect(after.ownerTask).toBeUndefined();
     expect(after.canMerge).toBe(true);
+  });
+
+  it('attributes nothing for an agent whose worktree was never compared (older data)', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Legacy', true)).json();
+    // Changes made before tracking existed: no baseline was recorded for this agent.
+    fs.writeFileSync(path.join(agent.worktree.path, 'old.txt'), 'old\n');
+    built.ctx.db.run(sql`DELETE FROM worktree_trees WHERE agent_id = ${agent.id}`);
+    const task = await reviewTask(agent.id, 'Ran later');
+    built.ctx.db.run(sql`DELETE FROM worktree_trees WHERE agent_id = ${agent.id}`);
+    await finishTurn(agent.id, task);
+    expect(built.ctx.tasks.get(task)?.changedAt).toBeFalsy();
+    const p = (await req({ method: 'GET', url: `/api/tasks/${task}/merge-preview` })).json();
+    expect(p).toMatchObject({ canMerge: true });
+    expect(p.ownerTask).toBeUndefined();
   });
 
   it('lists uncommitted hook runner configs in the preview', async () => {

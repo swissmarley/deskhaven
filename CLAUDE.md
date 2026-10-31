@@ -76,11 +76,23 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   (settings key `migration.turn_cost_per_turn`) and corrected task, agent and daily totals.
 - Office totals in the header (today and all time) sum `usage_daily`, which keeps the rows of fired
   agents; the HR list shows each agent's cost today and a line for agents no longer on staff.
-- Every task of an agent shares one worktree and branch. The merge preview names the task that ran last
-  there (`ownerTask`); any other task (review or done) offers no merge (409
-  `changes_belong_to_other_task` on the API) until that task is merged or deleted.
+- Every task of an agent shares one worktree and branch. After each turn `TaskService` compares the
+  worktree's `previewTree` with the one stored in `worktree_trees` (recorded at the first dispatch and
+  after each merge); a different tree sets the task's `changedAt`. The owner is the unmerged task with
+  the latest `changedAt` (a task that only read or ran tests owns nothing); every other task offers no
+  merge (409 `changes_belong_to_other_task`). A merge clears all claims. Agents without a stored tree
+  (older data) attribute nothing.
+- An interrupted turn (budget, pause, stop) is stored at the larger of the SDK's figures and the
+  runtime's own (estimate, mid-turn SDK total, streamed token counts): the SDK's result leaves out the
+  call that was cut off and reported $0 / 0 tokens.
+- `reconcileOnBoot` adds the restart note only when the task's turn was in flight (its last
+  `message_sent` has no `turn_completed` after it) and replaces an earlier note instead of stacking.
+- Tool lists are normalised (`normalizeToolLists` in shared) on hire, edit and at every boot: retired
+  names (`LS`, `MultiEdit`, absent from the SDK's `sdk-tools.d.ts`) go, and `allowedTools` keeps only
+  rules for tools the agent has (its `tools`, else its preset's).
 - The client sends `hello` with `sinceSeq` = its last applied seq on every (re)connect, and `applyEvent`
-  drops events at or below it; without a seq the server sends the latest 500 events. A reconnect after a
+  drops events at or below it; without a seq the server sends the latest 500 events. The server's
+  `hello.lastSeq` below the client's means a reset database: the client clears its timeline and resyncs. A reconnect after a
   server restart used to re-append events (duplicate React keys in the feed).
 - The HUD "desks" count is broadcast with the usage snapshot whenever the busy count changes
   (`AgentManager.onDesksChanged`); it used to go out only at turn end, while the agent still read busy.

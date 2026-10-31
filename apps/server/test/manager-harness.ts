@@ -135,7 +135,8 @@ export function managerHarness(
       settings: () => settings.get(),
       baseEnv: () => ({ PATH: '/bin', ...opts.baseEnv }),
       log: { info() {}, warn() {}, error() {}, debug() {} },
-      onTurn: () => {},
+      // As in app.ts: the agent's and the day's totals come from the emitted turn.
+      onTurn: (id, _taskId, turn) => agents.addUsage(id, turn),
       onApiKeySource: () => {},
       startSession,
       stopGraceMs: 50,

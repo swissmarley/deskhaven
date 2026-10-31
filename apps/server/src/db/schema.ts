@@ -19,6 +19,16 @@ export const agents = sqliteTable('agents', {
   updatedAt: integer('updated_at').notNull(),
 });
 
+/**
+ * Content of each agent's worktree after its last turn (`previewTree`: HEAD plus uncommitted
+ * changes as a tree id). A turn that leaves a different tree changed files; its task owns them.
+ */
+export const worktreeTrees = sqliteTable('worktree_trees', {
+  agentId: text('agent_id').primaryKey(),
+  tree: text('tree').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
 export const tasks = sqliteTable(
   'tasks',
   {
