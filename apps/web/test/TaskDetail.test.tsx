@@ -200,17 +200,89 @@ describe('TaskDetail merge conflict', () => {
     });
   });
 
-  it('expires merge confirmation after ten seconds', async () => {
+  it('keeps the confirmation open while the user reads it, and expires it after a minute', async () => {
     vi.useFakeTimers();
     useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
     render(<TaskDetail taskId="t1" onClose={() => {}} />);
     await vi.waitFor(() => screen.getByText(/deskhaven\/ada → main/));
     fireEvent.click(screen.getByRole('button', { name: 'Accept & merge' }));
+    expect(screen.getByRole('alertdialog', { name: 'Confirm merge' }).textContent).toMatch(
+      /Merge 1 commit \(1 file\) from deskhaven\/ada into main as a squash commit/,
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+    });
     expect(screen.getByRole('button', { name: 'Confirm merge' })).toBeTruthy();
     await act(async () => {
-      vi.advanceTimersByTime(10_000);
+      vi.advanceTimersByTime(30_000);
     });
     expect(screen.getByRole('button', { name: 'Accept & merge' })).toBeTruthy();
     expect(api.mergeTask).not.toHaveBeenCalled();
+  });
+
+  it('keeps "Accept & merge" disabled until the preview has loaded', async () => {
+    let resolve: (p: typeof preview) => void = () => {};
+    vi.mocked(api.mergePreview).mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    const early = screen.getByRole('button', { name: 'Accept & merge' }) as HTMLButtonElement;
+    expect(early.disabled).toBe(true);
+    // A click while the preview is on its way used to open a confirmation the preview then closed.
+    fireEvent.click(early);
+    expect(screen.queryByRole('button', { name: 'Confirm merge' })).toBeNull();
+    await act(async () => {
+      resolve(preview);
+    });
+    const ready = screen.getByRole('button', { name: 'Accept & merge' }) as HTMLButtonElement;
+    expect(ready.disabled).toBe(false);
+    fireEvent.click(ready);
+    expect(screen.getByRole('button', { name: 'Confirm merge' })).toBeTruthy();
+  });
+
+  it('withdraws an open confirmation with a notice when the branch changes', async () => {
+    useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task() } });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    await screen.findByText(/deskhaven\/ada → main/);
+    fireEvent.click(screen.getByRole('button', { name: 'Accept & merge' }));
+    vi.mocked(api.mergePreview).mockResolvedValue({ ...preview, ahead: 2, branchSha: 'def' });
+    await act(async () => {
+      useAppStore.setState({ tasks: { t1: task({ updatedAt: 5 }) } });
+    });
+    await screen.findByText(/2 ahead/);
+    expect(screen.queryByRole('button', { name: 'Confirm merge' })).toBeNull();
+    expect(screen.getByText(/branch changed while the confirmation was open/)).toBeTruthy();
+  });
+
+  it('shows "Nothing to merge" instead of the merge button for an empty branch', async () => {
+    vi.mocked(api.mergePreview).mockResolvedValue({
+      ...preview,
+      ahead: 0,
+      files: [],
+      canMerge: false,
+      reason: 'Nothing to merge',
+    });
+    useAppStore.setState({ agents: { eng: agent }, tasks: { t1: task({ status: 'done' }) } });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    expect(await screen.findByText('Nothing to merge.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Accept & merge' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy git commands' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Go to merge' })).toBeNull();
+  });
+
+  it('places the merge section above the prompt and result', async () => {
+    useAppStore.setState({
+      agents: { eng: agent },
+      tasks: { t1: task({ resultSummary: 'A very long result' }) },
+    });
+    render(<TaskDetail taskId="t1" onClose={() => {}} />);
+    await screen.findByText(/deskhaven\/ada → main/);
+    const merge = screen.getByRole('heading', { name: 'Merge' });
+    const prompt = screen.getByRole('heading', { name: 'Prompt' });
+    expect(merge.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Go to merge' })).toBeTruthy();
   });
 });

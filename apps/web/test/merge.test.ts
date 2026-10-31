@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { manualMergeCommands, reviewerCanWrite, showMergeControls } from '../src/ui/merge.js';
+import {
+  manualMergeCommands,
+  mergeButtonState,
+  nothingToMerge,
+  reviewerCanWrite,
+  showMergeControls,
+} from '../src/ui/merge.js';
 
 describe('merge controls', () => {
   it('shows them only for a ready worktree task', () => {
@@ -39,5 +45,37 @@ describe('merge controls', () => {
     expect(reviewerCanWrite({ tools: null, allowedTools: ['Read', 'Edit'] })).toBe(true);
     expect(reviewerCanWrite({ tools: ['Read', 'Bash'], allowedTools: ['Read'] })).toBe(true);
     expect(reviewerCanWrite(undefined)).toBe(false);
+  });
+
+  it('treats a branch with no commits ahead and no changes as nothing to merge', () => {
+    const empty = { ahead: 0, dirty: false, files: [] };
+    expect(nothingToMerge(empty)).toBe(true);
+    expect(nothingToMerge({ ...empty, ahead: 8 })).toBe(false);
+    expect(nothingToMerge({ ...empty, dirty: true })).toBe(false);
+    expect(nothingToMerge({ ...empty, files: [{ status: 'untracked', path: 'x' }] })).toBe(false);
+    expect(nothingToMerge(null)).toBe(false);
+  });
+
+  it('disables "Accept & merge" until the preview is loaded and there is something to merge', () => {
+    const ready = { ahead: 2, dirty: false, files: [], canMerge: true };
+    const ok = { merging: false, hookConsentOk: true };
+    expect(mergeButtonState(null, ok)).toEqual({ disabled: true, reason: 'Checking the branch…' });
+    expect(mergeButtonState(null, { ...ok, previewError: 'boom' })).toEqual({
+      disabled: true,
+      reason: null,
+    });
+    expect(mergeButtonState(ready, ok)).toEqual({ disabled: false, reason: null });
+    expect(
+      mergeButtonState(
+        { ahead: 0, dirty: false, files: [], canMerge: false, reason: 'Nothing to merge' },
+        ok,
+      ),
+    ).toEqual({ disabled: true, reason: 'Nothing to merge' });
+    expect(mergeButtonState(ready, { ...ok, hookConsentOk: false }).disabled).toBe(true);
+    expect(mergeButtonState(ready, { ...ok, merging: true }).disabled).toBe(true);
+    expect(mergeButtonState({ ...ready, canMerge: false, reason: 'Cannot compare' }, ok)).toEqual({
+      disabled: true,
+      reason: 'Cannot compare',
+    });
   });
 });

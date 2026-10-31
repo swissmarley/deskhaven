@@ -802,7 +802,12 @@ export class WorktreeService {
       // The comparison itself is reported by status().
     }
     try {
-      const porcelain = await this.git(wt.path, ['status', '--porcelain=v1', '-z']);
+      const porcelain = await this.git(wt.path, [
+        'status',
+        '--porcelain=v1',
+        '-z',
+        '--untracked-files=all',
+      ]);
       for (const file of parsePorcelainZ(porcelain)) byPath.set(file.path, file);
     } catch {
       // ignore

@@ -59,7 +59,15 @@ Gate before every commit: `pnpm typecheck && pnpm lint && pnpm test && pnpm buil
   (`grep -c '"--bare"' node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs` should print 0) and
   check that `system/init.apiKeySource === 'none'` in subscription mode.
 - `system/init` carries `session_id`; every message does. Persist `session_id` and pass `resume`.
-- `result.total_cost_usd` is an estimate and includes subagents; `result.usage` is main-loop only.
+- `result.total_cost_usd` is an estimate, includes subagents and is **cumulative per process** (resumed
+  processes continue from the saved total); the runtime differences it per turn (`turn_completed.costUsd`,
+  raw total in `sessionCostUsd`). `result.usage` is main-loop only and per turn.
+- "Max $ / turn" (`budget.maxBudgetUsd`) is enforced by `AgentRuntime` from assistant-message usage
+  (`agent/turn-cost.ts`, price table per model family; update it when prices change). It is no longer
+  passed to the SDK, whose cap is cumulative per process.
+- The SDK prints `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` at every spawn: bare `allowedTools` names skip
+  `canUseTool`. Intended: `allowedTools` is the auto-approve list; the workdir edit guard is a
+  `PreToolUse` hook and still runs for them.
 - pnpm: this machine's corepack shim pointed at a missing pnpm; `corepack prepare pnpm@10.34.5 --activate`
   fixes it. `packageManager` is pinned in the root `package.json`.
 - pnpm 10 blocks lifecycle scripts; only `esbuild` is allow-listed in `pnpm.onlyBuiltDependencies`.

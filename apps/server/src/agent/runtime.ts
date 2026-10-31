@@ -33,6 +33,7 @@ import {
   type SessionConfig,
   startAgentSession,
 } from './sdk-adapter.js';
+import { TurnCostMeter, turnCostFromCumulative } from './turn-cost.js';
 
 export interface RuntimeLogger {
   info(obj: unknown, msg?: string): void;
@@ -102,6 +103,16 @@ export class AgentRuntime {
   private extraReadDirs: string[] = [];
   /** Directories the live process was spawned with. */
   private sessionReadDirs: string[] = [];
+  /** Running cost estimate of the current turn (the SDK reports cost only when a turn ends). */
+  private readonly turnCost = new TurnCostMeter();
+  /** Set when this turn was interrupted for reaching `budget.maxBudgetUsd`. */
+  private turnBudgetHit: { estimateUsd: number; capUsd: number } | null = null;
+  /** The SDK's cumulative `total_cost_usd` after the previous turn of the live process. */
+  private sessionCostBase = 0;
+  /** Task of the last prompt dispatched to the live session; undefined = not known yet. */
+  private sessionTaskId: string | null | undefined = undefined;
+  /** The live process started a new conversation and has not run a prompt yet. */
+  private sessionClean = false;
 
   constructor(
     private agent: Agent,
@@ -177,6 +188,9 @@ export class AgentRuntime {
       );
       return;
     }
+    if (this.wantsFreshSession(this.queue[0]?.taskId ?? null)) this.dropSession();
+    this.sessionCostBase = this.savedSessionCost();
+    this.sessionClean = !this.sessionId;
     const cfg: SessionConfig = {
       cwd: this.cwd(),
       model: sessionModel(
@@ -193,7 +207,8 @@ export class AgentRuntime {
       strictMcpConfig: true,
       ...(this.sessionId ? { resume: this.sessionId } : {}),
       ...(this.agent.budget.maxTurns ? { maxTurns: this.agent.budget.maxTurns } : {}),
-      ...(this.agent.budget.maxBudgetUsd ? { maxBudgetUsd: this.agent.budget.maxBudgetUsd } : {}),
+      // budget.maxBudgetUsd is enforced per turn by this runtime (see onAssistantUsage). The SDK's
+      // own maxBudgetUsd is cumulative for the process and only checked between API calls.
     };
     const mcp = this.deps.mcpServers?.(this.agent);
     if (mcp) cfg.mcpServers = mcp;
@@ -421,10 +436,19 @@ export class AgentRuntime {
       );
       return;
     }
+    if (this.wantsFreshSession(this.queue[0]?.taskId ?? null)) {
+      this.dropSession();
+      void this.restartBeforeTurn('new task; starting a fresh session (freshSessionPerTask)');
+      return;
+    }
     const next = this.queue.shift();
     if (!next) return;
     this.lastActivityAt = Date.now();
     this.currentTaskId = next.taskId;
+    this.sessionTaskId = next.taskId;
+    this.sessionClean = false;
+    this.turnCost.reset();
+    this.turnBudgetHit = null;
     this.inTurn = true;
     this.setStatus('working');
     this.session.prompts.push(next.text);
@@ -453,8 +477,76 @@ export class AgentRuntime {
   private handleMessage(m: SDKMessage): void {
     this.lastActivityAt = Date.now();
     recordSdkMessage(m);
+    if (m.type === 'assistant') this.onAssistantUsage(m);
     for (const ev of normalizeSdkMessage(m, this.ctx())) this.process(ev);
     if (m.type === 'result') this.onTurnEnd();
+  }
+
+  /**
+   * Adds an assistant message's usage to the turn estimate and interrupts the turn once it reaches
+   * `budget.maxBudgetUsd`. The check runs as each API response arrives, so a turn can overshoot by
+   * at most the call that crossed the cap.
+   */
+  private onAssistantUsage(m: Extract<SDKMessage, { type: 'assistant' }>): void {
+    if (!this.inTurn) return;
+    const msg = m.message as { id?: string; model?: string; usage?: unknown } | undefined;
+    if (!msg?.usage || typeof msg.usage !== 'object') return;
+    const estimate = this.turnCost.add(
+      msg.id,
+      msg.model ?? this.agent.model,
+      msg.usage as Parameters<TurnCostMeter['add']>[2],
+    );
+    const cap = this.agent.budget.maxBudgetUsd;
+    if (!cap || this.turnBudgetHit || estimate < cap) return;
+    this.turnBudgetHit = { estimateUsd: estimate, capUsd: cap };
+    this.emit({
+      ...this.baseEvent(),
+      type: 'notification',
+      kind: 'budget',
+      message: `${this.agent.name} reached the per-turn budget ($${estimate.toFixed(2)} of $${cap.toFixed(2)} estimated). Interrupting the turn.`,
+    });
+    void this.interrupt();
+  }
+
+  /** True when `freshSessionPerTask` is on and the next prompt belongs to another task. */
+  private wantsFreshSession(nextTaskId: string | null): boolean {
+    if (!this.agent.budget.freshSessionPerTask || !nextTaskId) return false;
+    // Nothing to forget: no stored session, or a live process that has not run a prompt yet.
+    if (!this.sessionId && !this.session) return false;
+    if (this.session && this.sessionClean) return false;
+    const previous =
+      this.sessionTaskId !== undefined ? this.sessionTaskId : this.lastPromptTaskBeforeQueue();
+    return previous !== nextTaskId;
+  }
+
+  /**
+   * Task of the prompt sent before everything still queued (after a server restart the in-memory
+   * marker is gone; a turn cut short by the restart has no `turn_completed`, but its prompt was logged).
+   * `undefined` when the log has no earlier prompt.
+   */
+  private lastPromptTaskBeforeQueue(): string | null | undefined {
+    const sent = this.deps.events.list({
+      agentId: this.agent.id,
+      types: ['message_sent'],
+      limit: this.queue.length + 1,
+    });
+    const before = sent[this.queue.length];
+    return before ? (before.taskId ?? null) : undefined;
+  }
+
+  /** Forget the session id so the next spawn starts a new conversation instead of resuming. */
+  private dropSession(): void {
+    this.sessionId = null;
+    this.sessionTaskId = undefined;
+    this.sessionCostBase = 0;
+  }
+
+  /** The cumulative SDK cost saved with the last turn of the session about to be resumed. */
+  private savedSessionCost(): number {
+    if (!this.sessionId) return 0;
+    const last = this.deps.events.latest(this.agent.id, 'turn_completed');
+    if (last?.type !== 'turn_completed' || last.sessionId !== this.sessionId) return 0;
+    return last.sessionCostUsd ?? 0;
   }
 
   private handleHook(input: HookInput, toolUseId: string | undefined): void {
@@ -517,6 +609,20 @@ export class AgentRuntime {
       case 'error': {
         this.lastError = ev.message;
         this.emit(ev);
+        return;
+      }
+      case 'turn_completed': {
+        // total_cost_usd is cumulative for the process: store this turn's share.
+        const total = ev.costUsd;
+        const costUsd = turnCostFromCumulative(total, this.sessionCostBase);
+        if (total > 0) this.sessionCostBase = total;
+        const hit = this.turnBudgetHit;
+        if (hit) {
+          const reason = `Stopped: this turn reached its budget ($${Math.max(costUsd, hit.estimateUsd).toFixed(2)} of $${hit.capUsd.toFixed(2)} estimated). Reply to continue, or raise "Max $ / turn" in the HR desk.`;
+          this.emit({ ...ev, ok: false, costUsd, sessionCostUsd: total, errors: [reason] });
+          return;
+        }
+        this.emit({ ...ev, costUsd, sessionCostUsd: total });
         return;
       }
       default:

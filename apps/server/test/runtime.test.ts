@@ -500,4 +500,220 @@ describe('AgentRuntime', () => {
     expect(sessions[0]?.interrupts ?? 0).toBe(0); // nothing was in flight when paused
     await rt.stop();
   });
+
+  it('interrupts a turn as soon as the running cost estimate reaches budget.maxBudgetUsd', async () => {
+    const { rt, sessions, all } = setup({ budget: { maxBudgetUsd: 0.3 } });
+    rt.sendPrompt('small fix', 'task1');
+    const s = sessions[0];
+    if (!s) throw new Error('no session');
+    // The SDK's own cap is cumulative per process and checked late; the runtime enforces it instead.
+    expect(s.cfg.maxBudgetUsd).toBeUndefined();
+    const assistant = (id: string, usage: Record<string, unknown>) =>
+      s.emit({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          id,
+          model: 'claude-sonnet-5-5',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'working' }],
+          usage,
+        },
+      });
+    // 38k cache writes (1h TTL) + 75k cache reads on Sonnet 5.5 ≈ $0.17: under the cap.
+    assistant('m1', {
+      input_tokens: 2,
+      cache_creation_input_tokens: 38_000,
+      cache_read_input_tokens: 75_000,
+      cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 38_000 },
+      output_tokens: 100,
+    });
+    // The same streamed response again must not be counted twice.
+    assistant('m1', {
+      input_tokens: 2,
+      cache_creation_input_tokens: 38_000,
+      cache_read_input_tokens: 75_000,
+      cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 38_000 },
+      output_tokens: 120,
+    });
+    await tick();
+    expect(s.interrupts).toBe(0);
+    // A second API call re-reads the cache and writes more: the estimate crosses $0.30.
+    assistant('m2', {
+      input_tokens: 2,
+      cache_creation_input_tokens: 30_000,
+      cache_read_input_tokens: 113_000,
+      cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 30_000 },
+      output_tokens: 200,
+    });
+    await tick();
+    expect(s.interrupts).toBe(1);
+    const notice = all().find((e) => e.type === 'notification' && e.kind === 'budget');
+    expect(notice).toMatchObject({ taskId: 'task1' });
+    s.emit({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      duration_ms: 100,
+      duration_api_ms: 90,
+      num_turns: 2,
+      stop_reason: null,
+      total_cost_usd: 0.31,
+      usage: { input_tokens: 4, output_tokens: 320 },
+      modelUsage: {},
+      permission_denials: [],
+      errors: [],
+    });
+    await tick();
+    const turn = all().find((e) => e.type === 'turn_completed');
+    expect(turn).toMatchObject({ ok: false, taskId: 'task1', costUsd: 0.31 });
+    expect(turn?.type === 'turn_completed' && turn.errors?.[0]).toMatch(/reached its budget/);
+    expect(rt.getStatus()).toBe('idle');
+    await rt.stop();
+  });
+
+  it("stores each turn's share of the SDK's cumulative total_cost_usd", async () => {
+    const { rt, sessions, all } = setup();
+    const s0 = () => sessions[0] as FakeSession;
+    const result = (total: number) =>
+      s0().emit({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        duration_ms: 1,
+        duration_api_ms: 1,
+        num_turns: 1,
+        result: 'ok',
+        stop_reason: 'end_turn',
+        total_cost_usd: total,
+        usage: { input_tokens: 1, output_tokens: 1 },
+        modelUsage: {},
+        permission_denials: [],
+      });
+    rt.sendPrompt('one', 't1');
+    result(0.1651324);
+    await tick();
+    rt.sendPrompt('two', 't1');
+    result(0.185327);
+    await tick();
+    const turns = all().filter((e) => e.type === 'turn_completed');
+    expect(turns.map((t) => (t.type === 'turn_completed' ? t.costUsd : 0))).toEqual([
+      0.1651324,
+      expect.closeTo(0.0201946, 6),
+    ]);
+    expect(turns[1]).toMatchObject({ sessionCostUsd: 0.185327 });
+    await rt.stop();
+  });
+
+  it('resumes the cumulative cost baseline saved with the last turn of the session', async () => {
+    const { rt, sessions, all, events } = setup({ sessionId: 'sess-1' });
+    events.append({
+      id: 'old-turn',
+      ts: 1,
+      agentId: 'a1',
+      sessionId: 'sess-1',
+      type: 'turn_completed',
+      ok: true,
+      subtype: 'success',
+      costUsd: 0.05,
+      sessionCostUsd: 0.4,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      numTurns: 1,
+      durationMs: 1,
+    });
+    rt.sendPrompt('again', 't1');
+    const s = sessions[0];
+    if (!s) throw new Error('no session');
+    expect(s.cfg.resume).toBe('sess-1');
+    s.emit({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 1,
+      duration_api_ms: 1,
+      num_turns: 1,
+      result: 'ok',
+      stop_reason: 'end_turn',
+      total_cost_usd: 0.45,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      modelUsage: {},
+      permission_denials: [],
+    });
+    await tick();
+    const turn = all()
+      .filter((e) => e.type === 'turn_completed')
+      .at(-1);
+    expect(turn?.type === 'turn_completed' && turn.costUsd).toBeCloseTo(0.05, 6);
+    await rt.stop();
+  });
+
+  it('starts a fresh session for a new task when freshSessionPerTask is on', async () => {
+    const { rt, sessions } = setup({
+      sessionId: 'sess-old',
+      budget: { freshSessionPerTask: true },
+    });
+    const finish = (s: FakeSession) =>
+      s.emit({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        duration_ms: 1,
+        duration_api_ms: 1,
+        num_turns: 1,
+        result: 'ok',
+        stop_reason: 'end_turn',
+        total_cost_usd: 0.01,
+        usage: { input_tokens: 1, output_tokens: 1 },
+        modelUsage: {},
+        permission_denials: [],
+      });
+    // No turn of task A was ever run in sess-old, so task A starts clean.
+    rt.sendPrompt('task A', 'A');
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.cfg.resume).toBeUndefined();
+    finish(sessions[0] as FakeSession);
+    await tick();
+    // A reply about the same task stays in the live session.
+    rt.sendPrompt('more on A', 'A');
+    await tick();
+    expect(sessions).toHaveLength(1);
+    finish(sessions[0] as FakeSession);
+    await tick();
+    // Another task restarts the process without resume.
+    rt.sendPrompt('task B', 'B');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sessions).toHaveLength(2);
+    expect(sessions[1]?.cfg.resume).toBeUndefined();
+    expect(rt.getStatus()).toBe('working');
+    await rt.stop();
+  });
+
+  it('keeps the session for a reply to the task a restart interrupted', async () => {
+    const { rt, sessions, events } = setup({
+      sessionId: 'sess-old',
+      budget: { freshSessionPerTask: true },
+    });
+    // Logged before the server restarted; that turn never completed.
+    events.append({
+      id: 'sent-a',
+      ts: 1,
+      agentId: 'a1',
+      taskId: 'A',
+      type: 'message_sent',
+      text: 'task A',
+    });
+    rt.sendPrompt('continue', 'A');
+    expect(sessions[0]?.cfg.resume).toBe('sess-old');
+    await rt.stop();
+  });
+
+  it('keeps resuming across tasks when freshSessionPerTask is off', async () => {
+    const { rt, sessions } = setup({ sessionId: 'sess-old' });
+    rt.sendPrompt('task A', 'A');
+    expect(sessions[0]?.cfg.resume).toBe('sess-old');
+    await rt.stop();
+  });
 });

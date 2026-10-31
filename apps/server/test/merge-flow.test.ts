@@ -854,6 +854,54 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     expect(preview.json().hookFiles).toContain('.githooks/pre-commit');
   });
 
+  it('lists the files inside a new untracked folder, not the folder', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'NewFolder', true)).json();
+    const dir = path.join(agent.worktree.path, '.husky');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pre-commit'), '#!/bin/sh\nexit 0\n');
+    fs.mkdirSync(path.join(agent.worktree.path, 'docs', 'deep'), { recursive: true });
+    fs.writeFileSync(path.join(agent.worktree.path, 'docs', 'deep', 'note.md'), 'hi\n');
+    const id = await reviewTask(agent.id, 'New folder');
+    const preview = await req({ method: 'GET', url: `/api/tasks/${id}/merge-preview` });
+    const paths = (preview.json().files as { path: string }[]).map((f) => f.path).sort();
+    expect(paths).toEqual(['.husky/pre-commit', 'docs/deep/note.md']);
+  });
+
+  it('counts ahead consistently, and a sibling merge of the same agent leaves nothing to merge', async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Shared', true)).json();
+    const wt = agent.worktree.path as string;
+    for (const n of [1, 2, 3]) {
+      fs.writeFileSync(path.join(wt, `f${n}.txt`), `${n}\n`);
+      git(wt, 'add', '-A');
+      git(wt, 'commit', '-q', '--no-verify', '-m', `c${n}`);
+    }
+    const first = await reviewTask(agent.id, 'First');
+    const a = (await req({ method: 'GET', url: `/api/tasks/${first}/merge-preview` })).json();
+    const b = (await req({ method: 'GET', url: `/api/tasks/${first}/merge-preview` })).json();
+    expect(a).toMatchObject({ ahead: 3, behind: 0, canMerge: true });
+    expect(b).toMatchObject({ ahead: a.ahead, behind: a.behind, branchSha: a.branchSha });
+    // The worktree (and its branch) belongs to the agent, not to one task: merging another task of
+    // the same agent integrates every commit and realigns the branch onto the merge commit.
+    const second = await reviewTask(agent.id, 'Second');
+    const merged = await req({
+      method: 'POST',
+      url: `/api/tasks/${second}/merge`,
+      payload: await mergePayload(second),
+    });
+    expect(merged.statusCode).toBe(200);
+    const after = (await req({ method: 'GET', url: `/api/tasks/${first}/merge-preview` })).json();
+    expect(after).toMatchObject({
+      ahead: 0,
+      behind: 0,
+      dirty: false,
+      files: [],
+      canMerge: false,
+      reason: 'Nothing to merge',
+    });
+  });
+
   it('lists uncommitted hook runner configs in the preview', async () => {
     const repo = tmpRepo();
     const agent = (await hire(repo, 'UncommittedRunner', true)).json();

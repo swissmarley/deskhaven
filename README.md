@@ -78,7 +78,9 @@ Caveats worth knowing:
 - **Permissions** — the default mode is *ask*. Dangerous tools (Bash, writes outside the workdir) open an
   approve/deny modal wired to the SDK's `canUseTool`; "allow for this session" uses the SDK's own
   suggested rule scoped to the session. Unanswered requests time out into a deny.
-- **Safety** — kill switch, per-agent and global daily budgets, per-session `maxTurns` / `maxBudgetUsd`,
+- **Safety** — kill switch, per-agent and global daily budgets, per-session `maxTurns`, a per-turn cost cap
+  ("Max $ / turn": the turn is interrupted as soon as its running estimate reaches the cap, so it can
+  overshoot by at most one model call), an optional fresh session per task,
   concurrency cap (busy agents), idle processes stopped after a timeout (sessions stay resumable), a
   `PreToolUse` guard that denies edits outside the working directory.
 - **Room editor** — place, move, rotate and remove furniture, paint floors and walls; layouts are saved

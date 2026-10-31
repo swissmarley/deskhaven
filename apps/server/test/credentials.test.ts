@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { externalCredentials } from '../src/auth/external.js';
 import type { AuthProvider } from '../src/auth/types.js';
 import { client, testApp } from './helpers.js';
@@ -22,6 +22,21 @@ const init = (apiKeySource: string) => ({
   skills: [],
   plugins: [],
 });
+
+/**
+ * A real `ANTHROPIC_API_KEY` in the developer's shell would take precedence over the keys these tests
+ * store, so it is removed for the duration of each test and restored afterwards.
+ */
+beforeEach(() => {
+  vi.stubEnv('ANTHROPIC_API_KEY', undefined);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+/** Compare keys without ever printing one: a failed assertion shows only this fingerprint. */
+const fingerprint = (key: string | undefined) =>
+  key === undefined ? '(none)' : `${key.length} chars, …${key.slice(-3)}`;
 
 describe('credentials changed in Settings', () => {
   it('reach an idle agent on its next prompt (session restarted and resumed)', async () => {
@@ -72,7 +87,12 @@ describe('credentials changed in Settings', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(built.ctx.auth()).not.toBe(before);
-      expect(built.ctx.auth().childEnv({}).ANTHROPIC_API_KEY).toBe('sk-ant-api-stored-key-123');
+      expect(fingerprint(built.ctx.auth().childEnv({}).ANTHROPIC_API_KEY)).toBe(
+        fingerprint('sk-ant-api-stored-key-123'),
+      );
+      expect(built.ctx.auth().childEnv({}).ANTHROPIC_API_KEY === 'sk-ant-api-stored-key-123').toBe(
+        true,
+      );
     } finally {
       await built.app.close();
     }
