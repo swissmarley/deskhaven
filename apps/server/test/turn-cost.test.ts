@@ -5,17 +5,40 @@ import {
   priceFor,
   TurnCostMeter,
   turnCostFromCumulative,
+  UNKNOWN_MODEL_PRICE,
   usageCostUsd,
 } from '../src/agent/turn-cost.js';
 
 describe('turn cost estimate', () => {
-  it('prices model families, falling back to the Opus 5 rate for unknown ids', () => {
+  it('prices model families like the bundled CLI catalog', () => {
     expect(priceFor('claude-sonnet-5-5')).toMatchObject({ input: 2, output: 10 });
     expect(priceFor('claude-opus-5-5')).toMatchObject({ input: 4, output: 20 });
+    expect(priceFor('claude-opus-4-1-20250805')).toMatchObject({ input: 15, output: 75 });
+    expect(priceFor('claude-opus-4-8')).toMatchObject({ input: 5, output: 25 });
     expect(priceFor('claude-haiku-4-5-20251001')).toMatchObject({ input: 1, output: 5 });
     expect(priceFor('us.anthropic.claude-sonnet-4-6')).toMatchObject({ input: 3 });
     expect(priceFor('claude-fable-5-1')).toMatchObject({ input: 10, cacheRead: 0.25 });
-    expect(priceFor('some-gateway-model')).toMatchObject({ input: 5, output: 25 });
+  });
+
+  it('prices ids the bundled CLI does not know (Haiku 5.5) at its default-model rate', () => {
+    expect(priceFor('claude-haiku-5-5')).toEqual(UNKNOWN_MODEL_PRICE);
+    expect(priceFor('some-gateway-model')).toEqual(UNKNOWN_MODEL_PRICE);
+    expect(UNKNOWN_MODEL_PRICE).toEqual(priceFor('claude-sonnet-5-5'));
+  });
+
+  it('puts a real Haiku 5.5 turn (63k cache reads, 32k cache writes) over a $0.10 cap', () => {
+    const meter = new TurnCostMeter();
+    meter.add('m1', 'claude-haiku-5-5', {
+      input_tokens: 10,
+      cache_creation_input_tokens: 32_000,
+      cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 32_000 },
+      cache_read_input_tokens: 63_000,
+      output_tokens: 0,
+    });
+    expect(meter.totalUsd).toBeGreaterThan(0.1);
+    // With the ~4.7k output tokens of that turn the estimate meets the SDK's $0.1876.
+    meter.add('m1', 'claude-haiku-5-5', { output_tokens: 4_700 });
+    expect(meter.totalUsd).toBeCloseTo(0.1876, 3);
   });
 
   it('bills 1-hour cache writes at 2x input and 5-minute writes at 1.25x', () => {

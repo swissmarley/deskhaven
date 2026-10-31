@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  changesOwnedElsewhere,
   manualMergeCommands,
   mergeButtonState,
   nothingToMerge,
@@ -77,5 +78,13 @@ describe('merge controls', () => {
       disabled: true,
       reason: 'Cannot compare',
     });
+  });
+
+  it("names the agent's later task when it owns the changes on the branch", () => {
+    const owner = { id: 'b', title: 'notepad.py header comment', status: 'review' };
+    expect(changesOwnedElsewhere({ id: 'a', status: 'done' }, { ownerTask: owner })).toEqual(owner);
+    expect(changesOwnedElsewhere({ id: 'b', status: 'review' }, { ownerTask: owner })).toBeNull();
+    expect(changesOwnedElsewhere({ id: 'a', status: 'done' }, {})).toBeNull();
+    expect(changesOwnedElsewhere({ id: 'a', status: 'done' }, null)).toBeNull();
   });
 });

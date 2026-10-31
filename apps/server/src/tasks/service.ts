@@ -321,6 +321,13 @@ export class TaskService {
         ? `This merge also changes hook runner config (${runnerFiles.join(', ')}). Unchanged hook scripts may still run new commands from those files during the merge commit.`
         : undefined;
     const previewTree = await this.deps.worktrees.previewTree(wt.path);
+    const owner = this.worktreeOwner(agent.id);
+    const ownedElsewhere = owner && owner.id !== taskId ? owner : null;
+    const task = this.mustGet(taskId);
+    // A finished task must not close another task's work: offer the merge on the task that made it.
+    const blockedByOwner = Boolean(
+      ownedElsewhere && task.status === 'done' && (st.dirty || st.ahead > 0),
+    );
     return {
       branch: wt.branch,
       targetBranch,
@@ -330,8 +337,21 @@ export class TaskService {
       behind: st.behind,
       dirty: st.dirty,
       files: st.files,
-      canMerge: st.canMerge,
-      ...(st.reason ? { reason: st.reason } : {}),
+      canMerge: st.canMerge && !blockedByOwner,
+      ...(blockedByOwner && ownedElsewhere
+        ? { reason: `The changes on the branch belong to "${ownedElsewhere.title}"` }
+        : st.reason
+          ? { reason: st.reason }
+          : {}),
+      ...(ownedElsewhere
+        ? {
+            ownerTask: {
+              id: ownedElsewhere.id,
+              title: ownedElsewhere.title,
+              status: ownedElsewhere.status,
+            },
+          }
+        : {}),
       ...(hookFiles.length ? { hookFiles } : {}),
       ...(hooksWarning ? { hooksWarning } : {}),
       ...(runnerFiles.length ? { runnerFiles } : {}),
@@ -358,6 +378,14 @@ export class TaskService {
         409,
         'not_ready',
         'Move the task to review or done before merging its branch.',
+      );
+    }
+    const owner = task.status === 'done' ? this.worktreeOwner(agent.id) : null;
+    if (owner && owner.id !== task.id) {
+      throw new TaskHttpError(
+        409,
+        'changes_belong_to_other_task',
+        `The changes on ${wt.branch} belong to "${owner.title}", which ran after this task. Merge them from that task.`,
       );
     }
     const strategy: MergeStrategy = input.strategy ?? 'squash';
@@ -827,6 +855,20 @@ export class TaskService {
     const agent = this.deps.agents.get(agentId);
     if (!agent) throw new TaskHttpError(400, 'unknown_agent', `Unknown agent ${agentId}`);
     return agent;
+  }
+
+  /**
+   * The task whose turn ran last in the agent's worktree. Every task of an agent shares one worktree
+   * and branch, so the uncommitted work there is that task's (a turn of a later task would have
+   * come after it). Null when the agent has not completed a task turn.
+   */
+  private worktreeOwner(agentId: string): Task | null {
+    const turns = this.deps.events.list({ agentId, types: ['turn_completed'], limit: 50 });
+    for (const t of turns) {
+      if (!t.taskId) continue;
+      return this.get(t.taskId) ?? null;
+    }
+    return null;
   }
 
   private async locateWorktree(taskId: string): Promise<

@@ -2,6 +2,12 @@
 
 One 3-line note per milestone, newest first.
 
+## Follow-ups to PR #9 (2026-10-31)
+
+1. Per-turn cap fires on Haiku 5.5: `turn-cost.ts` mirrors the bundled CLI catalog (unknown ids such as `claude-haiku-5-5` at the Sonnet 5.5 rate, as the SDK bills them), reads final output from `message_delta`, and the runtime stops at max(own estimate, SDK running total via the experimental `get_usage`). Done tasks no longer offer to merge another task's work (`ownerTask`, 409 `changes_belong_to_other_task`). Stored turn costs migrated once from cumulative to per turn (tasks, agents, daily rows corrected); office totals now include fired agents and the HR list shows today per agent.
+2. Engineer preset limited to Read, Edit, Write, Bash, Glob, Grep (`tools: null` on an agent now means the preset's list); merge confirmation says when it expired; whole board cards open the task (column head fixed, list scrolls with a bottom fade); the hire form opens only for an office that is really empty.
+3. Next: confirm on a live run that the CLI answers `get_usage` mid-turn, and re-check the price table on the next SDK upgrade.
+
 ## Fixes from the 2026-10-31 test
 
 1. Merge preview lists untracked files (`--untracked-files=all`); "Max $ / turn" is enforced by the runtime from assistant-message usage (`agent/turn-cost.ts`) and interrupts the turn when the estimate reaches the cap (the SDK cap, cumulative per process, is no longer passed); `turn_completed.costUsd` is now the turn's share of the SDK's cumulative `total_cost_usd` (it was summed as-is, inflating task, agent and daily totals); optional `budget.freshSessionPerTask`; credentials test isolated from a real `ANTHROPIC_API_KEY` and never prints a key.

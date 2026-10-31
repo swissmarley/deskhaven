@@ -5,6 +5,7 @@ import {
   type UsageTotals,
 } from '@deskhaven/shared';
 import type { AgentService } from '../agents/service.js';
+import { localDate } from './date.js';
 
 type RateWindow = UsageSnapshot['rateLimits'][number];
 
@@ -37,28 +38,44 @@ export class UsageService {
     }
   }
 
+  /**
+   * Office totals (all time and today) come from the daily rows and include agents that were fired,
+   * so "today" never exceeds "total" and both count every dollar spent; `perAgent` and
+   * `perAgentToday` cover the agents on staff, and the gap to the totals is the fired agents' share.
+   */
   snapshot(): UsageSnapshot {
     const perAgent: Record<string, UsageTotals> = {};
-    const totals = emptyUsage();
+    const perAgentToday: Record<string, UsageTotals> = {};
+    const todayByAgent = this.agents.usageByAgent(localDate());
     for (const a of this.agents.list()) {
       perAgent[a.id] = a.usage;
-      totals.costUsd += a.usage.costUsd;
-      totals.inputTokens += a.usage.inputTokens;
-      totals.outputTokens += a.usage.outputTokens;
-      totals.cacheReadTokens += a.usage.cacheReadTokens;
-      totals.cacheCreationTokens += a.usage.cacheCreationTokens;
-      totals.turns += a.usage.turns;
+      perAgentToday[a.id] = todayByAgent.get(a.id) ?? emptyUsage();
     }
+    const totals = sumUsage(this.agents.usageByAgent().values());
     const rt = this.runtime();
     return {
       authModeInUse: this.authModeInUse,
       totals,
-      today: this.agents.todayUsage(),
+      today: sumUsage(todayByAgent.values()),
       perAgent,
+      perAgentToday,
       rateLimits: [...this.windows.values()],
       killSwitch: rt.killSwitch,
       running: rt.running,
       concurrencyCap: rt.concurrencyCap,
     };
   }
+}
+
+function sumUsage(rows: Iterable<UsageTotals>): UsageTotals {
+  const total = emptyUsage();
+  for (const r of rows) {
+    total.costUsd += r.costUsd;
+    total.inputTokens += r.inputTokens;
+    total.outputTokens += r.outputTokens;
+    total.cacheReadTokens += r.cacheReadTokens;
+    total.cacheCreationTokens += r.cacheCreationTokens;
+    total.turns += r.turns;
+  }
+  return total;
 }

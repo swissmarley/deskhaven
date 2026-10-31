@@ -1,13 +1,18 @@
 /**
  * Mid-turn cost estimate. The SDK only reports cost in the `result` message at the end of a turn, so
- * a per-turn cap needs its own running estimate from the `usage` block of every assistant message
- * (main loop and subagents). Pure; no I/O.
+ * a per-turn cap needs its own running estimate from the `usage` of every API response (main loop and
+ * subagents). Pure; no I/O.
  *
- * Prices are USD per million tokens (list prices, 2026-10). Claude Code writes the prompt cache with
- * the 1-hour TTL, billed at 2x input; 5-minute writes are 1.25x input. Checked against a recorded
- * session (`test/fixtures/session-readonly-sonnet.jsonl`): the estimate lands within ~2% of the SDK's
- * `total_cost_usd`; the gap is output tokens, which a streamed message reports before it ends.
- * An unknown model is priced at the Opus 5 rate so the cap errs on the side of stopping early.
+ * The caps and every total in Deskhaven use the SDK's `total_cost_usd`, so this table mirrors the
+ * price catalog of the `claude` binary bundled with the SDK (0.3.287), not the public price list.
+ * They differ for models the bundled CLI does not know: it prices those at the rate of its default
+ * model (Sonnet 5.5, $2/$10), with a `tengu_unknown_model_cost` event. `claude-haiku-5-5` is one of
+ * them, so the SDK reports Haiku 5.5 turns at Sonnet 5.5 rates (a real turn: 32k cache writes + 63k
+ * cache reads + ~5k output = $0.1876), and a Haiku-priced estimate came out 25x lower and never hit
+ * the cap. Re-check on every SDK upgrade (see CLAUDE.md).
+ *
+ * USD per million tokens. Cache writes: 5-minute TTL at 1.25x input, 1-hour TTL (what Claude Code
+ * uses) at 2x input, both as in the CLI catalog.
  */
 
 export interface ModelPrice {
@@ -16,24 +21,31 @@ export interface ModelPrice {
   cacheRead: number;
 }
 
+/** First match wins. Ids are matched after lower-casing, so provider prefixes do not matter. */
 const PRICES: { match: RegExp; price: ModelPrice }[] = [
   { match: /(fable|mythos)-5-1/, price: { input: 10, output: 50, cacheRead: 0.25 } },
   { match: /fable|mythos/, price: { input: 10, output: 50, cacheRead: 1 } },
   { match: /opus-5-5/, price: { input: 4, output: 20, cacheRead: 0.2 } },
-  { match: /opus-4-1|opus-4-2025|3-opus/, price: { input: 15, output: 75, cacheRead: 1.5 } },
-  { match: /opus/, price: { input: 5, output: 25, cacheRead: 0.5 } },
+  {
+    match: /opus-4-0|opus-4-1|opus-4-2025|3-opus/,
+    price: { input: 15, output: 75, cacheRead: 1.5 },
+  },
+  { match: /opus-(4-[5-9]|5)/, price: { input: 5, output: 25, cacheRead: 0.5 } },
   { match: /sonnet-5/, price: { input: 2, output: 10, cacheRead: 0.2 } },
-  { match: /sonnet/, price: { input: 3, output: 15, cacheRead: 0.3 } },
-  { match: /haiku-5/, price: { input: 0.1, output: 0.5, cacheRead: 0.01 } },
-  { match: /haiku-4/, price: { input: 1, output: 5, cacheRead: 0.1 } },
-  { match: /haiku/, price: { input: 0.8, output: 4, cacheRead: 0.08 } },
+  { match: /sonnet-4|3-[57]-sonnet|sonnet-3/, price: { input: 3, output: 15, cacheRead: 0.3 } },
+  { match: /haiku-4-5/, price: { input: 1, output: 5, cacheRead: 0.1 } },
+  { match: /3-5-haiku|haiku-3-5/, price: { input: 0.8, output: 4, cacheRead: 0.08 } },
 ];
 
-const FALLBACK: ModelPrice = { input: 5, output: 25, cacheRead: 0.5 };
+/**
+ * What the bundled CLI charges for an id outside its catalog (claude-haiku-5-5 included): the rate
+ * of its default model, Sonnet 5.5.
+ */
+export const UNKNOWN_MODEL_PRICE: ModelPrice = { input: 2, output: 10, cacheRead: 0.2 };
 
 export function priceFor(model: string | undefined | null): ModelPrice {
   const id = (model ?? '').toLowerCase();
-  return PRICES.find((p) => p.match.test(id))?.price ?? FALLBACK;
+  return PRICES.find((p) => p.match.test(id))?.price ?? UNKNOWN_MODEL_PRICE;
 }
 
 /** The subset of the Messages API `usage` block the estimate reads. */

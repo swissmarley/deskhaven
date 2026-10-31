@@ -609,12 +609,28 @@ textarea.mono {
   background: var(--bg);
   border: 1px dashed var(--border);
   border-radius: 8px;
-  padding: 6px;
+  padding: 6px 6px 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
+}
+/* Cards scroll under a fixed column head; the bottom fades so a cut-off card reads as "more below",
+   and the padding lets the last card scroll clear of the fade. */
+.column-cards {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 22px;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+}
+.card-task:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .column.over {
   border-color: var(--accent);
@@ -943,4 +959,8 @@ kbd {
 .form select,
 .form textarea {
   max-width: 100%;
+}
+
+.nowrap {
+  white-space: nowrap;
 }

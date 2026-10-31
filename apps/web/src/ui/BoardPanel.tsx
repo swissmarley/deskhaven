@@ -117,9 +117,11 @@ function Column({
       <div className="column-head">
         {label} <span className="muted">{tasks.length}</span>
       </div>
-      {tasks.map((t) => (
-        <Card key={t.id} task={t} onOpen={onOpen} />
-      ))}
+      <div className="column-cards">
+        {tasks.map((t) => (
+          <Card key={t.id} task={t} onOpen={onOpen} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -135,14 +137,31 @@ function Card({ task, onOpen }: { task: Task; onOpen: (id: string) => void }): J
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 20 }
     : undefined;
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: dnd-kit's attributes give the card role="button" and tabIndex 0
     <div
       ref={setNodeRef}
       style={style}
       className={`card-task ${isDragging ? 'dragging' : ''}`}
       {...listeners}
       {...attributes}
+      // The whole card opens the task, so a card scrolled half out of view is still one click away.
+      // A drag needs 6 px of movement first (PointerSensor), so a click never starts one.
+      onClick={() => onOpen(task.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen(task.id);
+        }
+      }}
     >
-      <button type="button" className="card-title" onClick={() => onOpen(task.id)}>
+      <button
+        type="button"
+        className="card-title"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpen(task.id);
+        }}
+      >
         {task.title}
       </button>
       <div className="card-meta">

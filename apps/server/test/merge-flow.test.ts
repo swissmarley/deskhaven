@@ -902,6 +902,62 @@ describe('merge and review over HTTP', { timeout: 20_000 }, () => {
     });
   });
 
+  it("does not let a done task merge the changes of the agent's later task", async () => {
+    const repo = tmpRepo();
+    const agent = (await hire(repo, 'Owner', true)).json();
+    const turn = (taskId: string, n: number) =>
+      built.ctx.events.append({
+        id: `turn-${taskId}-${n}`,
+        ts: Date.now(),
+        agentId: agent.id,
+        taskId,
+        type: 'turn_completed',
+        ok: true,
+        subtype: 'success',
+        costUsd: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        numTurns: 1,
+        durationMs: 1,
+      });
+    const first = await reviewTask(agent.id, 'Fix filetypes kwarg');
+    turn(first, 1);
+    const done = await req({
+      method: 'PATCH',
+      url: `/api/tasks/${first}`,
+      payload: { status: 'done' },
+    });
+    expect(done.statusCode).toBe(200);
+    const second = await reviewTask(agent.id, 'notepad.py header comment');
+    turn(second, 2);
+    fs.writeFileSync(path.join(agent.worktree.path, 'notepad.py'), '# header\n');
+
+    const a = (await req({ method: 'GET', url: `/api/tasks/${first}/merge-preview` })).json();
+    expect(a).toMatchObject({
+      dirty: true,
+      canMerge: false,
+      ownerTask: { id: second, title: 'notepad.py header comment' },
+    });
+    expect(a.reason).toMatch(/belong to "notepad.py header comment"/);
+    const refused = await req({
+      method: 'POST',
+      url: `/api/tasks/${first}/merge`,
+      payload: {
+        expectedBranchSha: a.branchSha,
+        consentedHookFiles: [],
+        previewTree: a.previewTree,
+      },
+    });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().error).toBe('changes_belong_to_other_task');
+
+    const b = (await req({ method: 'GET', url: `/api/tasks/${second}/merge-preview` })).json();
+    expect(b).toMatchObject({ canMerge: true });
+    expect(b.ownerTask).toBeUndefined();
+  });
+
   it('lists uncommitted hook runner configs in the preview', async () => {
     const repo = tmpRepo();
     const agent = (await hire(repo, 'UncommittedRunner', true)).json();

@@ -196,6 +196,32 @@ export function buildOptions(
   return options;
 }
 
+/**
+ * The SDK's running cost estimate for the live process (cumulative, like `result.total_cost_usd`),
+ * read mid-turn through the CLI's `get_usage` control request. The SDK marks that method as
+ * experimental, so a missing method, a failed request or an odd shape all yield null and the caller
+ * falls back to its own estimate. `skipBehaviors` skips the transcript scan the request otherwise does.
+ */
+export async function sessionCostUsd(q: Query): Promise<number | null> {
+  const probe = (
+    q as unknown as {
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?: (opts?: {
+        skipBehaviors?: boolean;
+      }) => Promise<unknown>;
+    }
+  ).usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+  if (typeof probe !== 'function') return null;
+  try {
+    const res = (await probe.call(q, { skipBehaviors: true })) as {
+      session?: { total_cost_usd?: unknown };
+    } | null;
+    const total = res?.session?.total_cost_usd;
+    return typeof total === 'number' && Number.isFinite(total) && total >= 0 ? total : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Start one long-lived session in streaming-input mode. Prompts are pushed through `prompts`. */
 export function startAgentSession(cfg: SessionConfig, cb: SessionCallbacks): AgentSession {
   const abort = new AbortController();

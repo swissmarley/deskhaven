@@ -46,7 +46,10 @@ export function TopBar(): JSX.Element {
             <span className="pill warn">plan usage</span>
           ) : null}
         </span>
-        <span className="hud-item" title="Estimated API-equivalent cost today / total">
+        <span
+          className="hud-item"
+          title="Estimated API-equivalent cost today / all time, for the whole office (agents no longer on staff included)"
+        >
           <span className="hud-label">cost</span> {fmtUsd(usage?.today.costUsd ?? 0)}{' '}
           <span className="muted">/ {fmtUsd(usage?.totals.costUsd ?? 0)}</span>
         </span>

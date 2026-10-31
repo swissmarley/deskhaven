@@ -11,6 +11,7 @@ import { ApiError, api } from '../net/api.js';
 import { useAppStore } from '../state/store.js';
 import { fmtTime, fmtUsd } from './eventText.js';
 import {
+  changesOwnedElsewhere,
   manualMergeCommands,
   mergeButtonState,
   nothingToMerge,
@@ -40,6 +41,8 @@ export function TaskDetail({
   const [confirming, setConfirming] = useState(false);
   /** The preview changed while a confirmation was open, so it was withdrawn. */
   const [confirmWithdrawn, setConfirmWithdrawn] = useState(false);
+  /** The open confirmation timed out. */
+  const [confirmExpired, setConfirmExpired] = useState(false);
   const [allowHookChanges, setAllowHookChanges] = useState(false);
   const [skipHooks, setSkipHooks] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -98,7 +101,10 @@ export function TaskDetail({
   // biome-ignore lint/correctness/useExhaustiveDependencies: confirmKey is intentional
   useEffect(() => {
     if (!confirming) return;
-    const timer = window.setTimeout(() => setConfirming(false), CONFIRM_TIMEOUT_MS);
+    const timer = window.setTimeout(() => {
+      setConfirming(false);
+      setConfirmExpired(true);
+    }, CONFIRM_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [confirming, confirmKey]);
 
@@ -134,7 +140,10 @@ export function TaskDetail({
   const mergeMessage = defaultMergeMessage(task);
   const commands = preview ? manualMergeCommands(preview, mergeMessage, strategy) : '';
   const conflicted = task.merge?.status === 'conflict';
-  const empty = nothingToMerge(preview);
+  const owner = changesOwnedElsewhere(task, preview);
+  // A done task never closes the work of the agent's later task (the worktree is shared).
+  const ownedElsewhere = Boolean(owner && task.status === 'done');
+  const empty = nothingToMerge(preview) || ownedElsewhere;
   const button = mergeButtonState(preview, { merging, hookConsentOk, previewError });
 
   const acceptMerge = async () => {
@@ -284,14 +293,25 @@ export function TaskDetail({
           {offerMerge && empty && !conflicted ? (
             <section className="merge-box empty" ref={mergeSectionRef}>
               <h4>Merge</h4>
-              <p className="small">
-                <strong>Nothing to merge.</strong>{' '}
-                <span className="muted">
-                  {preview?.branch} has no commits ahead of {preview?.targetBranch} and no
-                  uncommitted changes. The branch is shared by all of this agent's tasks: if another
-                  of them was merged, this task's changes went in with it.
-                </span>
-              </p>
+              {ownedElsewhere && owner ? (
+                <p className="small">
+                  <strong>Nothing to merge for this task.</strong>{' '}
+                  <span className="muted">
+                    The changes on {preview?.branch} belong to "{owner.title}" ({owner.status}),
+                    which the agent worked on after this task. Its worktree is shared by all of its
+                    tasks: merge them from that task.
+                  </span>
+                </p>
+              ) : (
+                <p className="small">
+                  <strong>Nothing to merge.</strong>{' '}
+                  <span className="muted">
+                    {preview?.branch} has no commits ahead of {preview?.targetBranch} and no
+                    uncommitted changes. The branch is shared by all of this agent's tasks: if
+                    another of them was merged, this task's changes went in with it.
+                  </span>
+                </p>
+              )}
               {task.status !== 'done' ? (
                 <div className="row wrap">
                   <button
@@ -312,6 +332,12 @@ export function TaskDetail({
               <p className="small warn-text">
                 The merge includes every change on the agent's branch, not only this task.
               </p>
+              {owner ? (
+                <p className="small warn-text">
+                  The agent's latest task is "{owner.title}" ({owner.status}): its changes are on
+                  the branch too.
+                </p>
+              ) : null}
               {preview?.hooksWarning ? (
                 <p className="small warn-text">{preview.hooksWarning}</p>
               ) : null}
@@ -408,6 +434,11 @@ export function TaskDetail({
                   </div>
                 </div>
               ) : null}
+              {confirmExpired && !confirming ? (
+                <p className="small warn-text">
+                  The confirmation expired after a minute. Press "Accept & merge" again to merge.
+                </p>
+              ) : null}
               {confirmWithdrawn && !confirming ? (
                 <p className="small warn-text">
                   The branch changed while the confirmation was open. Review the preview and merge
@@ -433,6 +464,7 @@ export function TaskDetail({
                     title={button.reason ?? undefined}
                     onClick={() => {
                       setConfirmWithdrawn(false);
+                      setConfirmExpired(false);
                       setConfirming(true);
                     }}
                   >

@@ -16,12 +16,14 @@ import {
   type Room,
   resolveAgentModel,
   type UpdateAgent,
+  type UsageTotals,
   WORKDIR_ERROR_PREFIX,
 } from '@deskhaven/shared';
 import { and, eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { agents as agentsTable, usageDaily } from '../db/schema.js';
 import type { SettingsService } from '../settings/service.js';
+import { localDate } from '../usage/date.js';
 import type { WsHub } from '../ws/hub.js';
 
 export const PALETTES = {
@@ -304,6 +306,28 @@ export class AgentService {
       .run();
   }
 
+  /**
+   * Usage per agent id from the daily rows, for one day or all time. Includes agents that were fired
+   * (their rows stay, so the office totals keep their spend).
+   */
+  usageByAgent(date?: string): Map<string, UsageTotals> {
+    const rows = date
+      ? this.db.select().from(usageDaily).where(eq(usageDaily.date, date)).all()
+      : this.db.select().from(usageDaily).all();
+    const out = new Map<string, UsageTotals>();
+    for (const r of rows) {
+      const t = out.get(r.agentId) ?? emptyUsage();
+      t.costUsd += r.costUsd;
+      t.inputTokens += r.inputTokens;
+      t.outputTokens += r.outputTokens;
+      t.cacheReadTokens += r.cacheReadTokens;
+      t.cacheCreationTokens += r.cacheCreationTokens;
+      t.turns += r.turns;
+      out.set(r.agentId, t);
+    }
+    return out;
+  }
+
   todayUsage(agentId?: string) {
     const date = localDate();
     const rows = this.db
@@ -360,9 +384,4 @@ export class AgentService {
   }
 }
 
-export function localDate(d = new Date()): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
+export { localDate };

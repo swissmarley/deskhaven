@@ -314,6 +314,11 @@ export const MergePreviewSchema = z.object({
     .regex(/^[0-9a-f]{7,64}$/i)
     .optional(),
   previewTree: z.string().regex(/^[0-9a-f]{40}$/i),
+  /**
+   * Set when another task of the same agent ran last in the shared worktree: the uncommitted work on
+   * the branch is most likely that task's, not this one's.
+   */
+  ownerTask: z.object({ id: z.string(), title: z.string(), status: z.string() }).optional(),
 });
 export type MergePreview = z.infer<typeof MergePreviewSchema>;
 
@@ -418,7 +423,10 @@ export const UsageSnapshotSchema = z.object({
   authModeInUse: z.string(),
   totals: UsageTotalsSchema,
   today: UsageTotalsSchema,
+  /** All-time usage of the agents still on staff (their own `usage`). */
   perAgent: z.record(z.string(), UsageTotalsSchema),
+  /** Today's usage per agent on staff; `today` minus their sum is what fired agents spent today. */
+  perAgentToday: z.record(z.string(), UsageTotalsSchema).optional(),
   rateLimits: z.array(RateLimitWindowSchema),
   killSwitch: z.boolean(),
   running: z.number().int(),

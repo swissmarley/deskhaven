@@ -1,10 +1,13 @@
 // @vitest-environment happy-dom
-import { AgentSchema, emptyUsage } from '@deskhaven/shared';
+import { AgentSchema, emptyUsage, TaskSchema } from '@deskhaven/shared';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/ui/worldHandle.js', () => ({ getWorldHandle: () => null }));
 vi.mock('../src/ui/AvatarPicker.js', () => ({ AvatarPreview: () => null }));
+vi.mock('../src/ui/TaskDetail.js', () => ({
+  TaskDetail: ({ taskId }: { taskId: string }) => <div role="dialog">detail {taskId}</div>,
+}));
 
 vi.mock('../src/net/api.js', () => {
   class ApiError extends Error {
@@ -100,5 +103,56 @@ describe('BoardPanel create task', () => {
       ).toBe(true);
     });
     expect(api.createTask).toHaveBeenCalled();
+  });
+});
+
+describe('BoardPanel cards', () => {
+  afterEach(() => {
+    cleanup();
+    useAppStore.setState({ agents: {}, tasks: {}, notices: [] });
+  });
+
+  const done = TaskSchema.parse({
+    id: 'd1',
+    title: 'Fix filetypes kwarg',
+    prompt: 'p',
+    status: 'done',
+    assigneeAgentId: 'ada',
+    parentTaskId: null,
+    resultSummary: 'All done.',
+    filesChanged: [],
+    costUsd: 0,
+    position: 1,
+    createdAt: 1,
+    startedAt: 1,
+    completedAt: 2,
+    updatedAt: 2,
+    merge: null,
+    reviewTarget: null,
+  });
+
+  it('opens a task from anywhere on its card, not only the title', () => {
+    useAppStore.setState({ agents: { ada }, tasks: { d1: done } });
+    render(<BoardPanel />);
+    // The summary is the part left in view when a card is scrolled half out of the column.
+    fireEvent.click(screen.getByText('All done.'));
+    expect(screen.getByRole('dialog').textContent).toBe('detail d1');
+  });
+
+  it('opens a task from the keyboard', () => {
+    useAppStore.setState({ agents: { ada }, tasks: { d1: done } });
+    render(<BoardPanel />);
+    const card = screen.getByText('All done.').closest('.card-task');
+    if (!card) throw new Error('no card');
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('keeps the column head outside the scrolling card list', () => {
+    useAppStore.setState({ agents: { ada }, tasks: { d1: done } });
+    const { container } = render(<BoardPanel />);
+    const list = container.querySelector('.col-done .column-cards');
+    expect(list?.querySelector('.column-head')).toBeNull();
+    expect(list?.querySelectorAll('.card-task')).toHaveLength(1);
   });
 });

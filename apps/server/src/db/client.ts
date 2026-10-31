@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { type BetterSQLite3Database, drizzle } from 'drizzle-orm/better-sqlite3';
+import { migrateTurnCosts } from './cost-migration.js';
 import * as schema from './schema.js';
 
 export type Db = BetterSQLite3Database<typeof schema>;
@@ -45,5 +46,7 @@ export function openDb(dbPath: string): { db: Db; sqlite: Database.Database } {
   if (!presetCols.some((c) => c.name === 'base_hash')) {
     sqlite.exec('ALTER TABLE role_presets ADD COLUMN base_hash TEXT;');
   }
+  // Data migration: stored turn costs were the SDK's cumulative total (fixed 2026-10-31).
+  migrateTurnCosts(sqlite);
   return { db: drizzle(sqlite, { schema }), sqlite };
 }
